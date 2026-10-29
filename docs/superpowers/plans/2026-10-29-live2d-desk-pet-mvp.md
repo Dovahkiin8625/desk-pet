@@ -365,11 +365,14 @@ for (const size of [32, 64]) {
 ```json
 {
   "models": [
-    { "id": "haru", "name": "Haru", "manifest": "haru/pet.json" },
-    { "id": "natori", "name": "Natori", "manifest": "natori/pet.json" }
+    { "id": "haru", "name": "Haru", "manifest": "haru/pet.json", "model3": "Haru.model3.json" },
+    { "id": "natori", "name": "Natori", "manifest": "natori/pet.json", "model3": "Natori.model3.json" }
   ]
 }
 ```
+
+> 注册表里的 `model3` 字段是**兜底**用的：当某个模型目录没有 `pet.json` 时，
+> `loadManifest` 仍能知道该加载哪个 `.model3.json`，从而满足「把模型目录放进去就能加载」的要求。
 
 `assets/live2d/models/haru/pet.json`：
 
@@ -462,13 +465,17 @@ function createWindow() {
     alwaysOnTop: true,
     backgroundColor: '#00000000',
     webPreferences: {
-      preload: join(ROOT, 'src', 'preload', 'index.cjs'),
+      // 注意：此时 src/preload/index.cjs 还不存在（Task 3 才创建），先不挂 preload
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
-  win.loadURL('data:text/html,<body style="background:transparent"><script>window.__pet={ready:true}</script></body>');
+  // 标题必须是 "Desk Pet"：本任务的冒烟测试会断言 window.title()
+  win.loadURL(
+    'data:text/html,<title>Desk Pet</title><body style="background:transparent">' +
+      '<script>window.__pet={ready:true}</script></body>'
+  );
 }
 
 app.whenReady().then(() => {
@@ -1271,7 +1278,7 @@ export function registerIpc({
 - [ ] **Step 11: 重写 `src/main/index.js`**
 
 ```js
-import { app, BrowserWindow, Menu, screen } from 'electron';
+import { app, BrowserWindow, screen } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -1336,8 +1343,7 @@ function toggleVisible() {
 }
 
 function openSettings() {
-  // Task 8 实现设置窗口；此前至少保证不崩溃
-  Menu.buildFromTemplate([]);
+  // Task 9 实现设置窗口；在此之前是空操作，保证不崩溃
 }
 
 function showContextMenu() {
@@ -1356,6 +1362,20 @@ app.whenReady().then(async () => {
     const p = defaultPosition(300, 560, currentDisplays());
     settings.position = p;
   }
+  // 必须先注册 IPC 再创建窗口：渲染层页面一加载就会调用 getSettings()，
+  // 顺序反了会撞上 "No handler registered"。
+  registerIpc({
+    getSettings: () => settings,
+    saveSettings: (patch) => persist(patch),
+    listModels: readModelRegistry,
+    switchModel: (modelId) => {
+      persist({ modelId });
+      if (win) win.webContents.send('pet:modelSwitchRequest', modelId);
+    },
+    onOpenSettings: openSettings,
+    onShowContextMenu: showContextMenu,
+  });
+
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
 
   tray = createTray({
@@ -1371,18 +1391,6 @@ app.whenReady().then(async () => {
       quit: () => app.quit(),
     })
   );
-
-  registerIpc({
-    getSettings: () => settings,
-    saveSettings: (patch) => persist(patch),
-    listModels: readModelRegistry,
-    switchModel: (modelId) => {
-      persist({ modelId });
-      if (win) win.webContents.send('pet:modelSwitchRequest', modelId);
-    },
-    onOpenSettings: openSettings,
-    onShowContextMenu: showContextMenu,
-  });
 
   app.on('activate', () => {
     if (!win || win.isDestroyed()) {
@@ -1567,27 +1575,27 @@ export async function loadManifest(modelId) {
     base = null;
   }
 
-  const model3Url = base?.model3
-    ? `/assets/live2d/models/${entry.id}/${base.model3}`
-    : null;
+  const model3Name = base?.model3 || entry.model3 || `${entry.id}.model3.json`;
+  const model3Url = `/assets/live2d/models/${entry.id}/${model3Name}`;
   let model3 = null;
-  if (model3Url) {
-    try {
-      const res = await fetch(model3Url);
-      if (res.ok) model3 = await res.json();
-    } catch {
-      model3 = null;
-    }
+  try {
+    const res = await fetch(model3Url);
+    if (res.ok) model3 = await res.json();
+  } catch {
+    model3 = null;
   }
 
   const derived = deriveManifest(model3, {
     id: entry.id,
     name: entry.name,
-    model3: base?.model3,
+    model3: model3Name,
     viewport: base?.viewport,
     fit: base?.fit,
   });
-  return mergeManifest(base, derived);
+  const merged = mergeManifest(base, derived);
+  // 即使没有 pet.json，也要保证 model3 有值，否则模型无法加载
+  merged.model3 = model3Name;
+  return merged;
 }
 ```
 
@@ -1610,13 +1618,20 @@ export function createStage(container) {
   }
   window.addEventListener('resize', resize);
 
-  /** 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。 */
+  /**
+   * 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。
+   * 自然尺寸只在首次调用时测量并缓存——之后 getBounds() 返回的是**已缩放**的尺寸，
+   * 重复用它计算适配比例会让模型越缩越小（Task 9 调整缩放时会再次调用本函数）。
+   */
   function fitModel(model, manifest, userScale = 1) {
     const viewW = app.screen.width;
     const viewH = app.screen.height;
-    const natural = model.getBounds();
-    const nw = natural.width || 1;
-    const nh = natural.height || 1;
+    if (!model.__naturalSize) {
+      const natural = model.getBounds();
+      model.__naturalSize = { w: natural.width || 1, h: natural.height || 1 };
+    }
+    const nw = model.__naturalSize.w;
+    const nh = model.__naturalSize.h;
     const fitScale = Math.min((viewH * 0.96) / nh, (viewW * 0.98) / nw);
     const manifestScale = manifest?.fit?.scale ?? 1;
     model.scale.set(fitScale * manifestScale * userScale);
