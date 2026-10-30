@@ -47,6 +47,12 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
     expect(info.url).toContain('app://bundle/src/renderer/index.html');
     expect(info.ready).toBe(true);
     expect(info.bodyBg).toContain('rgba(0, 0, 0, 0)');
+
+    // 置顶只能从主进程侧断言：渲染层拿不到 BrowserWindow
+    const alwaysOnTop = await ctx.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
+    );
+    expect(alwaysOnTop).toBe(true);
   } finally {
     await ctx.close();
   }

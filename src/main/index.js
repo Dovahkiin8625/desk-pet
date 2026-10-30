@@ -1,20 +1,19 @@
-import { app, BrowserWindow, screen } from 'electron';
+import { app, screen } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
-import { createPetWindow, applySettingsToWindow } from './window.js';
+import { registerSchemePrivileges, registerAppProtocol } from './protocol.js';
+import { createPetWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
-import { loadSettings, saveSettings } from './settings.js';
-import { defaultPosition } from './display.js';
+import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 if (process.env.DESK_PET_USER_DATA) {
-  // setPath 要求目标目录已存在，否则会抛错。
+  // setPath 要求目标目录已存在，否则会抛错（Task 1 的 E2E 用例依赖这一点）。
   mkdirSync(process.env.DESK_PET_USER_DATA, { recursive: true });
   app.setPath('userData', process.env.DESK_PET_USER_DATA);
 }
@@ -47,18 +46,44 @@ async function readModelRegistry() {
     const text = await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8');
     const parsed = JSON.parse(text);
     return Array.isArray(parsed.models) ? parsed.models : [];
-  } catch {
+  } catch (err) {
+    // 注册表损坏或读不到时静默返回空列表，会让「形象列表是空的」这件事无从排查——
+    // 与 settings 损坏同理，必须留痕。
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
     return [];
   }
 }
 
 function persist(patch) {
-  settings = { ...settings, ...patch };
+  // 必须过一遍 sanitizeSettings：否则渲染层传来的越界值（例如 opacity=1.5）
+  // 会留在内存里，而落盘时被夹紧——内存与磁盘不一致，
+  // getSettings 会把越界值发回渲染层，Task 9 还会拿它去调 win.setOpacity()。
+  settings = sanitizeSettings({ ...settings, ...patch });
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveSettings(app.getPath('userData'), settings).catch(() => {});
+    saveTimer = null;
+    writeSettings();
   }, 300);
   return settings;
+}
+
+function writeSettings() {
+  return saveSettings(app.getPath('userData'), settings).catch((err) => {
+    // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
+    console.warn('[desk-pet] settings 保存失败：', err?.message);
+  });
+}
+
+// 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
+// before-quit 的处理器是同步的：直接调 writeSettings() 的话，异步写盘不会被等待，
+// 进程会在 writeFile 截断文件之后、写完数据之前退出——结果是 settings.json 变成空文件，
+// 既丢了改动又留下损坏的配置。所以必须 preventDefault 拦住退出，等写完再 app.quit()。
+function flushPendingSave(event) {
+  if (!saveTimer) return;
+  event.preventDefault();
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  writeSettings().finally(() => app.quit());
 }
 
 function toggleVisible() {
@@ -105,9 +130,6 @@ app.whenReady().then(async () => {
 
   tray = createTray({
     iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),
-    onAction: (action) => {
-      if (action === 'toggleVisible') toggleVisible();
-    },
   });
   tray.setContextMenu(
     buildTrayMenu({
@@ -116,13 +138,11 @@ app.whenReady().then(async () => {
       quit: () => app.quit(),
     })
   );
-
-  app.on('activate', () => {
-    if (!win || win.isDestroyed()) {
-      win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
-    }
-  });
 });
+
+// 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
+// 退出前把待写入的设置落盘，否则用户在 300ms 防抖窗口内退出就会丢掉改动。
+app.on('before-quit', flushPendingSave);
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();

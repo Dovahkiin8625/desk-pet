@@ -3,8 +3,12 @@ import { join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { restorePosition } from './display.js';
 
+// 视口尺寸与 assets/live2d/models/*/pet.json 的 viewport 保持一致。
+// settings 里的 viewport 会被 sanitizeSettings 丢弃，所以不能从那里取。
+const PET_VIEWPORT = { width: 300, height: 560 };
+
 export function createPetWindow({ rootDir, settings, displays }) {
-  const vp = settings.viewport || { width: 300, height: 560 };
+  const vp = PET_VIEWPORT;
   // 用 restorePosition 而不是 clampToDisplays：启动恢复时若保存位置所在的显示器
   // 已被拔掉，应回落到主显示器右下角（spec §5.5），而不是停在原坐标的可见边缘。
   const pos = restorePosition(settings.position, vp.width, vp.height, displays);
@@ -35,7 +39,6 @@ export function createPetWindow({ rootDir, settings, displays }) {
   });
 
   win.setAlwaysOnTop(true);
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
   win.loadURL(appUrl('/src/renderer/index.html'));
   win.once('ready-to-show', () => {
     applySettingsToWindow(win, settings);
