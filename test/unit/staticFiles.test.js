@@ -22,6 +22,13 @@ test('阻止目录穿越', () => {
   assert.equal(resolveStaticFile(ROOT, '/src/../../secret.txt'), null);
 });
 
+test('阻止与根目录同前缀的兄弟目录', () => {
+  // 关键用例：/../app-evil/secret.txt 解析到 C:\app-evil\secret.txt。
+  // 只做 startsWith(root) 的朴素实现会错误地放行它；
+  // 只有带路径分隔符边界的检查（root + sep）才会拒绝。
+  assert.equal(resolveStaticFile(ROOT, '/../app-evil/secret.txt'), null);
+});
+
 test('允许 node_modules 下的路径', () => {
   const r = resolveStaticFile(ROOT, '/node_modules/pixi.js/dist/browser/pixi.js');
   assert.ok(r);

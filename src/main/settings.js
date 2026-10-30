@@ -49,7 +49,13 @@ export async function loadSettings(userDataDir) {
   try {
     const text = await readFile(join(userDataDir, 'settings.json'), 'utf8');
     return sanitizeSettings(JSON.parse(text));
-  } catch {
+  } catch (err) {
+    // 文件不存在是正常情况（首次启动），静默回退默认值即可。
+    // 但读不了/解析失败说明配置已损坏——同样回退默认值，却必须留痕，
+    // 否则用户会遇到「改了设置没生效」且无从排查。
+    if (err?.code !== 'ENOENT') {
+      console.warn('[desk-pet] settings.json 无法读取或解析，已回退默认值：', err?.message);
+    }
     return { ...DEFAULT_SETTINGS };
   }
 }
