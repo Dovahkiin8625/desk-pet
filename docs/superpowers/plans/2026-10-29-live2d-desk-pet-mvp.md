@@ -1401,17 +1401,19 @@ import { app, BrowserWindow, screen } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
-import { createPetWindow, applySettingsToWindow } from './window.js';
+import { mkdirSync } from 'node:fs';
+import { registerSchemePrivileges, registerAppProtocol } from './protocol.js';
+import { createPetWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { defaultPosition } from './display.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 if (process.env.DESK_PET_USER_DATA) {
+  // setPath 要求目标目录已存在，否则会抛错（Task 1 的 E2E 用例依赖这一点）。
+  mkdirSync(process.env.DESK_PET_USER_DATA, { recursive: true });
   app.setPath('userData', process.env.DESK_PET_USER_DATA);
 }
 registerSchemePrivileges();
@@ -3272,6 +3274,11 @@ function openSettings() {
 ```
 
 把 Task 3 中的占位 `openSettings` 替换为此实现，并保留 `showContextMenu` 调用 `openSettings` 的行为。
+
+> 注意：Task 3 的 `src/main/index.js` **没有** import `appUrl` 与 `applySettingsToWindow`（那时还没用到）。
+> 本步需要在 `src/main/index.js` 顶部补上：
+> `import { appUrl } from './protocol.js';`
+> `import { applySettingsToWindow } from './window.js';`
 
 同时，`pet:saveSettings` 需要把缩放/透明度变化广播给宠物窗口：
 
