@@ -1,5 +1,3 @@
-const SEMANTIC_ORDER = ['normal', 'happy', 'smile', 'shy', 'angry', 'surprised', 'sad'];
-
 function pickExpression(model3) {
   const list = model3?.FileReferences?.Expressions;
   if (!Array.isArray(list)) return [];

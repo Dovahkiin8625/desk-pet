@@ -52,33 +52,86 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       // 注意：extract.pixels() 每次都会重新渲染；extract.canvas() 返回缓存画面，不可用于逐帧比较
       const extract = app.renderer.plugins.extract;
       const bounds = app.stage.getBounds();
-      // extract.pixels() 返回的行宽是 round(frame.width * resolution)。
-      // 渲染器的 resolution 取的是 devicePixelRatio，在 150% 缩放的 Windows 11 上
-      // 真实步长是假设值的 1.5 倍——不乘 resolution 会取到完全错位的行，
-      // 测试「通过」但证明不了它声称证明的事。
-      const res = app.renderer.resolution;
-      const W = Math.round(bounds.width * res);
-      const H = Math.round(bounds.height * res);
+      // 行宽必须从实际像素数组里取，**不要**自己乘 renderer.resolution：
+      // extract 对 DisplayObject 走 renderer.generateTexture()，
+      // 它按 getLocalBounds 创建 RenderTexture 且不传 resolution，
+      // 因此行宽恒等于 bounds 宽度（settings.RESOLUTION 默认为 1），
+      // 与 renderer.resolution 无关。乘上 resolution 反而会在
+      // 150% 缩放的 Windows 11 上取到完全错位的行。
+      // _rawPixels 直接返回 {pixels, width, height}，是最不容易算错的取法。
+      const raw = extract._rawPixels(app.stage);
+      const W = raw.width;
+      const H = raw.height;
       // 取眼部区域（上部中央）
       const ex = Math.round(W * 0.38);
       const ey = Math.round(H * 0.115);
       const ew = Math.round(W * 0.24);
       const eh = Math.round(H * 0.055);
-      const regionHash = (px) => {
+      const regionHash = () => {
+        // 每帧重新提取：_rawPixels 每次都会重新渲染 target。
+        const r = extract._rawPixels(app.stage);
         let v = 0;
         for (let y = ey; y < ey + eh; y++) {
           for (let x = ex; x < ex + ew; x++) {
-            const i = (y * W + x) * 4;
-            v = (v * 31 + px[i] + px[i + 1] * 3) >>> 0;
+            const i = (y * r.width + x) * 4;
+            v = (v * 31 + r.pixels[i] + r.pixels[i + 1] * 3) >>> 0;
           }
         }
         return v;
       };
+      // 采样区是不是真的落在角色身上：统计该区域的不透明像素占比与亮度分布。
+      // 「画面在动」这条断言对采到哪一块并不敏感（模型整体都在呼吸），
+      // 所以这里额外记录区域特征，让「采错地方」能被看见。
+      const regionStats = () => {
+        const r = extract._rawPixels(app.stage);
+        let opaque = 0;
+        let n = 0;
+        let sum = 0;
+        let sumSq = 0;
+        for (let y = ey; y < ey + eh; y++) {
+          for (let x = ex; x < ex + ew; x++) {
+            const i = (y * r.width + x) * 4;
+            if (r.pixels[i + 3] > 8) {
+              const lum = 0.299 * r.pixels[i] + 0.587 * r.pixels[i + 1] + 0.114 * r.pixels[i + 2];
+              opaque++;
+              n++;
+              sum += lum;
+              sumSq += lum * lum;
+            }
+          }
+        }
+        const mean = n ? sum / n : 0;
+        return {
+          opaqueRatio: opaque / (ew * eh),
+          meanLum: mean,
+          stdDev: Math.sqrt(Math.max(0, n ? sumSq / n - mean * mean : 0)),
+        };
+      };
+      // 模型上半部分（头顶一带）的平均亮度，作为「脸部应当比周围更亮」的基准。
+      const topQuarterMeanLum = () => {
+        const r = extract._rawPixels(app.stage);
+        const yEnd = Math.round(r.height * 0.25);
+        let n = 0;
+        let sum = 0;
+        for (let y = 0; y < yEnd; y++) {
+          for (let x = 0; x < r.width; x++) {
+            const i = (y * r.width + x) * 4;
+            if (r.pixels[i + 3] > 8) {
+              const lum = 0.299 * r.pixels[i] + 0.587 * r.pixels[i + 1] + 0.114 * r.pixels[i + 2];
+              n++;
+              sum += lum;
+            }
+          }
+        }
+        return n ? sum / n : 0;
+      };
       const hashes = new Set();
+      const stats = regionStats();
+      const topMean = topQuarterMeanLum();
       const t0 = performance.now();
       await new Promise((resolve) => {
         const iv = setInterval(() => {
-          hashes.add(regionHash(extract.pixels(app.stage)));
+          hashes.add(regionHash());
           if (performance.now() - t0 > 6000) {
             clearInterval(iv);
             resolve();
@@ -87,6 +140,18 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       });
       return {
         distinctHashes: hashes.size,
+        // 采样几何：实际用的步长必须等于像素数组的真实行宽，
+        // 而真实行宽恒等于模型 bounds 宽度（与 renderer.resolution 无关）。
+        strideUsed: raw.width,
+        arrayRowWidth: raw.width,
+        arrayLength: raw.pixels.length,
+        boundsWidth: bounds.width,
+        boundsHeight: bounds.height,
+        rendererResolution: app.renderer.resolution,
+        opaqueRatio: stats.opaqueRatio,
+        meanLum: stats.meanLum,
+        stdDev: stats.stdDev,
+        topQuarterMeanLum: topMean,
         hasBreath: !!internal.breath,
         breathParams: internal.breath ? internal.breath.getParameters().map((p) => p.parameterId) : [],
         hasEyeBlink: !!internal.eyeBlink,
@@ -98,6 +163,20 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
     expect(info.breathParams).toContain('ParamBreath');
     expect(info.hasEyeBlink).toBe(true);
     expect(info.eyeBlinkParamIds).toContain('ParamEyeLOpen');
+    // 采样步长 = 像素数组真实行宽 = 模型 bounds 宽度。
+    // 这条断言会在「误乘 renderer.resolution」时立刻失败：
+    // 那样用起来的步长会是行宽的两倍（三倍），采样会落到躯干甚至画外。
+    expect(info.arrayRowWidth).toBe(Math.round(info.boundsWidth));
+    expect(info.strideUsed).toBe(info.arrayRowWidth);
+    expect(info.arrayLength).toBe(info.arrayRowWidth * Math.round(info.boundsHeight) * 4);
+    // 采样区确实落在角色身上（有实心像素），而且是有细节的脸部区域
+    // （亮度有明显起伏），不是一整片纯色——采错地方时这两条会失败。
+    expect(info.opaqueRatio).toBeGreaterThan(0.5);
+    expect(info.stdDev).toBeGreaterThan(20);
+    // 脸比模型上半部分整体更亮。采样步长一旦错位（采到躯干/深色衣服），
+    // 亮度会掉到上半部分均值以下，这条就会失败——
+    // 这是让「采到哪一块」不再是一个无关痛痒的量。
+    expect(info.meanLum).toBeGreaterThan(info.topQuarterMeanLum * 1.1);
     expect(info.distinctHashes).toBeGreaterThan(1);
   } finally {
     await ctx.close();

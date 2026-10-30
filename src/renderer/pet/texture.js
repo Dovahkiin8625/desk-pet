@@ -1,6 +1,6 @@
 /**
  * 释放 Live2D 模型占用的纹理。
- * pixi 的纹理缓存以 URL 为键，模型销毁不会自动清理，必须显式移除。
+ * pixi 的纹理缓存以**加载时用的相对路径**为键，模型销毁不会自动清理，必须显式移除。
  */
 export function disposeTextures(model) {
   const PIXI = window.PIXI;
@@ -12,7 +12,7 @@ export function disposeTextures(model) {
   if (!cache) return 0;
 
   // 模型的 PIXI 纹理挂在 model.textures 上（Live2DModel 用 Texture.fromURL 加载，
-  // 纹理以完整 URL 为键缓存在 PIXI.utils.TextureCache 里）。
+  // 纹理以**加载时用的相对路径**为键缓存在 PIXI.utils.TextureCache 里）。
   //
   // 不要去碰 internalModel._textures——那是 CubismRenderer_WebGL 持有的原始
   // WebGLTexture 句柄数组，不可迭代；internalModel.textures 只是 model3.json 里的
