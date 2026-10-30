@@ -1170,7 +1170,19 @@ export function registerAppProtocol(rootDir) {
     // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
     // app:// 的根是整个项目目录，渲染层不需要这些内容，
     // 一旦漏出去就能读到版本库配置与本地密钥文件。
-    const segments = url.pathname.split('/').filter(Boolean);
+    // 每个路径段都要**先解码再判断**：WHATWG URL 不会规范化 %2e，
+    // 而 resolveStaticFile 会解码——不先解码的话 %2egit 能绕过这个检查，
+    // 实测 app://bundle/%2egit/config 曾返回 200。
+    const segments = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .map((seg) => {
+        try {
+          return decodeURIComponent(seg);
+        } catch {
+          return seg;
+        }
+      });
     if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
       return new Response('Forbidden', { status: 403 });
     }
@@ -1423,7 +1435,7 @@ import { createPetWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
-import { loadSettings, saveSettings } from './settings.js';
+import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -1491,10 +1503,10 @@ function writeSettings() {
 
 // 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
 function flushPendingSave() {
-  if (!saveTimer) return;
+  if (!saveTimer) return Promise.resolve();
   clearTimeout(saveTimer);
   saveTimer = null;
-  writeSettings();
+  return writeSettings();
 }
 
 function toggleVisible() {
@@ -1553,7 +1565,15 @@ app.whenReady().then(async () => {
 });
 
 // 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
-app.on('before-quit', flushPendingSave);
+//
+// 注意：before-quit 的处理器是同步的。若直接调用异步写入，进程会在写入完成前退出，
+// writeFile 已经把文件截断成 0 字节——设置丢失，且下次启动读到空文件会重置全部设置。
+// 正确做法是 preventDefault，等写入真正完成后再退出。
+app.on('before-quit', (event) => {
+  if (!saveTimer) return;
+  event.preventDefault();
+  flushPendingSave().finally(() => app.quit());
+});
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();
