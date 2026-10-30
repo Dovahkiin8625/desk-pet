@@ -248,7 +248,9 @@ async function boot() {
     },
     onDragStart: () => {
       // 告诉主进程「新一次拖拽开始」，让它把期望位置重新对齐当前窗口位置。
-      window.pet.dragStart?.();
+      // ipcRenderer.invoke 返回 promise：主进程抛错或帧被拆除时会拒绝，
+      // 而渲染层没有全局 unhandledrejection 兜底——拒绝会变成未处理错误。
+      window.pet.dragStart?.()?.catch?.(() => {});
       // 每次拖拽重新开始：屏幕坐标的累计基准要清零，
       // 否则上一次拖拽的终点会被当成本次的起点。
       lastPointerScreen = null;
@@ -287,7 +289,10 @@ async function boot() {
       window.pet.moveWindowBy?.(dx, dy);
     },
     onDragEnd: () => {
-      // 主进程已在每次 moveWindowBy 时持久化位置，这里无需额外处理
+      // 拖拽结束同样通知主进程清掉累加器：
+      // 累加器的正确性不该依赖 pet:dragStart 这个信号一定送达。
+      // （主进程已在每次 moveWindowBy 时持久化位置，这里无需额外持久化。）
+      window.pet.dragEnd?.()?.catch?.(() => {});
     },
     onContextMenu: () => {
       window.pet.showContextMenu();

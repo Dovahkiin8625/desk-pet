@@ -267,7 +267,10 @@ test('拖到屏幕边缘被夹住后，光标往回走时角色回到光标下�
       const [ww, wh] = w.getSize();
       return { wa, ww, wh };
     });
-    const maxY = geom.wa.y + geom.wa.height - geom.wh;
+    // 夹紧上界用与实现（display.js 的 clampToDisplays）**同一个公式**：
+    // wa.y + Math.max(0, wa.height - width)。
+    // 直接写 wa.height - wh 的话，工作区比窗口还矮时会得到低于工作区原点的上界。
+    const maxY = geom.wa.y + Math.max(0, geom.wa.height - geom.wh);
     // 越过下边缘 200px，确保窗口确实被钉在边缘上。
     const step = Math.ceil((maxY - before.y + 200) / 6);
 
@@ -291,6 +294,52 @@ test('拖到屏幕边缘被夹住后，光标往回走时角色回到光标下�
     expect(Math.abs(after.x - before.x), '横向不应漂移').toBeLessThanOrEqual(2);
     // 明确排除「跳到上边缘」这个回归形态。
     expect(after.y, '角色不应被丢到上边缘').toBeGreaterThan(geom.wa.y);
+
+    expect(errors).toEqual([]);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('即使 dragStart 信号丢失，拖拽结束也会清掉累加器，下一次拖拽仍从窗口当前位置起算', async () => {
+  const ctx = await launchApp();
+  const errors = collectErrors(ctx.win);
+  try {
+    const before = await moveToTopLeft(ctx);
+
+    const geom = await ctx.app.evaluate(({ BrowserWindow, screen }) => {
+      const wa = screen.getPrimaryDisplay().workArea;
+      const w = BrowserWindow.getAllWindows()[0];
+      const [ww, wh] = w.getSize();
+      return { wa, ww, wh };
+    });
+    const maxY = geom.wa.y + Math.max(0, geom.wa.height - geom.wh);
+
+    // 拔掉 pet:dragStart 的处理器 = 这个信号**永远送不到**主进程。
+    // 渲染层的 invoke 会因此被拒绝——但它带着 .catch，不会变成未处理错误。
+    await ctx.app.evaluate(({ ipcMain }) => ipcMain.removeHandler('pet:dragStart'));
+
+    // 第一次拖拽：一路往下顶到屏幕边缘。
+    // 期望位置（未夹紧）会停在远低于边缘的地方，而窗口被钉在边缘上。
+    const step = Math.ceil((maxY - before.y + 200) / 6);
+    const down = [];
+    for (let i = 1; i <= 6; i++) down.push({ x: 0, y: step * i });
+    await dragAlong(ctx.win, down);
+
+    const pinned = await windowPos(ctx);
+    expect(pinned.y, '窗口应被钉在下边缘').toBeGreaterThan(maxY - 2);
+    expect(pinned.y, '窗口应被钉在下边缘').toBeLessThanOrEqual(maxY + 2);
+
+    // 第二次拖拽：往上拉 100px。
+    // 若累加器没被清掉，它仍停在屏幕边缘之外，扣掉 100 还在边缘之外，
+    // 窗口会被夹住纹丝不动；清掉之后才能真正往上走。
+    await dragAlong(ctx.win, [
+      { x: 0, y: -50 },
+      { x: 0, y: -100 },
+    ]);
+
+    const after = await windowPos(ctx);
+    expect(Math.abs(after.y - (maxY - 100)), '第二次拖拽应从窗口当前位置重新起算').toBeLessThanOrEqual(2);
 
     expect(errors).toEqual([]);
   } finally {
@@ -354,11 +403,13 @@ test('重启后角色回到上次位置', async () => {
   expect(savedPosition).toBeTruthy();
 
   const second = await launchApp({ userDataDir });
+  const secondErrors = collectErrors(second.win);
   try {
     const pos = await windowPos(second);
     // 位置应与保存值一致（落盘时取整过，窗口位置也是整数）。
     expect(pos.x).toBe(savedPosition.x);
     expect(pos.y).toBe(savedPosition.y);
+    expect(secondErrors).toEqual([]);
   } finally {
     await second.close();
     await rm(userDataDir, { recursive: true, force: true });

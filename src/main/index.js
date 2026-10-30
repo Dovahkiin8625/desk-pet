@@ -174,6 +174,12 @@ app.whenReady().then(async () => {
     onDragStart: () => {
       desiredPosition = null;
     },
+    // 拖拽结束也清掉累加器。
+    // 这样即使 pet:dragStart 信号在某次丢失（preload 方法被删、onDragStart 没接上），
+    // 下一次拖拽也不会累加到上一次拖拽的未夹紧位置上——那正是 Important #1 描述的缺陷类型。
+    onDragEnd: () => {
+      desiredPosition = null;
+    },
   });
 
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });

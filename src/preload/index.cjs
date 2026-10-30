@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('pet', {
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
   // 新一次拖拽开始：主进程据此把期望位置重新对齐到当前窗口位置。
   dragStart: () => ipcRenderer.invoke('pet:dragStart'),
+  // 拖拽结束：主进程清掉累加器，不依赖 dragStart 一定送达。
+  dragEnd: () => ipcRenderer.invoke('pet:dragEnd'),
   onModelSwitchRequest: (cb) => {
     ipcRenderer.on('pet:modelSwitchRequest', (_e, modelId) => cb(modelId));
   },

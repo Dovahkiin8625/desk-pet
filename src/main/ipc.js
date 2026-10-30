@@ -10,6 +10,7 @@ export function registerIpc({
   onShowContextMenu,
   onMoveBy,
   onDragStart,
+  onDragEnd,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -26,5 +27,10 @@ export function registerIpc({
   // 新一次拖拽开始：主进程清掉期望位置，让下一次增量从窗口的真实位置重新起算。
   ipcMain.handle('pet:dragStart', () => {
     onDragStart();
+  });
+  // 拖拽结束同样清掉累加器：即使 dragStart 信号在某次丢失，
+  // 下一次拖拽也不会累加到上一次拖拽的未夹紧位置上。
+  ipcMain.handle('pet:dragEnd', () => {
+    onDragEnd();
   });
 }
