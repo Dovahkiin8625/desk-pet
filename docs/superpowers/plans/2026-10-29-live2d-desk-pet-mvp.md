@@ -3410,9 +3410,30 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑补全并留一个可断言的记录：
 
 ```js
-    onDragMove: ({ deltaX, deltaY }) => {
-      window.__pet.lastDragDelta = { deltaX, deltaY };
-      window.pet.moveWindowBy?.(deltaX, deltaY);
+    onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
+      // 增量必须换算到**屏幕**坐标再累加。
+      //
+      // clientX/clientY 是窗口内的坐标：窗口追着光标跑，窗口每移动 1px，
+      // 下一个事件的 clientX 就少 1px。于是「所有 clientX 增量之和」
+      // = 光标的屏幕位移 − 窗口自己的位移，角色只走到光标位移的一半
+      // （实测拖 120px 只走了 60px，角色落在光标后面）。
+      //
+      // window.screenX + clientX 才是光标在**屏幕**上的位置，
+      // 它的增量就是光标真实的屏幕位移：累加起来正好等于光标走过的距离，
+      // 角色才会严丝合缝地跟着光标走。
+      // 传给主进程的仍然是增量，主进程照旧累加、夹紧、持久化。
+      const pointer = { x: window.screenX + clientX, y: window.screenY + clientY };
+      let dx = deltaX;
+      let dy = deltaY;
+      if (lastPointerScreen) {
+        dx = pointer.x - lastPointerScreen.x;
+        dy = pointer.y - lastPointerScreen.y;
+      }
+      // 第一次移动时窗口还没动过，clientX 的增量本身就是屏幕位移，
+      // 直接用；之后一律用屏幕坐标的增量。
+      lastPointerScreen = pointer;
+      window.__pet.lastDragDelta = { deltaX: dx, deltaY: dy };
+      window.pet.moveWindowBy?.(dx, dy);
     },
     onDragEnd: () => {
       // 主进程已在每次 moveWindowBy 时持久化位置，这里无需额外处理
@@ -3421,6 +3442,13 @@ Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑
 
 > **不要**为拖拽再单独挂一套指针监听器。Task 7 的 `attachInteraction` 是画布上唯一的指针事件入口；
 > 重复挂载会导致一次拖拽被处理两次——窗口位移翻倍，且松手时同时触发「摸头」反应。
+
+> **E2E 里读取 settings.json 要在测试进程里读**（用 `app.evaluate(({app}) => app.getPath('userData'))`
+> 拿到目录，再由测试进程读文件）——Playwright 的 `app.evaluate` 环境里既没有 `require`，
+> 动态 `import()` 也会报「A dynamic import callback was not specified」。
+
+> **拖拽测试前先把窗口挪到工作区左上角**：桌宠的默认位置是主显示器工作区的右下角，
+> 正好压在夹紧边界上，在那里往右下拖是空操作。
 - [ ] **Step 3: 写 `test/e2e/drag.spec.js`**
 
 ```js
