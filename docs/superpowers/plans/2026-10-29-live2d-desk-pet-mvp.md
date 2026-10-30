@@ -2927,11 +2927,15 @@ export function normalizeZone(name) {
  */
 export function geometricZone(bounds, x, y) {
   if (!bounds) return 'other';
-  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.width)) return 'other';
-  if (!Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)) return 'other';
+  if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return 'other';
+  if (bounds.height <= 0) return 'other';
   if (!Number.isFinite(x) || !Number.isFinite(y)) return 'other';
   if (x < bounds.x || x > bounds.x + bounds.width) return 'other';
   const rel = (y - bounds.y) / bounds.height;
+  // NaN 的比较结果全是 false，会一路落到 rel <= 0.35 → 返回 'body'，
+  // 对任何 x 都成立——所以这里必须显式挡掉非有限值。
+  if (!Number.isFinite(rel)) return 'other';
   if (rel < 0 || rel > 1) return 'other';
   return rel <= 0.35 ? 'head' : 'body';
 }
@@ -3163,7 +3167,8 @@ Expected: PASS（10 passed）。
   const canvas = stage.app.view;
 
   // 空闲计时：20 秒无交互则播一次 idle 动作（spec §5.1）
-  const IDLE_MS = 20000;
+  const DEFAULT_IDLE_MS = 20000;
+  let idleMs = DEFAULT_IDLE_MS;
   let idleTimer = null;
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
@@ -3193,11 +3198,19 @@ Expected: PASS（10 passed）。
       }
       // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
       resetIdleTimer();
-    }, IDLE_MS);
+    }, idleMs);
   }
   resetIdleTimer();
   // 暴露出来，测试不必真的等 20 秒。
-  window.__pet.idleMs = IDLE_MS;
+  window.__pet.idleMs = idleMs;
+  // 测试缝：允许把空闲间隔调短以验证「重新武装」——
+  // 没有它，重新武装只能靠代码审读确认。
+  window.__pet.setIdleMs = (ms) => {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return idleMs;
+    idleMs = ms;
+    resetIdleTimer();
+    return idleMs;
+  };
 
   attachInteraction({
     canvas,
