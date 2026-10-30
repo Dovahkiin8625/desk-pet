@@ -1396,6 +1396,8 @@ export function registerIpc({
   switchModel,
   onOpenSettings,
   onShowContextMenu,
+  onMoveBy,
+  onDragStart,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -1461,6 +1463,8 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 拖拽中的期望位置（未夹紧）。见 onMoveBy 的说明。
+let desiredPosition = null;
 // 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
 // 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
 let pendingWrite = null;
@@ -3377,6 +3381,8 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 
 ```js
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
+  // 新一次拖拽开始：主进程据此把期望位置重新对齐到当前窗口位置。
+  dragStart: () => ipcRenderer.invoke('pet:dragStart'),
 ```
 
 在 `src/main/ipc.js` 的 `registerIpc` 中新增处理器：
@@ -3385,6 +3391,9 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
   ipcMain.handle('pet:moveWindowBy', (_e, delta) => {
     if (!delta) return;
     onMoveBy(Number(delta.dx) || 0, Number(delta.dy) || 0);
+  });
+  ipcMain.handle('pet:dragStart', () => {
+    onDragStart();
   });
 ```
 
@@ -3395,11 +3404,26 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 ```js
     onMoveBy: (dx, dy) => {
       if (!win || win.isDestroyed()) return;
-      const [x, y] = win.getPosition();
       const [w, h] = win.getSize();
-      const next = clampToDisplays(x + dx, y + dy, w, h, currentDisplays());
-      win.setPosition(next.x, next.y);
-      persist({ position: next });
+      // 期望位置 = 拖拽起点 + Σdelta，**不夹紧**。
+      //
+      // 若把增量直接累加到「已夹紧」的位置上，顶到屏幕边缘时被夹紧吃掉的那部分
+      // 增量就永久丢失了；光标往回走时，返回的增量会从被钉住的位置全额施加，
+      // 角色于是越过光标、跳到相反的边缘并停在那里——而且那个错误位置会被持久化。
+      if (!desiredPosition) {
+        const [x, y] = win.getPosition();
+        desiredPosition = { x, y };
+      }
+      desiredPosition.x += dx;
+      desiredPosition.y += dy;
+      const applied = clampToDisplays(desiredPosition.x, desiredPosition.y, w, h, currentDisplays());
+      win.setPosition(applied.x, applied.y);
+      // 持久化的是**实际可见**的位置，不是可能跑到屏幕外的期望位置。
+      persist({ position: applied });
+    },
+    onDragStart: () => {
+      // 新一次拖拽开始：期望位置重新对齐当前窗口位置。
+      desiredPosition = null;
     },
 ```
 
@@ -3410,6 +3434,11 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑补全并留一个可断言的记录：
 
 ```js
+    onDragStart: () => {
+      // 告诉主进程「新一次拖拽开始」，让它把期望位置重新对齐当前窗口位置。
+      window.pet.dragStart?.();
+      lastPointerScreen = null;
+    },
     onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
       // 增量必须换算到**屏幕**坐标再累加。
       //
