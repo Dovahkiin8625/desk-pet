@@ -3481,9 +3481,6 @@ Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑
       window.__pet.lastDragDelta = { deltaX: dx, deltaY: dy };
       window.pet.moveWindowBy?.(dx, dy);
     },
-    onDragEnd: () => {
-      // 主进程已在每次 moveWindowBy 时持久化位置，这里无需额外处理
-    },
 ```
 
 > **不要**为拖拽再单独挂一套指针监听器。Task 7 的 `attachInteraction` 是画布上唯一的指针事件入口；
