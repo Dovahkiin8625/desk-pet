@@ -1762,15 +1762,23 @@ export function deriveManifest(model3, opts = {}) {
 
 /** 清单与探测结果合并：清单优先，缺失项用探测值补齐。 */
 export function mergeManifest(base, derived) {
-  if (!base) return derived;
-  const expressions = { ...(derived?.expressions || {}), ...(base.expressions || {}) };
-  const motions = { ...(derived?.motions || {}), ...(base.motions || {}) };
+  const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
+  const motions = { ...(derived?.motions || {}), ...(base?.motions || {}) };
+  // 降级时**只**补 normal，且取 availableExpressions[0]——与 resolveExpressionName
+  // 的回退是同一个值，行为一致。
+  // 刻意不按序号补其它语义：Haru 的 expressions[1] 是 F02，而清单里 F02 是 angry，
+  // 按序号猜会让「摸头」触发生气的表情。猜不准比不猜更糟。
+  if (!expressions.normal) {
+    const first = derived?.availableExpressions?.[0];
+    if (first) expressions.normal = first;
+  }
   return {
     ...derived,
-    ...base,
+    ...(base || {}),
     expressions,
     motions,
-    derived: false,
+    // derived 为 true 表示「没有用户清单，全部来自探测」。
+    derived: !base,
     availableExpressions: derived?.availableExpressions || [],
     motionGroups: derived?.motionGroups || {},
   };
