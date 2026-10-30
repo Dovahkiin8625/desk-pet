@@ -57,3 +57,37 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
     await ctx.close();
   }
 });
+
+test('app:// 拒绝点开头的路径段及其编码变体', async () => {
+  const ctx = await launchApp();
+  try {
+    const results = await ctx.win.evaluate(async () => {
+      const paths = [
+        '/.git/config',
+        '/%2egit/config',
+        '/%2Egit/config',
+        '/%5c.git/config',
+        '/%5c%5c.git/config',
+        '/.superpowers/sdd/plan-path',
+      ];
+      const out = [];
+      for (const p of paths) {
+        const res = await fetch('app://bundle' + p);
+        const body = await res.text();
+        out.push({
+          path: p,
+          status: res.status,
+          leaked: body.includes('repositoryformatversion') || body.includes('[core]'),
+        });
+      }
+      return out;
+    });
+
+    for (const r of results) {
+      expect(r.status, r.path).not.toBe(200);
+      expect(r.leaked, r.path).toBe(false);
+    }
+  } finally {
+    await ctx.close();
+  }
+});

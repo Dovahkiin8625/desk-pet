@@ -71,7 +71,11 @@ function persist(patch) {
 }
 
 function writeSettings() {
-  const p = saveSettings(app.getPath('userData'), settings)
+  // 串行化：若上一次写入还没落盘，新的写入必须排在它后面。
+  // 否则两次写入重叠时，先发的旧内容可能后落盘，把新设置覆盖掉。
+  const p = (pendingWrite || Promise.resolve())
+    .catch(() => {})
+    .then(() => saveSettings(app.getPath('userData'), settings))
     .catch((err) => {
       // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
       console.warn('[desk-pet] settings 保存失败：', err?.message);
