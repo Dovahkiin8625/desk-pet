@@ -1504,7 +1504,11 @@ function persist(patch) {
 }
 
 function writeSettings() {
-  const p = saveSettings(app.getPath('userData'), settings)
+  // 串行化：若上一次写入还没落盘，新的写入必须排在它后面。
+  // 否则两次写入重叠时，先发的旧内容可能后落盘，把新设置覆盖掉。
+  const p = (pendingWrite || Promise.resolve())
+    .catch(() => {})
+    .then(() => saveSettings(app.getPath('userData'), settings))
     .catch((err) => {
       // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
       console.warn('[desk-pet] settings 保存失败：', err?.message);
@@ -1621,6 +1625,40 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
       BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
     );
     expect(alwaysOnTop).toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('app:// 拒绝点开头的路径段及其编码变体', async () => {
+  const ctx = await launchApp();
+  try {
+    const results = await ctx.win.evaluate(async () => {
+      const paths = [
+        '/.git/config',
+        '/%2egit/config',
+        '/%2Egit/config',
+        '/%5c.git/config',
+        '/%5c%5c.git/config',
+        '/.superpowers/sdd/plan-path',
+      ];
+      const out = [];
+      for (const p of paths) {
+        const res = await fetch('app://bundle' + p);
+        const body = await res.text();
+        out.push({
+          path: p,
+          status: res.status,
+          leaked: body.includes('repositoryformatversion') || body.includes('[core]'),
+        });
+      }
+      return out;
+    });
+
+    for (const r of results) {
+      expect(r.status, r.path).not.toBe(200);
+      expect(r.leaked, r.path).toBe(false);
+    }
   } finally {
     await ctx.close();
   }
