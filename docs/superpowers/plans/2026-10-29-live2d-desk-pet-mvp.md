@@ -1176,13 +1176,19 @@ export function registerAppProtocol(rootDir) {
     const segments = url.pathname
       .split('/')
       .filter(Boolean)
-      .map((seg) => {
+      .flatMap((seg) => {
+        let decoded = seg;
         try {
-          return decodeURIComponent(seg);
+          decoded = decodeURIComponent(seg);
         } catch {
-          return seg;
+          decoded = seg;
         }
-      });
+        // 反斜杠同样是分隔符：%5c 解码后是 "\"，不当作分隔符的话
+        // "\.git" 不以 "." 开头，能绕过这个检查；而 resolveStaticFile 会把
+        // "\" 归一化成 "/"，最终仍指向 <root>/.git/config。
+        return decoded.replace(/\\/g, '/').split('/');
+      })
+      .filter(Boolean);
     if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
       return new Response('Forbidden', { status: 403 });
     }
@@ -1455,6 +1461,9 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
+// 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
+let pendingWrite = null;
 
 function currentDisplays() {
   // 主显示器必须排在第一位：display.js 的 defaultPosition 依赖 displays[0] 是主显示器，
@@ -1495,18 +1504,32 @@ function persist(patch) {
 }
 
 function writeSettings() {
-  return saveSettings(app.getPath('userData'), settings).catch((err) => {
-    // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
-    console.warn('[desk-pet] settings 保存失败：', err?.message);
-  });
+  const p = saveSettings(app.getPath('userData'), settings)
+    .catch((err) => {
+      // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
+      console.warn('[desk-pet] settings 保存失败：', err?.message);
+    })
+    .finally(() => {
+      if (pendingWrite === p) pendingWrite = null;
+    });
+  pendingWrite = p;
+  return p;
 }
 
 // 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
-function flushPendingSave() {
-  if (!saveTimer) return Promise.resolve();
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  return writeSettings();
+function flushPendingSave(event) {
+  // 要覆盖两种情况：还有防抖计时器没触发；或者写入已经在进行中。
+  // 只看 saveTimer 不够——计时器触发后会把 saveTimer 置空，
+  // 此刻退出的话 writeFile 已经把文件截断成 0 字节却还没写完。
+  if (!saveTimer && !pendingWrite) return;
+  event.preventDefault();
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    writeSettings();
+  }
+  const wait = pendingWrite || Promise.resolve();
+  wait.finally(() => app.quit());
 }
 
 function toggleVisible() {
@@ -1569,11 +1592,7 @@ app.whenReady().then(async () => {
 // 注意：before-quit 的处理器是同步的。若直接调用异步写入，进程会在写入完成前退出，
 // writeFile 已经把文件截断成 0 字节——设置丢失，且下次启动读到空文件会重置全部设置。
 // 正确做法是 preventDefault，等写入真正完成后再退出。
-app.on('before-quit', (event) => {
-  if (!saveTimer) return;
-  event.preventDefault();
-  flushPendingSave().finally(() => app.quit());
-});
+app.on('before-quit', flushPendingSave);
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();
