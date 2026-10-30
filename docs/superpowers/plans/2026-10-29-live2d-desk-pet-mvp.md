@@ -1707,8 +1707,6 @@ git commit -m "feat: app:// 协议、宠物窗口、托盘、菜单与 IPC 装�
 - [ ] **Step 1: 写 `src/renderer/pet/manifest.js`**
 
 ```js
-const SEMANTIC_ORDER = ['normal', 'happy', 'smile', 'shy', 'angry', 'surprised', 'sad'];
-
 function pickExpression(model3) {
   const list = model3?.FileReferences?.Expressions;
   if (!Array.isArray(list)) return [];
@@ -1915,9 +1913,13 @@ export async function loadPetModel(manifest) {
 
 /** 销毁模型并显式释放纹理，避免多次切换后显存持续增长。 */
 export function disposePetModel(model) {
-  if (!model) return;
+  if (!model) return 0;
   try {
-    disposeTextures(model);
+    const released = disposeTextures(model);
+    if (released === 0) {
+      console.warn('[desk-pet] 未释放任何模型纹理，显存可能持续增长');
+    }
+    return released;
   } catch (err) {
     // 释放失败不应阻断切换，但必须留痕——否则显存泄漏完全不可见。
     console.warn('[desk-pet] 模型纹理释放失败：', err?.message);
@@ -1948,7 +1950,7 @@ export function disposeTextures(model) {
   if (!cache) return 0;
 
   // 模型的 PIXI 纹理挂在 model.textures 上（Live2DModel 用 Texture.fromURL 加载，
-  // 纹理以完整 URL 为键缓存在 PIXI.utils.TextureCache 里）。
+  // 纹理以**加载时用的相对路径**为键缓存在 PIXI.utils.TextureCache 里）。
   //
   // 不要去碰 internalModel._textures——那是 CubismRenderer_WebGL 持有的原始
   // WebGLTexture 句柄数组，不可迭代；internalModel.textures 只是 model3.json 里的
@@ -2108,20 +2110,29 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       // 渲染器的 resolution 取的是 devicePixelRatio，在 150% 缩放的 Windows 11 上
       // 真实步长是假设值的 1.5 倍——不乘 resolution 会取到完全错位的行，
       // 测试「通过」但证明不了它声称证明的事。
-      const res = app.renderer.resolution;
-      const W = Math.round(bounds.width * res);
-      const H = Math.round(bounds.height * res);
+      // 行宽必须从实际像素数组里取，**不要**自己乘 renderer.resolution：
+      // extract 对 DisplayObject 走 renderer.generateTexture()，
+      // 它按 getLocalBounds 创建 RenderTexture 且不传 resolution，
+      // 因此行宽恒等于 bounds 宽度（settings.RESOLUTION 默认为 1），
+      // 与 renderer.resolution 无关。乘上 resolution 反而会在
+      // 150% 缩放的 Windows 11 上取到完全错位的行。
+      // _rawPixels 直接返回 {pixels, width, height}，是最不容易算错的取法。
+      const raw = extract._rawPixels(app.stage);
+      const W = raw.width;
+      const H = raw.height;
       // 取眼部区域（上部中央）
       const ex = Math.round(W * 0.38);
       const ey = Math.round(H * 0.115);
       const ew = Math.round(W * 0.24);
       const eh = Math.round(H * 0.055);
-      const regionHash = (px) => {
+      const regionHash = () => {
+        // 每帧重新提取：_rawPixels 每次都会重新渲染 target。
+        const r = extract._rawPixels(app.stage);
         let v = 0;
         for (let y = ey; y < ey + eh; y++) {
           for (let x = ex; x < ex + ew; x++) {
-            const i = (y * W + x) * 4;
-            v = (v * 31 + px[i] + px[i + 1] * 3) >>> 0;
+            const i = (y * r.width + x) * 4;
+            v = (v * 31 + r.pixels[i] + r.pixels[i + 1] * 3) >>> 0;
           }
         }
         return v;
@@ -2130,7 +2141,7 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       const t0 = performance.now();
       await new Promise((resolve) => {
         const iv = setInterval(() => {
-          hashes.add(regionHash(extract.pixels(app.stage)));
+          hashes.add(regionHash());
           if (performance.now() - t0 > 6000) {
             clearInterval(iv);
             resolve();
