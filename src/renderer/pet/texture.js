@@ -31,13 +31,43 @@ export function disposeTextures(model) {
   for (const key of keys) {
     const cached = cache[key];
     if (!cached) continue;
-    PIXI.Texture.removeFromCache(key);
-    cached.destroy(true);
-    released++;
+    try {
+      PIXI.Texture.removeFromCache(key);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      // 单个键失败不能中断整批：其余纹理仍要释放，
+      // 而且「释放了几个」必须如实反映，否则 0 会被误读成泄漏。
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
+    }
   }
 
   // 刻意**不做**「把缓存里所有 URL 形状的键都清掉」这种兜底：
   // PIXI 的纹理缓存是全局命名空间，那样会把别的模型或未来任何资源的纹理
   // 一起销毁，表现为切换形象后渲染空白。
+  return released;
+}
+
+/**
+ * 按路径前缀清理缓存中的纹理。用于「模型加载到一半失败」——
+ * 那时拿不到模型对象，但已经进缓存的纹理必须清掉，否则反复失败会堆积显存。
+ * 前缀带结尾斜杠，不会误伤名字以此前缀开头的其它目录。
+ */
+export function disposeTexturesUnderPath(pathPrefix) {
+  const PIXI = window.PIXI;
+  const cache = PIXI.TextureCache || PIXI.utils?.TextureCache;
+  if (!cache) return 0;
+  let released = 0;
+  for (const key of Object.keys(cache)) {
+    if (!key.startsWith(pathPrefix)) continue;
+    const cached = cache[key];
+    try {
+      PIXI.Texture.removeFromCache(key);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
+    }
+  }
   return released;
 }
