@@ -1941,7 +1941,7 @@ export function disposePetModel(model) {
 ```js
 /**
  * 释放 Live2D 模型占用的纹理。
- * pixi 的纹理缓存以 URL 为键，模型销毁不会自动清理，必须显式移除。
+ * pixi 的纹理缓存以**加载时用的相对路径**为键，模型销毁不会自动清理，必须显式移除。
  */
 export function disposeTextures(model) {
   const PIXI = window.PIXI;
@@ -2056,6 +2056,12 @@ boot().catch((err) => {
 ```
 
 - [ ] **Step 7: 写 `test/e2e/render.spec.js`**
+
+> 实现时补强（Task 4 修复轮次 2 的结论，已在提交 `b914596` 中落地）：
+> 像素采样断言不只要证明「模型在动」，还要证明「取到的是目标区域」——
+> 需同时断言 、（取错区域会掉到 0.06）、
+>  与 （脸部比上半部亮）。
+> 复审已独立复现：步长翻倍 → meanLum 88.6 < 阈值 137.8；区域翻倍 → opaqueRatio 0.062 < 0.5。
 
 ```js
 import { test, expect } from '@playwright/test';
