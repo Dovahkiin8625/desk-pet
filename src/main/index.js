@@ -28,6 +28,9 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
+// 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
+let pendingWrite = null;
 
 function currentDisplays() {
   // 主显示器必须排在第一位：display.js 的 defaultPosition 依赖 displays[0] 是主显示器，
@@ -68,22 +71,34 @@ function persist(patch) {
 }
 
 function writeSettings() {
-  return saveSettings(app.getPath('userData'), settings).catch((err) => {
-    // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
-    console.warn('[desk-pet] settings 保存失败：', err?.message);
-  });
+  const p = saveSettings(app.getPath('userData'), settings)
+    .catch((err) => {
+      // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
+      console.warn('[desk-pet] settings 保存失败：', err?.message);
+    })
+    .finally(() => {
+      if (pendingWrite === p) pendingWrite = null;
+    });
+  pendingWrite = p;
+  return p;
 }
 
 // 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
-// before-quit 的处理器是同步的：直接调 writeSettings() 的话，异步写盘不会被等待，
-// 进程会在 writeFile 截断文件之后、写完数据之前退出——结果是 settings.json 变成空文件，
-// 既丢了改动又留下损坏的配置。所以必须 preventDefault 拦住退出，等写完再 app.quit()。
+// before-quit 的处理器是同步的，异步写盘不会被等待——所以必须 preventDefault
+// 拦住退出，等写完再 app.quit()。
 function flushPendingSave(event) {
-  if (!saveTimer) return;
+  // 要覆盖两种情况：还有防抖计时器没触发；或者写入已经在进行中。
+  // 只看 saveTimer 不够——计时器触发后会把 saveTimer 置空，
+  // 此刻退出的话 writeFile 已经把文件截断成 0 字节却还没写完。
+  if (!saveTimer && !pendingWrite) return;
   event.preventDefault();
-  clearTimeout(saveTimer);
-  saveTimer = null;
-  writeSettings().finally(() => app.quit());
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    writeSettings();
+  }
+  const wait = pendingWrite || Promise.resolve();
+  wait.finally(() => app.quit());
 }
 
 function toggleVisible() {

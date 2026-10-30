@@ -44,18 +44,25 @@ export function registerAppProtocol(rootDir) {
     // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
     // app:// 的根是整个项目目录，渲染层不需要这些内容，
     // 一旦漏出去就能读到版本库配置与本地密钥文件。
-    // 必须先解码再判断：URL 解析器不会把 %2e 归一化成 '.'，
-    // 但 resolveStaticFile 会解码，所以 '%2egit/config' 能绕过只查原始串的检查。
+    // 每个路径段都要**先解码再判断**：WHATWG URL 不会规范化 %2e，
+    // 而 resolveStaticFile 会解码——不先解码的话 %2egit 能绕过这个检查，
+    // 实测 app://bundle/%2egit/config 曾返回 200。
     const segments = url.pathname
       .split('/')
       .filter(Boolean)
-      .map((seg) => {
+      .flatMap((seg) => {
+        let decoded = seg;
         try {
-          return decodeURIComponent(seg);
+          decoded = decodeURIComponent(seg);
         } catch {
-          return seg;
+          decoded = seg;
         }
-      });
+        // 反斜杠同样是分隔符：%5c 解码后是 "\"，不当作分隔符的话
+        // "\.git" 不以 "." 开头，能绕过这个检查；而 resolveStaticFile 会把
+        // "\" 归一化成 "/"，最终仍指向 <root>/.git/config。
+        return decoded.replace(/\\/g, '/').split('/');
+      })
+      .filter(Boolean);
     if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
       return new Response('Forbidden', { status: 403 });
     }
