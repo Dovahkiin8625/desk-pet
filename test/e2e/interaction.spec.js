@@ -66,6 +66,20 @@ test('命中区由模型自身的命中区决定，而不是包围盒的上三�
   const errors = collectErrors(ctx.win);
   try {
     const result = await ctx.win.evaluate(async () => {
+      // 直接用页面里那份 normalizeZone，别在测试里另写一份匹配规则——
+      // 否则模型把身体命中区叫 Torso 之类时，测试会误判成「找不到区分点」。
+      let normalizeZone;
+      try {
+        ({ normalizeZone } = await import('/src/renderer/pet/hitZone.js'));
+      } catch {
+        normalizeZone = (n) => {
+          const s = String(n ?? '').toLowerCase();
+          if (s.includes('head')) return 'head';
+          if (s.includes('body') || s.includes('torso')) return 'body';
+          return 'other';
+        };
+      }
+
       const model = window.__pet.model;
       const canvas = window.__pet.stage.app.view;
       const b = model.getBounds();
@@ -77,8 +91,9 @@ test('命中区由模型自身的命中区决定，而不是包围盒的上三�
       for (let f = 0.05; f <= 0.35; f += 0.01) {
         const y = b.y + b.height * f;
         const raw = model.hitTest(cx, y);
-        const names = (Array.isArray(raw) ? raw : [raw]).map((n) => String(n).toLowerCase());
-        if (names.some((n) => n.includes('body'))) {
+        const names = Array.isArray(raw) ? raw : [raw];
+        const zone = names.map(normalizeZone).find((z) => z !== 'other');
+        if (zone === 'body') {
           target = { f, x: cx, y };
           break;
         }
@@ -141,14 +156,16 @@ test('指针移动触发视线跟随', async () => {
 test('右键不会开始拖拽，右键菜单仍然送达', async () => {
   const ctx = await launchApp();
   const errors = collectErrors(ctx.win);
-  // 主进程里把原生菜单弹窗换成计数桩：真弹窗会挡住自动化。
-  await ctx.app.evaluate(({ Menu }) => {
-    globalThis.__contextMenuCount = 0;
-    Menu.prototype.popup = function () {
-      globalThis.__contextMenuCount += 1;
-    };
-  });
   try {
+    // 主进程里把原生菜单弹窗换成计数桩：真弹窗会挡住自动化。
+    // 必须在 try 里：这一步抛错时 finally 仍要负责关掉 Electron 进程。
+    await ctx.app.evaluate(({ Menu }) => {
+      globalThis.__contextMenuCount = 0;
+      Menu.prototype.popup = function () {
+        globalThis.__contextMenuCount += 1;
+      };
+    });
+
     const result = await ctx.win.evaluate(async () => {
       const model = window.__pet.model;
       const canvas = window.__pet.stage.app.view;
@@ -253,8 +270,44 @@ test('拖拽不触发点击反应，点击才触发', async () => {
   }
 });
 
-test('空闲计时会播放随机 idle 动作并回到 normal 表情', async () => {
-  test.setTimeout(60000);
+test('真实指针事件下画布会捕获指针，拖拽移出窗口也不丢事件', async () => {
+  const ctx = await launchApp();
+  const errors = collectErrors(ctx.win);
+  try {
+    await ctx.win.bringToFront();
+
+    // 真实（受信任的）指针事件：Playwright 的 mouse 会产生真实的 pointerId，
+    // setPointerCapture 在这条路径上才会真的生效——
+    // 合成事件（dispatchEvent）没有活动指针，规范要求此时必须抛 NotFoundError。
+    await ctx.win.mouse.move(150, 150);
+    await ctx.win.mouse.down();
+
+    const captured = await ctx.win.evaluate(() => {
+      const canvas = window.__pet.stage.app.view;
+      if (typeof canvas.hasPointerCapture !== 'function') return null;
+      const ids = [];
+      for (let id = 1; id <= 5; id += 1) {
+        if (canvas.hasPointerCapture(id)) ids.push(id);
+      }
+      return ids;
+    });
+
+    // 按住之后移动：位移远超阈值 → 进入拖拽态 → 松手不产生点击反应。
+    await ctx.win.mouse.move(220, 200);
+    const zoneAfterDrag = await ctx.win.evaluate(() => window.__pet.lastZone);
+    await ctx.win.mouse.up();
+
+    expect(captured, 'hasPointerCapture 不可用时无法断言捕获').not.toBeNull();
+    expect(captured.length, '按下鼠标时画布应捕获该指针').toBeGreaterThan(0);
+    // 拖拽（不是点击）不应产生点击反应。
+    expect(zoneAfterDrag).toBeNull();
+    expect(errors).toEqual([]);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('空闲计时会反复播放随机 idle 动作并回到 normal 表情', async () => {
   const ctx = await launchApp();
   const errors = collectErrors(ctx.win);
   try {
@@ -273,11 +326,24 @@ test('空闲计时会播放随机 idle 动作并回到 normal 表情', async () 
       };
     });
 
-    // 空闲计时器是 20 秒，等它自己响。
+    // 把空闲间隔调短：既省掉 20 秒等待，也能验证「重新武装」——
+    // 只播一次就再也不响的实现会在这里露馅。
+    const applied = await ctx.win.evaluate(() => window.__pet.setIdleMs(300));
+    expect(applied).toBe(300);
+
+    const idleCount = () =>
+      ctx.win.evaluate(() => window.__idleCalls.motions.filter((m) => m.group === 'Idle').length);
+
     await ctx.win.waitForFunction(
-      () => window.__idleCalls.motions.some((m) => m.group === 'Idle'),
+      () => window.__idleCalls.motions.filter((m) => m.group === 'Idle').length >= 1,
       null,
-      { timeout: 30000 }
+      { timeout: 10000 }
+    );
+    // 第二次：证明空闲计时器会重新武装（独处一会的桌宠不该只动一次）。
+    await ctx.win.waitForFunction(
+      () => window.__idleCalls.motions.filter((m) => m.group === 'Idle').length >= 2,
+      null,
+      { timeout: 10000 }
     );
 
     const result = await ctx.win.evaluate(() => {
@@ -290,11 +356,11 @@ test('空闲计时会播放随机 idle 动作并回到 normal 表情', async () 
       };
     });
 
-    const idleCall = result.motions.find((m) => m.group === 'Idle');
-    expect(idleCall).toBeTruthy();
+    const idleCalls = result.motions.filter((m) => m.group === 'Idle');
+    expect(idleCalls.length).toBeGreaterThanOrEqual(2);
     // 不给索引 = 库随机挑该组里的动作；给了固定索引就不是「随机待机动作」。
-    expect(idleCall.index).toBeUndefined();
-    expect(result.idleMs).toBe(20000);
+    expect(idleCalls.every((m) => m.index === undefined)).toBe(true);
+    expect(result.idleMs).toBe(300);
     // 同时回到 normal 表情。
     expect(result.expressions).toContain(result.normal);
     expect(errors).toEqual([]);

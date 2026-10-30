@@ -16,11 +16,15 @@ export function normalizeZone(name) {
  */
 export function geometricZone(bounds, x, y) {
   if (!bounds) return 'other';
-  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.width)) return 'other';
-  if (!Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)) return 'other';
+  if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return 'other';
+  if (bounds.height <= 0) return 'other';
   if (!Number.isFinite(x) || !Number.isFinite(y)) return 'other';
   if (x < bounds.x || x > bounds.x + bounds.width) return 'other';
   const rel = (y - bounds.y) / bounds.height;
+  // NaN 的比较结果全是 false，会一路落到 rel <= 0.35 → 返回 'body'，
+  // 对任何 x 都成立——所以这里必须显式挡掉非有限值。
+  if (!Number.isFinite(rel)) return 'other';
   if (rel < 0 || rel > 1) return 'other';
   return rel <= 0.35 ? 'head' : 'body';
 }

@@ -43,6 +43,14 @@ test('包围盒无效时返回 other', () => {
   assert.equal(geometricZone({ x: 0, y: 0, width: 0, height: 0 }, 10, 10), 'other');
 });
 
+test('包围盒的 y 无效时返回 other', () => {
+  // NaN 的比较全是 false：不显式挡掉的话会一路落到 rel <= 0.35，
+  // 对任何 x 都返回 'body'，而不是 'other'。
+  assert.equal(geometricZone({ x: 0, y: NaN, width: 300, height: 560 }, 150, 50), 'other');
+  assert.equal(geometricZone({ x: 0, y: undefined, width: 300, height: 560 }, 150, 50), 'other');
+  assert.equal(geometricZone({ x: 0, y: NaN, width: 300, height: 560 }, 150, 400), 'other');
+});
+
 test('hitZoneAt 优先使用模型原生命中区', () => {
   // 关键用例：y=150 在几何判定下是 body（rel=0.27 <= 0.35 → head，实际 head），
   // 这里选一个几何判定会答 body、原生会答 head 的点，证明原生优先。

@@ -155,7 +155,8 @@ async function boot() {
   const canvas = stage.app.view;
 
   // 空闲计时：20 秒无交互则播一次 idle 动作（spec §5.1）
-  const IDLE_MS = 20000;
+  const DEFAULT_IDLE_MS = 20000;
+  let idleMs = DEFAULT_IDLE_MS;
   let idleTimer = null;
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
@@ -185,11 +186,20 @@ async function boot() {
       }
       // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
       resetIdleTimer();
-    }, IDLE_MS);
+    }, idleMs);
   }
   resetIdleTimer();
   // 暴露出来，测试不必真的等 20 秒。
-  window.__pet.idleMs = IDLE_MS;
+  window.__pet.idleMs = idleMs;
+  // 测试缝：允许把空闲间隔调短以验证「重新武装」——
+  // 没有它，重新武装只能靠代码审读确认。
+  window.__pet.setIdleMs = (ms) => {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return idleMs;
+    idleMs = ms;
+    window.__pet.idleMs = idleMs;
+    resetIdleTimer();
+    return idleMs;
+  };
 
   // 画布上唯一的指针事件入口。模型与清单都在**回调里实时读取**：
   // 切换形象后拿到的必须是当前模型，不能是上一个形象的引用。
