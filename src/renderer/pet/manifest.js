@@ -51,17 +51,34 @@ export function deriveManifest(model3, opts = {}) {
   };
 }
 
-/** 清单与探测结果合并：清单优先，缺失项用探测值补齐。 */
+/**
+ * 清单与探测结果合并：清单优先，缺失项用探测值补齐。
+ *
+ * 表情方面只补一个键：`normal`。
+ * 探测阶段不猜语义（见 deriveManifest 的注释），但「普通表情」总得有个值，
+ * 否则清单缺项时连中性表情都拿不到。这里用**模型第一个可用表情**兜底。
+ *
+ * 这**不是**按序号猜语义：补出来的值与 resolveExpressionName 对缺失语义的
+ * 回退取值（availableExpressions[0]）完全一致，所以对 resolveExpressionName
+ * 而言行为没有任何变化——它读到的还是同一个表情。
+ * 其余语义（happy/angry/...）一律不补，保持未映射。
+ * 这条边界很重要：Haru 的 expressions[1] 是 F02，而 pet.json 里 F02 是 angry——
+ * 一旦按序号把语义铺开，「摸头」就会触发生气的脸。
+ */
 export function mergeManifest(base, derived) {
-  if (!base) return derived;
-  const expressions = { ...(derived?.expressions || {}), ...(base.expressions || {}) };
-  const motions = { ...(derived?.motions || {}), ...(base.motions || {}) };
+  const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
+  const motions = { ...(derived?.motions || {}), ...(base?.motions || {}) };
+  if (!expressions.normal) {
+    const first = derived?.availableExpressions?.[0];
+    if (first) expressions.normal = first;
+  }
   return {
     ...derived,
-    ...base,
+    ...(base || {}),
     expressions,
     motions,
-    derived: false,
+    // derived 为 true 表示「没有用户清单，全部来自探测」。
+    derived: !base,
     availableExpressions: derived?.availableExpressions || [],
     motionGroups: derived?.motionGroups || {},
   };
@@ -75,16 +92,20 @@ export function resolveExpressionName(manifest, semantic) {
   return null;
 }
 
+/**
+ * 解析语义动作键 → { group, index }。
+ *
+ * 动作组在模型里不存在时返回 null：诚实的「这个模型没有这个能力」
+ * 比一个到调用时才失败的 spec 好——后者会在渲染层抛错。
+ */
 export function resolveMotionSpec(manifest, key) {
   const spec = manifest?.motions?.[key];
-  if (!spec || typeof spec.group !== 'string') return null;
+  if (!spec || typeof spec.group !== 'string' || spec.group === '') return null;
   const groups = manifest?.motionGroups || {};
   const count = groups[spec.group];
-  if (typeof count === 'number') {
-    const index = Math.min(Math.max(0, spec.index | 0), Math.max(0, count - 1));
-    return { group: spec.group, index };
-  }
-  return { group: spec.group, index: Math.max(0, spec.index | 0) };
+  if (typeof count !== 'number' || count <= 0) return null;
+  const index = Math.min(Math.max(0, spec.index | 0), count - 1);
+  return { group: spec.group, index };
 }
 
 /** 读取形象注册表与清单；清单缺失时回退到探测。 */
