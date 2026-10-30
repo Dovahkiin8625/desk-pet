@@ -2699,7 +2699,18 @@ git commit -m "feat: 运行时切换形象并显式释放纹理"
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeZone, geometricZone } from '../../src/renderer/pet/hitZone.js';
+import { normalizeZone, geometricZone, hitZoneAt } from '../../src/renderer/pet/hitZone.js';
+
+const BOUNDS = { x: 0, y: 0, width: 300, height: 560 };
+
+/** 造一个命中区行为可控的假模型。 */
+function stubModel({ hit = [], areas = { Head: {}, Body: {} }, bounds = BOUNDS } = {}) {
+  return {
+    internalModel: { hitAreas: areas },
+    hitTest: () => hit,
+    getBounds: () => bounds,
+  };
+}
 
 test('命中区名归一化', () => {
   assert.equal(normalizeZone('Head'), 'head');
@@ -2712,16 +2723,51 @@ test('命中区名归一化', () => {
 });
 
 test('几何兜底：上 35% 判为头部', () => {
-  const bounds = { x: 0, y: 0, width: 300, height: 560 };
-  assert.equal(geometricZone(bounds, 150, 50), 'head');
-  assert.equal(geometricZone(bounds, 150, 190), 'head');
-  assert.equal(geometricZone(bounds, 150, 250), 'body');
-  assert.equal(geometricZone(bounds, 150, 500), 'body');
+  assert.equal(geometricZone(BOUNDS, 150, 50), 'head');
+  assert.equal(geometricZone(BOUNDS, 150, 190), 'head');
+  assert.equal(geometricZone(BOUNDS, 150, 250), 'body');
+  assert.equal(geometricZone(BOUNDS, 150, 500), 'body');
+});
+
+test('几何兜底：包围盒之外的点返回 other', () => {
+  // 桌宠周围的空白处点击不应该触发反应——用户点了桌子，桌宠不该摸头。
+  assert.equal(geometricZone(BOUNDS, 150, -20), 'other');
+  assert.equal(geometricZone(BOUNDS, -10, 150), 'other');
+  assert.equal(geometricZone(BOUNDS, 400, 150), 'other');
+  assert.equal(geometricZone(BOUNDS, 150, 700), 'other');
 });
 
 test('包围盒无效时返回 other', () => {
   assert.equal(geometricZone(null, 10, 10), 'other');
   assert.equal(geometricZone({ x: 0, y: 0, width: 0, height: 0 }, 10, 10), 'other');
+});
+
+test('hitZoneAt 优先使用模型原生命中区', () => {
+  // 关键用例：y=150 在几何判定下是 body（rel=0.27 <= 0.35 → head，实际 head），
+  // 这里选一个几何判定会答 body、原生会答 head 的点，证明原生优先。
+  const model = stubModel({ hit: ['Head'] });
+  assert.equal(hitZoneAt(model, 150, 400), 'head');
+  const model2 = stubModel({ hit: ['Body'] });
+  assert.equal(hitZoneAt(model2, 150, 60), 'body');
+});
+
+test('hitZoneAt 在原生命中区未命中时退回几何判定', () => {
+  const model = stubModel({ hit: [] });
+  assert.equal(hitZoneAt(model, 150, 50), 'head');
+  assert.equal(hitZoneAt(model, 150, 400), 'body');
+});
+
+test('hitZoneAt 在模型之外返回 other', () => {
+  const model = stubModel({ hit: [] });
+  assert.equal(hitZoneAt(model, 150, -20), 'other');
+  assert.equal(hitZoneAt(model, -10, 150), 'other');
+  assert.equal(hitZoneAt(model, 150, 700), 'other');
+});
+
+test('hitZoneAt 在模型没有命中区时退回几何判定', () => {
+  const model = stubModel({ hit: [], areas: {} });
+  assert.equal(hitZoneAt(model, 150, 50), 'head');
+  assert.equal(hitZoneAt(model, 150, 400), 'body');
 });
 ```
 
@@ -2872,11 +2918,21 @@ export function normalizeZone(name) {
   return 'other';
 }
 
-/** 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。 */
+/**
+ * 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。
+ *
+ * 点必须落在包围盒**内**才返回 head/body，否则一律 other：
+ * 桌宠周围的空白处点击也会触发反应是很糟的体验——
+ * 用户点了桌子，结果桌宠摸头卖萌。
+ */
 export function geometricZone(bounds, x, y) {
-  if (!bounds || !Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!bounds) return 'other';
+  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.width)) return 'other';
+  if (!Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 'other';
+  if (x < bounds.x || x > bounds.x + bounds.width) return 'other';
   const rel = (y - bounds.y) / bounds.height;
-  if (!Number.isFinite(rel)) return 'other';
+  if (rel < 0 || rel > 1) return 'other';
   return rel <= 0.35 ? 'head' : 'body';
 }
 
@@ -2955,6 +3011,9 @@ export function createDragController({ threshold = DRAG_THRESHOLD, onTap, onDrag
     },
     pointerDown(e) {
       if (e.button !== 0) return;
+      // 已有拖拽在进行时，第二根手指的 pointerdown 不能打断它：
+      // 无条件覆盖 down/last 会把锚点跳到第二根手指上，窗口会突然位移。
+      if (down && e.pointerId !== down.pointerId) return;
       down = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
       last = { x: e.clientX, y: e.clientY };
       dragging = false;
@@ -3015,6 +3074,9 @@ export function attachInteraction({
   onInteract,
 }) {
   const local = (clientX, clientY) => {
+    // hitTest / focus 的入参是**世界坐标**（库内部用 worldTransform.applyInverse 换算）。
+    // 这里画布铺满窗口且 stage 在原点，世界坐标与画布坐标数值相同；
+    // 但一旦画布内缩或 stage 被平移，两者就不一样了——所以别把注释写成「以画布为原点」。
     const rect = canvas.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
@@ -3044,6 +3106,9 @@ export function attachInteraction({
 
   const handleMove = (e) => {
     const { x, y } = local(e.clientX, e.clientY);
+    // 悬停也算交互：空闲动画是给「用户走开了」的场景准备的，
+    // 鼠标还在桌宠身上动的时候，桌宠正被看着，不该自说自话。
+    onInteract?.();
     onHover?.(x, y);
   };
 
@@ -3053,7 +3118,19 @@ export function attachInteraction({
     onContextMenu?.();
   };
 
-  canvas.addEventListener('pointerdown', (e) => drag.pointerDown(e));
+  const handleDown = (e) => {
+    // 指针捕获：没有它，光标一旦移出画布，pointermove/pointerup 就不再送达——
+    // 拖拽会丢失增量、onDragEnd 永不触发。
+    // 桌宠窗口是跟着光标走的（差一个 IPC 往返），快速移动时光标会跑出窗口。
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* 个别环境不支持捕获，忽略即可 */
+    }
+    drag.pointerDown(e);
+  };
+
+  canvas.addEventListener('pointerdown', handleDown);
   canvas.addEventListener('pointermove', (e) => {
     drag.pointerMove(e);
     handleMove(e);
@@ -3091,18 +3168,36 @@ Expected: PASS（10 passed）。
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (!currentModel || !currentManifest) return;
+      idleTimer = null;
+      if (!currentModel || !currentManifest) {
+        resetIdleTimer();
+        return;
+      }
       const r = idleReaction(currentManifest);
+      // 「随机待机动作」：motion 只给组名、不给索引，库会随机挑该组里的一个动作。
+      // 给固定索引就不是随机的了。
       if (r.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(r.motionSpec.group, r.motionSpec.index);
+          currentModel.motion(r.motionSpec.group)?.catch?.(() => {});
         } catch {
           /* ignore */
         }
       }
+      // 同时回到 normal 表情——idleReaction 的语义键就是 normal。
+      if (r.expressionName && currentModel?.expression) {
+        try {
+          currentModel.expression(r.expressionName)?.catch?.(() => {});
+        } catch {
+          /* ignore */
+        }
+      }
+      // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
+      resetIdleTimer();
     }, IDLE_MS);
   }
   resetIdleTimer();
+  // 暴露出来，测试不必真的等 20 秒。
+  window.__pet.idleMs = IDLE_MS;
 
   attachInteraction({
     canvas,
@@ -3113,16 +3208,18 @@ Expected: PASS（10 passed）。
       window.__pet.lastZone = zone;
       window.__pet.lastExpression = reaction.expressionName;
       window.__pet.lastMotion = reaction.motionSpec;
+      // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
+      // 被拒绝的 promise 会变成未处理拒绝，违反「渲染进程不得产生未捕获错误」。
       if (reaction.expressionName && currentModel?.expression) {
         try {
-          currentModel.expression(reaction.expressionName);
+          currentModel.expression(reaction.expressionName)?.catch?.(() => {});
         } catch {
           /* 表情缺失时静默跳过 */
         }
       }
       if (reaction.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index);
+          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});
         } catch {
           /* 动作缺失时静默跳过 */
         }
