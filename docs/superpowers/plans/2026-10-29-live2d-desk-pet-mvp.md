@@ -2295,12 +2295,12 @@ export function resolveMotionSpec(manifest, key) {
   if (!spec || typeof spec.group !== 'string' || spec.group === '') return null;
   const groups = manifest?.motionGroups || {};
   const count = groups[spec.group];
-  if (typeof count === 'number') {
-    if (count <= 0) return null;
-    const index = Math.min(Math.max(0, spec.index | 0), count - 1);
-    return { group: spec.group, index };
-  }
-  return { group: spec.group, index: Math.max(0, spec.index | 0) };
+  // 动作组不存在（模型里没有这一组）时返回 null：
+  // 返回一个未经验证的 spec 只会把失败推迟到调用点，模型上「没有这个动作组」
+  // 应当诚实地表现为 null，让调用方降级而不是在深处抛错。
+  if (typeof count !== 'number' || count <= 0) return null;
+  const index = Math.min(Math.max(0, spec.index | 0), count - 1);
+  return { group: spec.group, index };
 }
 ```
 
