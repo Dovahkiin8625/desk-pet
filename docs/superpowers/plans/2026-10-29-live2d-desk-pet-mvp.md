@@ -639,7 +639,7 @@ git commit -m "feat: 初始化 Electron 脚手架、模型资源脚本与托盘�
 - Produces:
   - `src/main/staticFiles.js` → `resolveStaticFile(rootDir: string, urlPath: string): { filePath: string } | null`
   - `src/main/settings.js` → `DEFAULT_SETTINGS: object`、`sanitizeSettings(raw: unknown): Settings`、`loadSettings(userDataDir: string): Promise<Settings>`、`saveSettings(userDataDir: string, settings: unknown): Promise<Settings>`
-  - `src/main/display.js` → `clampToDisplays(x, y, width, height, displays): { x: number, y: number }`、`defaultPosition(width, height, displays): { x: number, y: number }`
+  - `src/main/display.js` → `clampToDisplays(x, y, width, height, displays): { x: number, y: number }`、`restorePosition(saved, width, height, displays): { x: number, y: number }`、`defaultPosition(width, height, displays): { x: number, y: number }`
   - `displays` 元素结构：`{ id: number|string, bounds: {x,y,width,height}, workArea: {x,y,width,height} }`
 
 - [ ] **Step 1: 写 `test/unit/staticFiles.test.js`**
@@ -667,6 +667,13 @@ test('阻止目录穿越', () => {
   assert.equal(resolveStaticFile(ROOT, '/../../secret.txt'), null);
   assert.equal(resolveStaticFile(ROOT, '/..%2f..%2fsecret.txt'), null);
   assert.equal(resolveStaticFile(ROOT, '/src/../../secret.txt'), null);
+});
+
+test('阻止与根目录同前缀的兄弟目录', () => {
+  // 关键用例：/../app-evil/secret.txt 解析到 C:\app-evil\secret.txt。
+  // 只做 startsWith(root) 的朴素实现会错误地放行它；
+  // 只有带路径分隔符边界的检查（root + sep）才会拒绝。
+  assert.equal(resolveStaticFile(ROOT, '/../app-evil/secret.txt'), null);
 });
 
 test('允许 node_modules 下的路径', () => {
@@ -722,7 +729,10 @@ Expected: PASS（4 passed）。
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { sanitizeSettings, loadSettings, saveSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
 
 test('空输入返回默认设置', () => {
   assert.deepEqual(sanitizeSettings(undefined), DEFAULT_SETTINGS);
@@ -762,6 +772,46 @@ test('数值被夹紧到合法区间', () => {
   assert.equal(sanitizeSettings({ scale: 99 }).scale, 2);
   assert.equal(sanitizeSettings({ scale: 0.01 }).scale, 0.5);
   assert.equal(sanitizeSettings({ opacity: -1 }).opacity, 0.2);
+});
+
+test('配置文件缺失时回退默认值', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  try {
+    assert.deepEqual(await loadSettings(dir), DEFAULT_SETTINGS);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('配置文件损坏时回退默认值', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  try {
+    await writeFile(join(dir, 'settings.json'), '{ 这不是合法 JSON', 'utf8');
+    assert.deepEqual(await loadSettings(dir), DEFAULT_SETTINGS);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('保存后能读回，且会创建不存在的目录', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  const dir = join(root, 'nested', 'deeper');
+  try {
+    const saved = await saveSettings(dir, {
+      modelId: 'natori',
+      scale: 1.5,
+      opacity: 0.8,
+      position: { x: 10, y: 20 },
+    });
+    assert.equal(saved.modelId, 'natori');
+    const loaded = await loadSettings(dir);
+    assert.equal(loaded.modelId, 'natori');
+    assert.equal(loaded.scale, 1.5);
+    assert.equal(loaded.opacity, 0.8);
+    assert.deepEqual(loaded.position, { x: 10, y: 20 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 ```
 
@@ -824,7 +874,13 @@ export async function loadSettings(userDataDir) {
   try {
     const text = await readFile(join(userDataDir, 'settings.json'), 'utf8');
     return sanitizeSettings(JSON.parse(text));
-  } catch {
+  } catch (err) {
+    // 文件不存在是正常情况（首次启动），静默回退默认值即可。
+    // 但读不了/解析失败说明配置已损坏——同样回退默认值，却必须留痕，
+    // 否则用户会遇到「改了设置没生效」且无从排查。
+    if (err?.code !== 'ENOENT') {
+      console.warn('[desk-pet] settings.json 无法读取或解析，已回退默认值：', err?.message);
+    }
     return { ...DEFAULT_SETTINGS };
   }
 }
@@ -847,7 +903,7 @@ Expected: PASS（5 passed）。
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clampToDisplays, defaultPosition } from '../../src/main/display.js';
+import { clampToDisplays, defaultPosition, restorePosition } from '../../src/main/display.js';
 
 const PRIMARY = {
   id: 1,
@@ -896,6 +952,38 @@ test('默认位置落在主显示器右下角', () => {
 test('没有显示器时返回原点', () => {
   assert.deepEqual(defaultPosition(300, 560, []), { x: 0, y: 0 });
 });
+
+test('恢复位置：位置可见时原样返回', () => {
+  const r = restorePosition({ x: 100, y: 100 }, 300, 560, [PRIMARY, SECOND]);
+  assert.deepEqual(r, { x: 100, y: 100 });
+});
+
+test('恢复位置：副显示器上的位置同样原样返回', () => {
+  const r = restorePosition({ x: 3000, y: 200 }, 300, 560, [PRIMARY, SECOND]);
+  assert.deepEqual(r, { x: 3000, y: 200 });
+});
+
+test('恢复位置：显示器被拔掉时回落到主显示器右下角', () => {
+  const r = restorePosition({ x: 3000, y: 200 }, 300, 560, [PRIMARY]);
+  assert.deepEqual(r, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
+
+test('恢复位置：没有保存位置时回落到主显示器右下角', () => {
+  const r = restorePosition(null, 300, 560, [PRIMARY]);
+  assert.deepEqual(r, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
+
+test('拖拽夹紧与启动恢复语义不同', () => {
+  const saved = { x: 3000, y: 200 };
+  // 副显示器被拔掉后
+  const clamped = clampToDisplays(saved.x, saved.y, 300, 560, [PRIMARY]);
+  const restored = restorePosition(saved, 300, 560, [PRIMARY]);
+  // 拖拽：停在主显示器可见区域边缘，不跳回右下角
+  assert.notDeepEqual(clamped, restored);
+  assert.ok(clamped.x >= 0 && clamped.y >= 0);
+  // 启动恢复：回到主显示器右下角
+  assert.deepEqual(restored, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
 ```
 
 - [ ] **Step 10: 跑测试确认失败**
@@ -915,14 +1003,18 @@ function rectContains(area, x, y, width, height) {
   );
 }
 
-function distanceToCenter(area, x, y) {
-  const cx = area.x + area.width / 2;
-  const cy = area.y + area.height / 2;
-  return Math.hypot(x - cx, y - cy);
+function distanceToRect(area, x, y) {
+  // 到矩形的距离（而非到中心的距离）：点在两块屏幕正下方时，
+  // 中心距离会选中更远的那块，矩形距离才总是选最近的。
+  const dx = Math.max(area.x - x, 0, x - (area.x + area.width));
+  const dy = Math.max(area.y - y, 0, y - (area.y + area.height));
+  return Math.hypot(dx, dy);
 }
 
 /**
- * 把窗口位置夹紧到某个显示器的可见工作区内。
+ * 把窗口位置夹紧到某���显示器的可见工作区内。
+ * 用于**拖拽过程中的实时夹紧**——角色被拖到屏幕边缘时应停在最近的可见处，
+ * 而不是跳回主显示器。
  * 若原位置已完整落在某显示器内则原样返回。
  */
 export function clampToDisplays(x, y, width, height, displays) {
@@ -934,11 +1026,11 @@ export function clampToDisplays(x, y, width, height, displays) {
     if (rectContains(d.workArea, x, y, width, height)) return { x, y };
   }
 
-  // 选中心距离最近的那块屏幕
+  // 选与该点距离最近的屏幕
   let best = list[0];
   let bestDist = Infinity;
   for (const d of list) {
-    const dist = distanceToCenter(d.workArea, x, y);
+    const dist = distanceToRect(d.workArea, x, y);
     if (dist < bestDist) {
       bestDist = dist;
       best = d;
@@ -953,7 +1045,32 @@ export function clampToDisplays(x, y, width, height, displays) {
   };
 }
 
-/** 主显示器可见区域右下角的位置。 */
+/**
+ * 启动时恢复上次保存的位置（spec §5.5）。
+ * 位置完整落在某显示器可见区域内 → 原样恢复；
+ * 否则（例如保存位置所在的显示器已被拔掉）→ 回落到**主显示器可见区域内的默认位置（右下角）**。
+ *
+ * 与 clampToDisplays 的分工：clampToDisplays 服务于拖拽（停在最近的可见处），
+ * restorePosition 服务于启动恢复（回到主显示器默认位置）。两者语义不同，不能混用。
+ */
+export function restorePosition(saved, width, height, displays) {
+  const list = (displays || []).filter((d) => d && d.workArea);
+  if (list.length === 0) return { x: 0, y: 0 };
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    for (const d of list) {
+      if (rectContains(d.workArea, saved.x, saved.y, width, height)) {
+        return { x: saved.x, y: saved.y };
+      }
+    }
+  }
+  return defaultPosition(width, height, list);
+}
+
+/**
+ * 主显示器可见区域右下角的位置。
+ * **前置条件：`displays[0]` 必须是主显示器**——调用方（Task 3 的 currentDisplays）
+ * 负责把主显示器排在数组第一位，Electron 的 `getAllDisplays()` 并不保证这一点。
+ */
 export function defaultPosition(width, height, displays) {
   const list = (displays || []).filter((d) => d && d.workArea);
   if (list.length === 0) return { x: 0, y: 0 };
@@ -968,7 +1085,7 @@ export function defaultPosition(width, height, displays) {
 - [ ] **Step 12: 跑全部单测**
 
 Run: `npm run test:unit`
-Expected: PASS（19 passed —— 本任务新增 16 个用例：staticFiles 4 + settings 5 + display 7；另有 Task 1 遗留的 icon 3 个）。
+Expected: PASS（29 passed —— 本任务新增 26 个用例：staticFiles 5 + settings 8 + display 13；另有 Task 1 遗留的 icon 3 个）。
 
 - [ ] **Step 13: 提交**
 
@@ -1073,13 +1190,13 @@ export function appUrl(pathname) {
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from './protocol.js';
-import { clampToDisplays } from './display.js';
+import { restorePosition } from './display.js';
 
 export function createPetWindow({ rootDir, settings, displays }) {
   const vp = settings.viewport || { width: 300, height: 560 };
-  const pos = settings.position
-    ? clampToDisplays(settings.position.x, settings.position.y, vp.width, vp.height, displays)
-    : { x: 0, y: 0 };
+  // 用 restorePosition 而不是 clampToDisplays：启动恢复时若保存位置所在的显示器
+  // 已被拔掉，应回落到主显示器右下角（spec §5.5），而不是停在原坐标的可见边缘。
+  const pos = restorePosition(settings.position, vp.width, vp.height, displays);
 
   const win = new BrowserWindow({
     width: vp.width,
@@ -1310,7 +1427,11 @@ let settings = null;
 let saveTimer = null;
 
 function currentDisplays() {
-  return screen.getAllDisplays().map((d) => ({
+  // 主显示器必须排在第一位：display.js 的 defaultPosition 依赖 displays[0] 是主显示器，
+  // 而 Electron 的 getAllDisplays() 并不保证这一点。
+  const primary = screen.getPrimaryDisplay();
+  const all = screen.getAllDisplays();
+  return [primary, ...all.filter((d) => d.id !== primary.id)].map((d) => ({
     id: d.id,
     bounds: d.bounds,
     workArea: d.workArea,
