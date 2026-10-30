@@ -35,3 +35,19 @@ test('userData 目录不存在时自动创建', async () => {
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
+  const ctx = await launchApp();
+  try {
+    const info = await ctx.win.evaluate(() => ({
+      url: location.href,
+      ready: window.__pet?.ready === true,
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+    }));
+    expect(info.url).toContain('app://bundle/src/renderer/index.html');
+    expect(info.ready).toBe(true);
+    expect(info.bodyBg).toContain('rgba(0, 0, 0, 0)');
+  } finally {
+    await ctx.close();
+  }
+});
