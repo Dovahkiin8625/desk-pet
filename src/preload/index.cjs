@@ -19,4 +19,9 @@ contextBridge.exposeInMainWorld('pet', {
   onModelSwitchRequest: (cb) => {
     ipcRenderer.on('pet:modelSwitchRequest', (_e, modelId) => cb(modelId));
   },
+  // 设置变化广播：主进程在设置落盘前就把新设置推给渲染层，
+  // 宠物窗口据此立刻重新适配缩放，设置窗口据此同步控件。
+  onSettingsChanged: (cb) => {
+    ipcRenderer.on('pet:settingsChanged', (_e, s) => cb(s));
+  },
 });

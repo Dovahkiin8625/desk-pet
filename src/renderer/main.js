@@ -28,6 +28,10 @@ window.__pet = {
   lastDragDelta: null,
   // 空闲计时器的间隔（毫秒）。暴露出来，测试不必真的等 20 秒。
   idleMs: null,
+  // 当前生效的缩放与透明度。缩放由渲染层应用，透明度由主进程
+  // setOpacity 施加——这里只是把「现在是多少」暴露出来供测试断言。
+  scale: 1,
+  opacity: 1,
 };
 
 let stage = null;
@@ -156,6 +160,8 @@ async function boot() {
 
   const settings = await window.pet.getSettings();
   userScale = settings?.scale ?? 1;
+  window.__pet.scale = userScale;
+  window.__pet.opacity = typeof settings?.opacity === 'number' ? settings.opacity : 1;
   // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
   await mountModel(settings?.modelId);
 
@@ -307,6 +313,25 @@ async function boot() {
       window.__pet.switchError = null;
     } catch (err) {
       window.__pet.switchError = String(err && err.message ? err.message : err);
+    }
+  });
+
+  // 设置窗口改了缩放/透明度，主进程会把新设置广播过来。
+  // 缩放要在这里立刻重新适配：切换形象走的是 mountModel，
+  // 而只改缩放时并没有换模型，不重新适配的话画面不会变。
+  window.pet.onSettingsChanged((s) => {
+    if (!s) return;
+    if (typeof s.scale === 'number') {
+      userScale = s.scale;
+      window.__pet.scale = userScale;
+      if (currentModel && currentManifest) {
+        stage.fitModel(currentModel, currentManifest, userScale);
+      }
+    }
+    if (typeof s.opacity === 'number') {
+      // 透明度实际由主进程 setOpacity 施加在宠物窗口上，
+      // 这里只是把生效值记到诊断面上。
+      window.__pet.opacity = s.opacity;
     }
   });
 
