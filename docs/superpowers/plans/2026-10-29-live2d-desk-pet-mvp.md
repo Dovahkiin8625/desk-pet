@@ -114,7 +114,7 @@
     "start": "electron .",
     "setup": "node scripts/setup-assets.mjs && node scripts/gen-icon.mjs",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "node --test test/unit/",
+    "test:unit": "node --test \"test/unit/**/*.test.js\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -146,7 +146,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_ROOT = join(ROOT, 'assets', 'live2d', 'models');
 const API = 'https://api.github.com/repos/Live2D/CubismWebSamples/git/trees/develop?recursive=1';
-const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop/Samples/Resources';
+// 注意：GitHub tree API 返回的 f.path 已含 "Samples/Resources/" 前缀，
+// 所以这里只能到 develop 为止，再拼 ${RAW}/${f.path}，否则会重复一层导致全部 404。
+const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop';
 
 const MODELS = [
   { id: 'haru', dir: 'Haru' },
@@ -3272,16 +3274,23 @@ git commit -m "feat: 设置窗口支持形象切换、缩放与透明度"
 - Consumes: 全部前序任务
 - Produces: 可交付的项目文档与一套端到端验收用例
 
-- [ ] **Step 1: 更新 `.gitignore`**
+- [ ] **Step 1: 确认 `.gitignore` 的模型忽略规则**
 
-追加：
+模型二进制的忽略规则 **Task 1 已加入并验证**，本步只需确认，不要重复添加：
 
 ```
-assets/live2d/models/haru/**
-assets/live2d/models/natori/**
+assets/live2d/models/haru/*
 !assets/live2d/models/haru/pet.json
+assets/live2d/models/natori/*
 !assets/live2d/models/natori/pet.json
 ```
+
+> 不要写成 `assets/live2d/models/*` 或 `assets/live2d/models/haru/**`：
+> git 不会进入被排除的目录，反向规则也就无法重新包含 `pet.json`，结果是清单反而没被提交。
+> 逐目录 `/*` + 同级反向 `!` 才是有效写法。
+
+验证：`git ls-files assets/live2d/` 应列出 `index.json` 与两个 `pet.json`；
+`git check-ignore -v assets/live2d/models/haru/Haru.moc3` 应有命中。
 
 - [ ] **Step 2: 写 `NOTICE`**
 
