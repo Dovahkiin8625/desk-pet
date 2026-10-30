@@ -1,0 +1,24 @@
+{
+  "name": "desk-pet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live2D 桌面宠物",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "setup": "node scripts/setup-assets.mjs && node scripts/gen-icon.mjs",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test \"test/unit/**/*.test.js\"",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "live2dcubismcore": "1.0.2",
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "electron": "^45.0.0"
+  }
+}
