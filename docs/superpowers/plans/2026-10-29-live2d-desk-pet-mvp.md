@@ -1980,14 +1980,44 @@ export function disposeTextures(model) {
   for (const key of keys) {
     const cached = cache[key];
     if (!cached) continue;
-    PIXI.Texture.removeFromCache(key);
-    cached.destroy(true);
-    released++;
+    try {
+      PIXI.Texture.removeFromCache(key);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      // 单个键失败不能中断整批：其余纹理仍要释放，
+      // 而且「释放了几个」必须如实反映，否则 0 会被误读成泄漏。
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
+    }
   }
 
   // 刻意**不做**「把缓存里所有 URL 形状的键都清掉」这种兜底：
   // PIXI 的纹理缓存是全局命名空间，那样会把别的模型或未来任何资源的纹理
   // 一起销毁，表现为切换形象后渲染空白。
+  return released;
+}
+
+/**
+ * 按路径前缀清理缓存中的纹理。用于「模型加载到一半失败」——
+ * 那时拿不到模型对象，但已经进缓存的纹理必须清掉，否则反复失败会堆积显存。
+ * 前缀带结尾斜杠，不会误伤名字以此前缀开头的其它目录。
+ */
+export function disposeTexturesUnderPath(pathPrefix) {
+  const PIXI = window.PIXI;
+  const cache = PIXI.TextureCache || PIXI.utils?.TextureCache;
+  if (!cache) return 0;
+  let released = 0;
+  for (const key of Object.keys(cache)) {
+    if (!key.startsWith(pathPrefix)) continue;
+    const cached = cache[key];
+    try {
+      PIXI.Texture.removeFromCache(key);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
+    }
+  }
   return released;
 }
 ```
@@ -2399,6 +2429,7 @@ git commit -m "feat: 模型语义映射与能力探测降级"
 import { createStage } from './pet/stage.js';
 import { loadManifest } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
+import { disposeTexturesUnderPath } from './pet/texture.js';
 
 window.__pet = {
   ready: false,
@@ -2414,14 +2445,54 @@ let currentModel = null;
 let currentManifest = null;
 let userScale = 1;
 
+// 切换请求序号：并发切换时只有最后一次请求允许提交到舞台，
+// 否则「谁先加载完谁上屏」，屏幕上可能不是用户最后选的那个。
+let switchSeq = 0;
+
 async function mountModel(modelId) {
+  const token = ++switchSeq;
   const manifest = await loadManifest(modelId);
-  const model = await loadPetModel(manifest);
-  if (currentModel) {
-    stage.app.stage.removeChild(currentModel);
-    disposePetModel(currentModel);
+
+  // 切换到**当前已挂载的同一个形象**时直接返回。
+  // pixi 对已缓存的 URL 会返回同一个 Texture 实例，新旧模型因此共享同一批
+  // 纹理对象；紧接着调用 disposeTextures 会把新模型自己的纹理销毁掉——
+  // 桌宠变成「没有绑定纹理的空壳」，而 switchModel 仍然报告成功。
+  if (currentModel && manifest.id === currentManifest?.id) {
+    return currentModel;
   }
+
+  let model;
+  try {
+    model = await loadPetModel(manifest);
+  } catch (err) {
+    // 加载失败时旧模型仍挂在舞台上，用户不会看到桌宠凭空消失。
+    // 但失败的加载可能已经把纹理塞进了全局缓存，必须清掉，
+    // 否则反复失败的切换会不断堆积显存。
+    disposeTexturesUnderPath(`/assets/live2d/models/${manifest.id}/`);
+    throw err;
+  }
+
+  // 加载期间可能又发起了新的切换——过期请求直接放弃，不要动舞台。
+  if (token !== switchSeq) {
+    disposePetModel(model);
+    return null;
+  }
+
+  let released = 0;
+  if (currentModel) {
+    // 先把旧模型摘出舞台：它马上要被销毁，留在渲染列表里只会
+    // 让渲染循环去访问已经释放的纹理。
+    if (currentModel.parent) currentModel.parent.removeChild(currentModel);
+    released = disposePetModel(currentModel);
+    currentModel = null;
+  }
+  window.__pet.lastReleasedTextures = released;
+
   stage.app.stage.addChild(model);
+  // 缩放每次挂载时重读：userScale 是启动时抓的，
+  // 用户在设置里改过缩放后再切换形象，新模型必须用新缩放。
+  const settings = await window.pet.getSettings();
+  if (typeof settings?.scale === 'number') userScale = settings.scale;
   const fit = stage.fitModel(model, manifest, userScale);
   currentModel = model;
   currentManifest = manifest;
@@ -2443,7 +2514,8 @@ async function boot() {
 
   const settings = await window.pet.getSettings();
   userScale = settings?.scale ?? 1;
-  await mountModel(settings?.modelId || 'haru');
+  // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
+  await mountModel(settings?.modelId);
 
   // 主进程请求切换形象
   window.pet.onModelSwitchRequest(async (modelId) => {
