@@ -21,6 +21,9 @@ export function createDragController({ threshold = DRAG_THRESHOLD, onTap, onDrag
     },
     pointerDown(e) {
       if (e.button !== 0) return;
+      // 已有拖拽在进行时，第二根手指的 pointerdown 不能打断它：
+      // 无条件覆盖 down/last 会把锚点跳到第二根手指上，窗口会突然位移。
+      if (down && e.pointerId !== down.pointerId) return;
       down = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
       last = { x: e.clientX, y: e.clientY };
       dragging = false;

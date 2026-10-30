@@ -22,10 +22,10 @@ export function attachInteraction({
   onContextMenu,
   onInteract,
 }) {
-  // 画布坐标：hitTest / focus 都以画布左上角为原点。
-  // 画布铺满窗口时画布坐标与窗口坐标重合，但仍按 getBoundingClientRect() 计算——
-  // 假设画布一定在 (0,0) 迟早会在窗口内边距或布局变化时算错。
   const local = (clientX, clientY) => {
+    // hitTest / focus 的入参是**世界坐标**（库内部用 worldTransform.applyInverse 换算）。
+    // 这里画布铺满窗口且 stage 在原点，世界坐标与画布坐标数值相同；
+    // 但一旦画布内缩或 stage 被平移，两者就不一样了——所以别把注释写成「以画布为原点」。
     const rect = canvas.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
@@ -53,23 +53,36 @@ export function attachInteraction({
     },
   });
 
-  const handleDown = (e) => drag.pointerDown(e);
-
   const handleMove = (e) => {
     drag.pointerMove(e);
     const { x, y } = local(e.clientX, e.clientY);
+    // 悬停也算交互：空闲动画是给「用户走开了」的场景准备的，
+    // 鼠标还在桌宠身上动的时候，桌宠正被看着，不该自说自话。
+    onInteract?.();
     onHover?.(x, y);
   };
-
-  const handleUp = (e) => drag.pointerUp(e);
-
-  const handleCancel = () => drag.pointerCancel();
 
   const handleContextMenu = (e) => {
     e.preventDefault();
     onInteract?.();
     onContextMenu?.();
   };
+
+  const handleDown = (e) => {
+    // 指针捕获：没有它，光标一旦移出画布，pointermove/pointerup 就不再送达——
+    // 拖拽会丢失增量、onDragEnd 永不触发。
+    // 桌宠窗口是跟着光标走的（差一个 IPC 往返），快速移动时光标会跑出窗口。
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* 个别环境不支持捕获，忽略即可 */
+    }
+    drag.pointerDown(e);
+  };
+
+  const handleUp = (e) => drag.pointerUp(e);
+
+  const handleCancel = () => drag.pointerCancel();
 
   canvas.addEventListener('pointerdown', handleDown);
   canvas.addEventListener('pointermove', handleMove);

@@ -7,11 +7,21 @@ export function normalizeZone(name) {
   return 'other';
 }
 
-/** 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。 */
+/**
+ * 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。
+ *
+ * 点必须落在包围盒**内**才返回 head/body，否则一律 other：
+ * 桌宠周围的空白处点击也会触发反应是很糟的体验——
+ * 用户点了桌子，结果桌宠摸头卖萌。
+ */
 export function geometricZone(bounds, x, y) {
-  if (!bounds || !Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!bounds) return 'other';
+  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.width)) return 'other';
+  if (!Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 'other';
+  if (x < bounds.x || x > bounds.x + bounds.width) return 'other';
   const rel = (y - bounds.y) / bounds.height;
-  if (!Number.isFinite(rel)) return 'other';
+  if (rel < 0 || rel > 1) return 'other';
   return rel <= 0.35 ? 'head' : 'body';
 }
 

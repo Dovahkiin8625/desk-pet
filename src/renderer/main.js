@@ -22,6 +22,8 @@ window.__pet = {
   lastExpression: null,
   lastMotion: null,
   focusPoint: null,
+  // 空闲计时器的间隔（毫秒）。暴露出来，测试不必真的等 20 秒。
+  idleMs: null,
 };
 
 let stage = null;
@@ -158,18 +160,36 @@ async function boot() {
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (!currentModel || !currentManifest) return;
+      idleTimer = null;
+      if (!currentModel || !currentManifest) {
+        resetIdleTimer();
+        return;
+      }
       const r = idleReaction(currentManifest);
+      // 「随机待机动作」：motion 只给组名、不给索引，库会随机挑该组里的一个动作。
+      // 给固定索引就不是随机的了。
       if (r.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(r.motionSpec.group, r.motionSpec.index);
+          currentModel.motion(r.motionSpec.group)?.catch?.(() => {});
         } catch {
           /* ignore */
         }
       }
+      // 同时回到 normal 表情——idleReaction 的语义键就是 normal。
+      if (r.expressionName && currentModel?.expression) {
+        try {
+          currentModel.expression(r.expressionName)?.catch?.(() => {});
+        } catch {
+          /* ignore */
+        }
+      }
+      // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
+      resetIdleTimer();
     }, IDLE_MS);
   }
   resetIdleTimer();
+  // 暴露出来，测试不必真的等 20 秒。
+  window.__pet.idleMs = IDLE_MS;
 
   // 画布上唯一的指针事件入口。模型与清单都在**回调里实时读取**：
   // 切换形象后拿到的必须是当前模型，不能是上一个形象的引用。
@@ -184,14 +204,16 @@ async function boot() {
       window.__pet.lastMotion = reaction.motionSpec;
       if (reaction.expressionName && currentModel?.expression) {
         try {
-          currentModel.expression(reaction.expressionName);
+          // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
+          // 被拒绝的 promise 会变成未处理拒绝，违反「渲染进程不得产生未捕获错误」。
+          currentModel.expression(reaction.expressionName)?.catch?.(() => {});
         } catch {
           /* 表情缺失时静默跳过 */
         }
       }
       if (reaction.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index);
+          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});
         } catch {
           /* 动作缺失时静默跳过 */
         }
@@ -211,7 +233,7 @@ async function boot() {
       const r = currentManifest ? resolveMotionSpec(currentManifest, 'drag') : null;
       if (r && currentModel?.motion) {
         try {
-          currentModel.motion(r.group, r.index);
+          currentModel.motion(r.group, r.index)?.catch?.(() => {});
         } catch {
           /* ignore */
         }

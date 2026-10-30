@@ -58,3 +58,27 @@ test('多指情况下忽略非触发指针的事件', () => {
   c.pointerMove(ev(300, 300, 2));
   assert.equal(c.dragging, false);
 });
+
+test('拖拽进行中，第二根手指的 pointerdown 不打断它', () => {
+  // 第二根手指按下时若覆盖了 down/last，锚点会跳到第二根手指上，
+  // 正在进行的拖拽被作废、窗口突然位移。
+  const moves = [];
+  let starts = 0;
+  const c = createDragController({
+    onDragStart: () => { starts++; },
+    onDragMove: (m) => { moves.push(m); },
+  });
+  c.pointerDown(ev(100, 100, 1));
+  c.pointerMove(ev(140, 100, 1));
+  assert.equal(c.dragging, true);
+  assert.equal(starts, 1);
+
+  c.pointerDown(ev(300, 300, 2));
+  assert.equal(c.dragging, true);
+
+  // 第一根手指继续移动：增量仍相对它自己上一次的位置。
+  c.pointerMove(ev(150, 100, 1));
+  assert.equal(starts, 1);
+  assert.equal(moves.length, 2);
+  assert.deepEqual(moves[1], { clientX: 150, clientY: 100, deltaX: 10, deltaY: 0 });
+});
