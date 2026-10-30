@@ -1167,13 +1167,24 @@ export function registerSchemePrivileges() {
 export function registerAppProtocol(rootDir) {
   protocol.handle(SCHEME, async (request) => {
     const url = new URL(request.url);
+    // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
+    // app:// 的根是整个项目目录，渲染层不需要这些内容，
+    // 一旦漏出去就能读到版本库配置与本地密钥文件。
+    const segments = url.pathname.split('/').filter(Boolean);
+    if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
+      return new Response('Forbidden', { status: 403 });
+    }
     const resolved = resolveStaticFile(rootDir, url.pathname);
     if (!resolved) return new Response('Not Found', { status: 404 });
     try {
       const data = await readFile(resolved.filePath);
       const type = MIME[extname(resolved.filePath).toLowerCase()] || 'application/octet-stream';
       return new Response(data, { status: 200, headers: { 'content-type': type } });
-    } catch {
+    } catch (err) {
+      // 权限错误、EISDIR 等与「文件不存在」必须区分，否则无法排查。
+      if (err?.code !== 'ENOENT') {
+        console.warn('[desk-pet] 资源读取失败：', resolved.filePath, err?.message);
+      }
       return new Response('Not Found', { status: 404 });
     }
   });
@@ -1192,8 +1203,12 @@ import { join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { restorePosition } from './display.js';
 
+// 视口尺寸与 assets/live2d/models/*/pet.json 的 viewport 保持一致。
+// settings 里的 viewport 会被 sanitizeSettings 丢弃，所以不能从那里取。
+const PET_VIEWPORT = { width: 300, height: 560 };
+
 export function createPetWindow({ rootDir, settings, displays }) {
-  const vp = settings.viewport || { width: 300, height: 560 };
+  const vp = PET_VIEWPORT;
   // 用 restorePosition 而不是 clampToDisplays：启动恢复时若保存位置所在的显示器
   // 已被拔掉，应回落到主显示器右下角（spec §5.5），而不是停在原坐标的可见边缘。
   const pos = restorePosition(settings.position, vp.width, vp.height, displays);
@@ -1224,7 +1239,6 @@ export function createPetWindow({ rootDir, settings, displays }) {
   });
 
   win.setAlwaysOnTop(true);
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
   win.loadURL(appUrl('/src/renderer/index.html'));
   win.once('ready-to-show', () => {
     applySettingsToWindow(win, settings);
@@ -1317,12 +1331,14 @@ Expected: PASS（2 passed）。
 ```js
 import { Tray, nativeImage } from 'electron';
 
-export function createTray({ iconPath, onAction }) {
+export function createTray({ iconPath }) {
   const image = nativeImage.createFromPath(iconPath);
   const resized = image.isEmpty() ? image : image.resize({ width: 16, height: 16 });
   const tray = new Tray(resized);
   tray.setToolTip('桌面宠物');
-  tray.on('click', () => onAction('toggleVisible'));
+  // 刻意不注册 click 回调：Windows 上托盘带右键菜单时，左键点击可能
+  // 既触发 click 又弹出菜单，导致「显示/隐藏」被连按两次。
+  // 托盘的三个动作（显示/隐藏、设置、退出）都在右键菜单里。
   return tray;
 }
 ```
@@ -1397,7 +1413,7 @@ export function registerIpc({
 - [ ] **Step 11: 重写 `src/main/index.js`**
 
 ```js
-import { app, BrowserWindow, screen } from 'electron';
+import { app, screen } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -1445,18 +1461,40 @@ async function readModelRegistry() {
     const text = await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8');
     const parsed = JSON.parse(text);
     return Array.isArray(parsed.models) ? parsed.models : [];
-  } catch {
+  } catch (err) {
+    // 注册表损坏或读不到时静默返回空列表，会让「形象列表是空的」这件事无从排查——
+    // 与 settings 损坏同理，必须留痕。
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
     return [];
   }
 }
 
 function persist(patch) {
-  settings = { ...settings, ...patch };
+  // 必须过一遍 sanitizeSettings：否则渲染层传来的越界值（例如 opacity=1.5）
+  // 会留在内存里，而落盘时被夹紧——内存与磁盘不一致，
+  // getSettings 会把越界值发回渲染层，Task 9 还会拿它去调 win.setOpacity()。
+  settings = sanitizeSettings({ ...settings, ...patch });
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveSettings(app.getPath('userData'), settings).catch(() => {});
+    saveTimer = null;
+    writeSettings();
   }, 300);
   return settings;
+}
+
+function writeSettings() {
+  return saveSettings(app.getPath('userData'), settings).catch((err) => {
+    // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
+    console.warn('[desk-pet] settings 保存失败：', err?.message);
+  });
+}
+
+// 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
+function flushPendingSave() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  writeSettings();
 }
 
 function toggleVisible() {
@@ -1503,9 +1541,6 @@ app.whenReady().then(async () => {
 
   tray = createTray({
     iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),
-    onAction: (action) => {
-      if (action === 'toggleVisible') toggleVisible();
-    },
   });
   tray.setContextMenu(
     buildTrayMenu({
@@ -1515,12 +1550,10 @@ app.whenReady().then(async () => {
     })
   );
 
-  app.on('activate', () => {
-    if (!win || win.isDestroyed()) {
-      win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
-    }
-  });
 });
+
+// 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
+app.on('before-quit', flushPendingSave);
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();
@@ -1543,6 +1576,12 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
     expect(info.url).toContain('app://bundle/src/renderer/index.html');
     expect(info.ready).toBe(true);
     expect(info.bodyBg).toContain('rgba(0, 0, 0, 0)');
+
+    // 置顶只能从主进程侧断言：渲染层拿不到 BrowserWindow
+    const alwaysOnTop = await ctx.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
+    );
+    expect(alwaysOnTop).toBe(true);
   } finally {
     await ctx.close();
   }
@@ -3314,13 +3353,20 @@ function openSettings() {
   });
 ```
 
-> 透明度由主进程 `win.setOpacity()` 施加，`persist` 之后需调用 `applySettingsToWindow(win, next)`。在 `src/main/index.js` 的 `persist` 中补上：
+> 透明度由主进程 `win.setOpacity()` 施加，因此 `persist` 之后要调用 `applySettingsToWindow(win, settings)`。
+> **注意：Task 3 的 `persist` 已经是下面这个形态**（内部过 `sanitizeSettings`、写失败有日志、
+> 退出前有 `flushPendingSave`）——本步只加一行 `applySettingsToWindow`，**不要整段替换 persist**：
 
 ```js
 function persist(patch) {
-  settings = { ...settings, ...patch };
+  settings = sanitizeSettings({ ...settings, ...patch });
   if (win && !win.isDestroyed()) applySettingsToWindow(win, settings);
-  ...
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    writeSettings();
+  }, 300);
+  return settings;
 }
 ```
 
