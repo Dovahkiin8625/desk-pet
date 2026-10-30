@@ -968,7 +968,7 @@ export function defaultPosition(width, height, displays) {
 - [ ] **Step 12: 跑全部单测**
 
 Run: `npm run test:unit`
-Expected: PASS（14 passed）。
+Expected: PASS（19 passed —— 本任务新增 16 个用例：staticFiles 4 + settings 5 + display 7；另有 Task 1 遗留的 icon 3 个）。
 
 - [ ] **Step 13: 提交**
 
