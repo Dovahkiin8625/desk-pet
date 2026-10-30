@@ -1012,7 +1012,7 @@ function distanceToRect(area, x, y) {
 }
 
 /**
- * 把窗口位置夹紧到某���显示器的可见工作区内。
+ * 把窗口位置夹紧到某个显示器的可见工作区内。
  * 用于**拖拽过程中的实时夹紧**——角色被拖到屏幕边缘时应停在最近的可见处，
  * 而不是跳回主显示器。
  * 若原位置已完整落在某显示器内则原样返回。
@@ -1085,7 +1085,7 @@ export function defaultPosition(width, height, displays) {
 - [ ] **Step 12: 跑全部单测**
 
 Run: `npm run test:unit`
-Expected: PASS（29 passed —— 本任务新增 26 个用例：staticFiles 5 + settings 8 + display 13；另有 Task 1 遗留的 icon 3 个）。
+Expected: PASS（29 passed —— 本任务 26 个 + Task 1 遗留的 icon 3 个）。
 
 - [ ] **Step 13: 提交**
 
@@ -1481,10 +1481,8 @@ function showContextMenu() {
 app.whenReady().then(async () => {
   registerAppProtocol(ROOT);
   settings = await loadSettings(app.getPath('userData'));
-  if (!settings.position) {
-    const p = defaultPosition(300, 560, currentDisplays());
-    settings.position = p;
-  }
+  // 没有保存过位置时不需要在这里补默认值：createPetWindow 的 restorePosition
+  // 会用真实视口尺寸算出主显示器右下角，避免这里写死 300×560 与清单脱节。
   // 必须先注册 IPC 再创建窗口：渲染层页面一加载就会调用 getSettings()，
   // 顺序反了会撞上 "No handler registered"。
   registerIpc({
