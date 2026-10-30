@@ -22,13 +22,20 @@ test('模型成功加载并具备能力', async () => {
     expect(info.error).toBeNull();
     expect(info.ready).toBe(true);
     expect(info.modelLoaded).toBe(true);
-    expect(info.modelId).toBe('haru');
+    // 不写死 'haru'：注册表里第一个形象将来可能换人。
+    // 从注册表推导期望值，这条断言才不会因为与渲染层无关的原因失败。
+    const registry = await ctx.win.evaluate(() =>
+      fetch('/assets/live2d/index.json').then((r) => r.json())
+    );
+    expect(info.modelId).toBe(registry.models[0].id);
     expect(info.hasPixi).toBe(true);
     expect(info.hasCore).toBe(true);
     expect(info.hasLive2d).toBe(true);
     expect(info.expressions.length).toBeGreaterThan(0);
-    expect(info.hitAreas).toContain('Head');
-    expect(info.hitAreas).toContain('Body');
+    // 命中区名按名字归一化（head/body），具体叫法由模型作者决定，
+    // 这里只断言存在头/身两类命中区，不断言字面拼写。
+    expect(info.hitAreas.some((h) => /head/i.test(h))).toBe(true);
+    expect(info.hitAreas.some((h) => /body/i.test(h))).toBe(true);
     expect(info.naturalSize.w).toBeGreaterThan(0);
   } finally {
     await ctx.close();
@@ -45,8 +52,13 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       // 注意：extract.pixels() 每次都会重新渲染；extract.canvas() 返回缓存画面，不可用于逐帧比较
       const extract = app.renderer.plugins.extract;
       const bounds = app.stage.getBounds();
-      const W = Math.round(bounds.width);
-      const H = Math.round(bounds.height);
+      // extract.pixels() 返回的行宽是 round(frame.width * resolution)。
+      // 渲染器的 resolution 取的是 devicePixelRatio，在 150% 缩放的 Windows 11 上
+      // 真实步长是假设值的 1.5 倍——不乘 resolution 会取到完全错位的行，
+      // 测试「通过」但证明不了它声称证明的事。
+      const res = app.renderer.resolution;
+      const W = Math.round(bounds.width * res);
+      const H = Math.round(bounds.height * res);
       // 取眼部区域（上部中央）
       const ex = Math.round(W * 0.38);
       const ey = Math.round(H * 0.115);
@@ -111,12 +123,15 @@ test('未注册的 modelId 回退到注册表里的第一个形象', async () =>
       modelId: window.__pet?.modelId,
       manifestId: window.__pet?.manifest?.id || null,
     }));
+    const registry = await ctx.win.evaluate(() =>
+      fetch('/assets/live2d/index.json').then((r) => r.json())
+    );
     expect(info.error).toBeNull();
     expect(info.ready).toBe(true);
     expect(info.modelLoaded).toBe(true);
     // 未知 id → 回退到注册表首个形象
-    expect(info.modelId).toBe('haru');
-    expect(info.manifestId).toBe('haru');
+    expect(info.modelId).toBe(registry.models[0].id);
+    expect(info.manifestId).toBe(registry.models[0].id);
   } finally {
     await ctx.close();
     await rm(userDataDir, { recursive: true, force: true });

@@ -9,10 +9,11 @@ export function createStage(container) {
   });
   container.appendChild(app.view);
 
+  // 不再自己挂 resize 监听：pixi 的 resizeTo: window 已经处理画布尺寸，
+  // 而窗口是固定尺寸不可缩放，重复处理只是白费力气。
   function resize() {
     app.renderer.resize(window.innerWidth, window.innerHeight);
   }
-  window.addEventListener('resize', resize);
 
   /**
    * 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。

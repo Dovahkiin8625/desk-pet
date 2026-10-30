@@ -24,10 +24,10 @@ export function deriveManifest(model3, opts = {}) {
   const expressions = pickExpression(model3);
   const motionGroups = pickMotionGroups(model3);
 
+  // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
+  // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
+  // 猜不准就不猜：留空，由 resolveExpressionName 回退到第一个可用表情。
   const derived = {};
-  SEMANTIC_ORDER.forEach((semantic, i) => {
-    if (expressions[i]) derived[semantic] = expressions[i];
-  });
 
   const groupNames = Object.keys(motionGroups);
   const motions = {};
@@ -91,14 +91,18 @@ export function resolveMotionSpec(manifest, key) {
 
 /** 读取形象注册表与清单；清单缺失时回退到探测。 */
 export async function loadManifest(modelId) {
-  const registryRes = await fetch('/assets/live2d/index.json');
-  const registry = await registryRes.json();
-  const models = Array.isArray(registry?.models) ? registry.models : [];
-  // modelId 来自 settings.json，用户可以手改，任何非空字符串都能通过
-  // sanitizeSettings 的校验。必须对着注册表核对，
-  // 否则 "../../etc" 之类的值会被直接拼进资源路径。
-  // 匹配不上就回退到注册表里的第一个形象。
-  const entry = models.find((m) => m && m.id === modelId) || models[0];
+  // 注册表读不出来时不能直接崩掉整个 boot——降级成空列表并让调用方拿到
+  // 一个明确的错误，而不是一个未捕获的 fetch 异常。
+  let registry = { models: [] };
+  try {
+    const registryRes = await fetch('/assets/live2d/index.json');
+    if (!registryRes.ok) throw new Error(`HTTP ${registryRes.status}`);
+    registry = await registryRes.json();
+  } catch (err) {
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
+  }
+  const models = Array.isArray(registry.models) ? registry.models : [];
+  const entry = models.find((m) => m.id === modelId) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
 
   const manifestUrl = `/assets/live2d/models/${entry.manifest}`;
@@ -130,5 +134,8 @@ export async function loadManifest(modelId) {
   const merged = mergeManifest(base, derived);
   // 即使没有 pet.json，也要保证 model3 有值，否则模型无法加载
   merged.model3 = model3Name;
+  // id 以注册表为准：pet.json 里的 id 若与注册表不一致，
+  // 用它拼 URL 会 404，而且没有回退到已知可用的 entry.id。
+  merged.id = entry.id;
   return merged;
 }

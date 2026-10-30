@@ -12,8 +12,9 @@ export function disposePetModel(model) {
   if (!model) return;
   try {
     disposeTextures(model);
-  } catch {
-    /* 释放失败不应阻断切换 */
+  } catch (err) {
+    // 释放失败不应阻断切换，但必须留痕——否则显存泄漏完全不可见。
+    console.warn('[desk-pet] 模型纹理释放失败：', err?.message);
   }
   try {
     if (model.parent) model.parent.removeChild(model);

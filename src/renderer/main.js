@@ -27,6 +27,9 @@ async function boot() {
 
   window.__pet.modelId = manifest.id;
   window.__pet.modelLoaded = true;
+  // window.__pet.expressions = 模型**原始**表情名列表（如 Haru 的 F01..F08）
+  // 语义映射（happy/angry/...）在 window.__pet.manifest.expressions 里。
+  // 两者不要混淆：交互层要语义，测试与诊断要原始名。
   window.__pet.expressions = manifest.availableExpressions || [];
   window.__pet.hitAreas = Object.keys(model.internalModel?.hitAreas || {});
   window.__pet.naturalSize = { w: fit.naturalWidth, h: fit.naturalHeight };
