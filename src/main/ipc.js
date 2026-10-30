@@ -9,6 +9,7 @@ export function registerIpc({
   onOpenSettings,
   onShowContextMenu,
   onMoveBy,
+  onDragStart,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -21,5 +22,9 @@ export function registerIpc({
   ipcMain.handle('pet:moveWindowBy', (_e, delta) => {
     if (!delta) return;
     onMoveBy(Number(delta.dx) || 0, Number(delta.dy) || 0);
+  });
+  // 新一次拖拽开始：主进程清掉期望位置，让下一次增量从窗口的真实位置重新起算。
+  ipcMain.handle('pet:dragStart', () => {
+    onDragStart();
   });
 }

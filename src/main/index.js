@@ -9,7 +9,7 @@ import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
-import { clampToDisplays, defaultPosition } from './display.js';
+import { clampToDisplays } from './display.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -29,6 +29,13 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 当前拖拽的**期望**位置（未夹紧）：拖拽起点 + Σ增量。
+//
+// 为什么不能把增量直接累加到「已夹紧」的位置上：顶到屏幕边缘时，
+// 被夹紧吃掉的那部分增量会永久丢失；光标往回走时，返回的增量从被钉住
+// 的位置全额施加，角色于是越过光标、跳到相反的边缘并停在那里。
+// 期望位置不夹紧，只在「实际落到窗口上」时才夹紧。
+let desiredPosition = null;
 // 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
 // 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
 let pendingWrite = null;
@@ -144,19 +151,28 @@ app.whenReady().then(async () => {
     },
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
-    // 拖拽的增量位移：读当前窗口位置 → 加增量 → 夹紧到可见区域 → 落盘。
+    // 拖拽的增量位移：累加到**期望位置**上，夹紧后才落到窗口，并持久化实际位置。
+    //
     // 增量式是刻意的：渲染层把「这一段拖了多远」递过来，
     // 累加结果正好等于光标相对按下点的总位移，窗口不会与光标脱节。
     onMoveBy: (dx, dy) => {
       if (!win || win.isDestroyed()) return;
-      const [x, y] = win.getPosition();
       const [w, h] = win.getSize();
-      const displays = currentDisplays();
-      const next = displays.length
-        ? clampToDisplays(x + dx, y + dy, w, h, displays)
-        : defaultPosition(w, h, displays);
-      win.setPosition(next.x, next.y);
-      persist({ position: next });
+      // 期望位置 = 拖拽起点 + Σdelta，不夹紧。
+      if (!desiredPosition) {
+        const [x, y] = win.getPosition();
+        desiredPosition = { x, y };
+      }
+      desiredPosition.x += dx;
+      desiredPosition.y += dy;
+      const applied = clampToDisplays(desiredPosition.x, desiredPosition.y, w, h, currentDisplays());
+      win.setPosition(applied.x, applied.y);
+      // 持久化的是**实际可见**的位置，不是可能跑到屏幕外的期望位置。
+      persist({ position: applied });
+    },
+    // 新一次拖拽开始：期望位置重新对齐当前窗口位置。
+    onDragStart: () => {
+      desiredPosition = null;
     },
   });
 

@@ -22,8 +22,9 @@ window.__pet = {
   lastExpression: null,
   lastMotion: null,
   focusPoint: null,
-  // 最近一次拖拽的增量位移（相对上一次移动事件）。累加起来应当正好等于
-  // 光标相对按下点的总位移——窗口与光标是否脱节，看这个就够了。
+  // 最近一次拖拽**送出的一段**增量（相对上一次移动事件）。
+  // 注意它只是最后一段，不代表整段拖拽的总量——
+  // 窗口与光标是否脱节，要看 e2e 里「窗口位移」与「光标位移」的比较。
   lastDragDelta: null,
   // 空闲计时器的间隔（毫秒）。暴露出来，测试不必真的等 20 秒。
   idleMs: null,
@@ -246,6 +247,8 @@ async function boot() {
       }
     },
     onDragStart: () => {
+      // 告诉主进程「新一次拖拽开始」，让它把期望位置重新对齐当前窗口位置。
+      window.pet.dragStart?.();
       // 每次拖拽重新开始：屏幕坐标的累计基准要清零，
       // 否则上一次拖拽的终点会被当成本次的起点。
       lastPointerScreen = null;

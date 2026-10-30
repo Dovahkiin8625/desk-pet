@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('pet', {
   // 增量移动窗口：传的是「相对上一次的位移」，不是绝对坐标。
   // 绝对坐标在混合 DPI / 多显示器下会漂移，累加增量才不会。
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
+  // 新一次拖拽开始：主进程据此把期望位置重新对齐到当前窗口位置。
+  dragStart: () => ipcRenderer.invoke('pet:dragStart'),
   onModelSwitchRequest: (cb) => {
     ipcRenderer.on('pet:modelSwitchRequest', (_e, modelId) => cb(modelId));
   },
