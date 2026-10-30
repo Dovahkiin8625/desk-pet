@@ -1398,6 +1398,7 @@ export function registerIpc({
   onShowContextMenu,
   onMoveBy,
   onDragStart,
+  onDragEnd,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -3383,6 +3384,8 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
   // 新一次拖拽开始：主进程据此把期望位置重新对齐到当前窗口位置。
   dragStart: () => ipcRenderer.invoke('pet:dragStart'),
+  // 拖拽结束：主进程清掉累加器，不依赖 dragStart 一定送达。
+  dragEnd: () => ipcRenderer.invoke('pet:dragEnd'),
 ```
 
 在 `src/main/ipc.js` 的 `registerIpc` 中新增处理器：
@@ -3394,6 +3397,9 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
   });
   ipcMain.handle('pet:dragStart', () => {
     onDragStart();
+  });
+  ipcMain.handle('pet:dragEnd', () => {
+    onDragEnd();
   });
 ```
 
@@ -3425,9 +3431,15 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
       // 新一次拖拽开始：期望位置重新对齐当前窗口位置。
       desiredPosition = null;
     },
+    onDragEnd: () => {
+      // 拖拽结束也清掉累加器。
+      // 这样即使 pet:dragStart 信号在某次丢失（preload 方法被删、onDragStart 没接上），
+      // 下一次拖拽也不会累加到上一次拖拽的未夹紧位置上——那正是 Important #1 描述的缺陷类型。
+      desiredPosition = null;
+    },
 ```
 
-并把 import 改为：`import { clampToDisplays, defaultPosition } from './display.js';`
+并把 import 改为：`import { clampToDisplays } from './display.js';`
 
 - [ ] **Step 2: 渲染层把拖拽增量转发给主进程**
 
@@ -3436,8 +3448,13 @@ Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑
 ```js
     onDragStart: () => {
       // 告诉主进程「新一次拖拽开始」，让它把期望位置重新对齐当前窗口位置。
-      window.pet.dragStart?.();
+      // ipcRenderer.invoke 返回 promise：主进程抛错或帧被拆除时会拒绝，
+      // 而渲染层没有全局 unhandledrejection 兜底——拒绝会变成未处理错误。
+      window.pet.dragStart?.()?.catch?.(() => {});
       lastPointerScreen = null;
+    },
+    onDragEnd: () => {
+      window.pet.dragEnd?.()?.catch?.(() => {});
     },
     onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
       // 增量必须换算到**屏幕**坐标再累加。
