@@ -1733,10 +1733,10 @@ export function deriveManifest(model3, opts = {}) {
   const expressions = pickExpression(model3);
   const motionGroups = pickMotionGroups(model3);
 
+  // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
+  // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
+  // 猜不准就不猜：留空，由 resolveExpressionName 回退到第一个可用表情。
   const derived = {};
-  SEMANTIC_ORDER.forEach((semantic, i) => {
-    if (expressions[i]) derived[semantic] = expressions[i];
-  });
 
   const groupNames = Object.keys(motionGroups);
   const motions = {};
@@ -1800,9 +1800,18 @@ export function resolveMotionSpec(manifest, key) {
 
 /** 读取形象注册表与清单；清单缺失时回退到探测。 */
 export async function loadManifest(modelId) {
-  const registryRes = await fetch('/assets/live2d/index.json');
-  const registry = await registryRes.json();
-  const entry = (registry.models || []).find((m) => m.id === modelId) || (registry.models || [])[0];
+  // 注册表读不出来时不能直接崩掉整个 boot——降级成空列表并让调用方拿到
+  // 一个明确的错误，而不是一个未捕获的 fetch 异常。
+  let registry = { models: [] };
+  try {
+    const registryRes = await fetch('/assets/live2d/index.json');
+    if (!registryRes.ok) throw new Error(`HTTP ${registryRes.status}`);
+    registry = await registryRes.json();
+  } catch (err) {
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
+  }
+  const models = Array.isArray(registry.models) ? registry.models : [];
+  const entry = models.find((m) => m.id === modelId) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
 
   const manifestUrl = `/assets/live2d/models/${entry.manifest}`;
@@ -1834,6 +1843,9 @@ export async function loadManifest(modelId) {
   const merged = mergeManifest(base, derived);
   // 即使没有 pet.json，也要保证 model3 有值，否则模型无法加载
   merged.model3 = model3Name;
+  // id 以注册表为准：pet.json 里的 id 若与注册表不一致，
+  // 用它拼 URL 会 404，而且没有回退到已知可用的 entry.id。
+  merged.id = entry.id;
   return merged;
 }
 ```
@@ -1852,10 +1864,11 @@ export function createStage(container) {
   });
   container.appendChild(app.view);
 
+  // 不再自己挂 resize 监听：pixi 的 resizeTo: window 已经处理画布尺寸，
+  // 而窗口是固定尺寸不可缩放，重复处理只是白费力气。
   function resize() {
     app.renderer.resize(window.innerWidth, window.innerHeight);
   }
-  window.addEventListener('resize', resize);
 
   /**
    * 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。
@@ -1905,8 +1918,9 @@ export function disposePetModel(model) {
   if (!model) return;
   try {
     disposeTextures(model);
-  } catch {
-    /* 释放失败不应阻断切换 */
+  } catch (err) {
+    // 释放失败不应阻断切换，但必须留痕——否则显存泄漏完全不可见。
+    console.warn('[desk-pet] 模型纹理释放失败：', err?.message);
   }
   try {
     if (model.parent) model.parent.removeChild(model);
@@ -1926,29 +1940,31 @@ export function disposePetModel(model) {
  */
 export function disposeTextures(model) {
   const PIXI = window.PIXI;
-  const internal = model?.internalModel;
-  const textures = internal?._textures || internal?.textures || [];
+
+  // 模型的 PIXI 纹理挂在 model.textures 上（Live2DModel 用 Texture.fromURL 加载，
+  // 纹理以完整 URL 为键缓存在 PIXI.TextureCache 里）。
+  //
+  // 不要去碰 internalModel._textures——那是 CubismRenderer_WebGL 持有的原始
+  // WebGLTexture 句柄数组，不可迭代；internalModel.textures 只是 model3.json 里的
+  // 文件名数组。两者都拿不到我们要的 URL。
+  const textures = model?.textures || [];
   const urls = [];
   for (const t of textures) {
-    if (!t) continue;
-    if (t.baseTexture?.resource?.url) urls.push(t.baseTexture.resource.url);
-    else if (t.url) urls.push(t.url);
+    const url = t?.baseTexture?.resource?.url;
+    if (url) urls.push(url);
   }
+
   for (const url of urls) {
     const cached = PIXI.TextureCache?.[url];
-    if (cached) {
-      PIXI.Texture.removeFromCache(url);
-      cached.destroy(true);
-    }
+    if (!cached) continue;
+    PIXI.Texture.removeFromCache(url);
+    cached.destroy(true);
   }
-  // 兜底：把模型相关的所有纹理都从缓存里摘掉
-  for (const key of Object.keys(PIXI.TextureCache || {})) {
-    if (key.includes(`/${model?.internalModel?.settings?.getModelFile?.() || ''}`)) {
-      const cached = PIXI.TextureCache[key];
-      PIXI.Texture.removeFromCache(key);
-      cached?.destroy(true);
-    }
-  }
+
+  // 刻意**不做**「把缓存里所有 URL 形状的键都清掉」这种兜底：
+  // PIXI.TextureCache 是全局命名空间，那样会把别的模型或未来任何资源的纹理
+  // 一起销毁，表现为切换形象后渲染空白。
+  return urls.length;
 }
 ```
 
@@ -1984,6 +2000,9 @@ async function boot() {
 
   window.__pet.modelId = manifest.id;
   window.__pet.modelLoaded = true;
+  // window.__pet.expressions = 模型**原始**表情名列表（如 Haru 的 F01..F08）
+  // 语义映射（happy/angry/...）在 window.__pet.manifest.expressions 里。
+  // 两者不要混淆：交互层要语义，测试与诊断要原始名。
   window.__pet.expressions = manifest.availableExpressions || [];
   window.__pet.hitAreas = Object.keys(model.internalModel?.hitAreas || {});
   window.__pet.naturalSize = { w: fit.naturalWidth, h: fit.naturalHeight };
@@ -2044,13 +2063,20 @@ test('模型成功加载并具备能力', async () => {
     expect(info.error).toBeNull();
     expect(info.ready).toBe(true);
     expect(info.modelLoaded).toBe(true);
-    expect(info.modelId).toBe('haru');
+    // 不写死 'haru'：注册表里第一个形象将来可能换人。
+    // 从注册表推导期望值，这条断言才不会因为与渲染层无关的原因失败。
+    const registry = await ctx.win.evaluate(() =>
+      fetch('/assets/live2d/index.json').then((r) => r.json())
+    );
+    expect(info.modelId).toBe(registry.models[0].id);
     expect(info.hasPixi).toBe(true);
     expect(info.hasCore).toBe(true);
     expect(info.hasLive2d).toBe(true);
     expect(info.expressions.length).toBeGreaterThan(0);
-    expect(info.hitAreas).toContain('Head');
-    expect(info.hitAreas).toContain('Body');
+    // 命中区名按名字归一化（head/body），具体叫法由模型作者决定，
+    // 这里只断言存在头/身两类命中区，不断言字面拼写。
+    expect(info.hitAreas.some((h) => /head/i.test(h))).toBe(true);
+    expect(info.hitAreas.some((h) => /body/i.test(h))).toBe(true);
     expect(info.naturalSize.w).toBeGreaterThan(0);
   } finally {
     await ctx.close();
@@ -2067,8 +2093,13 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       // 注意：extract.pixels() 每次都会重新渲染；extract.canvas() 返回缓存画面，不可用于逐帧比较
       const extract = app.renderer.plugins.extract;
       const bounds = app.stage.getBounds();
-      const W = Math.round(bounds.width);
-      const H = Math.round(bounds.height);
+      // extract.pixels() 返回的行宽是 round(frame.width * resolution)。
+      // 渲染器的 resolution 取的是 devicePixelRatio，在 150% 缩放的 Windows 11 上
+      // 真实步长是假设值的 1.5 倍——不乘 resolution 会取到完全错位的行，
+      // 测试「通过」但证明不了它声称证明的事。
+      const res = app.renderer.resolution;
+      const W = Math.round(bounds.width * res);
+      const H = Math.round(bounds.height * res);
       // 取眼部区域（上部中央）
       const ex = Math.round(W * 0.38);
       const ey = Math.round(H * 0.115);
