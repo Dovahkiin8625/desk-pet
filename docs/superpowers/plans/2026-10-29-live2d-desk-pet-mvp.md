@@ -3521,7 +3521,7 @@ Expected: PASS（2 passed）。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/renderer/ui/windowDrag.js src/renderer/main.js src/main/index.js src/main/ipc.js src/preload/index.cjs test/e2e/drag.spec.js
+git add src/renderer/main.js src/main/index.js src/main/ipc.js src/preload/index.cjs test/e2e/drag.spec.js
 git commit -m "feat: 拖拽移动窗口与位置记忆"
 ```
 
