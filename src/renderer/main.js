@@ -1,7 +1,9 @@
 import { createStage } from './pet/stage.js';
-import { loadManifest } from './pet/manifest.js';
+import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
+import { attachInteraction } from './pet/interaction.js';
+import { idleReaction } from './pet/behavior.js';
 
 window.__pet = {
   ready: false,
@@ -14,6 +16,12 @@ window.__pet = {
   // 那是显存泄漏的信号，必须能从诊断面读到。
   lastReleasedTextures: 0,
   switchError: null,
+  // 交互诊断面：最近一次点击命中的语义区域、触发的表情名与动作 spec，
+  // 以及当前视线跟随的目标点。null 表示「还没有发生过」。
+  lastZone: null,
+  lastExpression: null,
+  lastMotion: null,
+  focusPoint: null,
 };
 
 let stage = null;
@@ -141,6 +149,82 @@ async function boot() {
   userScale = settings?.scale ?? 1;
   // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
   await mountModel(settings?.modelId);
+
+  const canvas = stage.app.view;
+
+  // 空闲计时：20 秒无交互则播一次 idle 动作（spec §5.1）
+  const IDLE_MS = 20000;
+  let idleTimer = null;
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (!currentModel || !currentManifest) return;
+      const r = idleReaction(currentManifest);
+      if (r.motionSpec && currentModel?.motion) {
+        try {
+          currentModel.motion(r.motionSpec.group, r.motionSpec.index);
+        } catch {
+          /* ignore */
+        }
+      }
+    }, IDLE_MS);
+  }
+  resetIdleTimer();
+
+  // 画布上唯一的指针事件入口。模型与清单都在**回调里实时读取**：
+  // 切换形象后拿到的必须是当前模型，不能是上一个形象的引用。
+  attachInteraction({
+    canvas,
+    getModel: () => currentModel,
+    getManifest: () => currentManifest,
+    onInteract: resetIdleTimer,
+    onTap: ({ zone, reaction }) => {
+      window.__pet.lastZone = zone;
+      window.__pet.lastExpression = reaction.expressionName;
+      window.__pet.lastMotion = reaction.motionSpec;
+      if (reaction.expressionName && currentModel?.expression) {
+        try {
+          currentModel.expression(reaction.expressionName);
+        } catch {
+          /* 表情缺失时静默跳过 */
+        }
+      }
+      if (reaction.motionSpec && currentModel?.motion) {
+        try {
+          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index);
+        } catch {
+          /* 动作缺失时静默跳过 */
+        }
+      }
+    },
+    onHover: (x, y) => {
+      window.__pet.focusPoint = { x, y };
+      if (currentModel?.focus) {
+        try {
+          currentModel.focus(x, y);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    onDragStart: () => {
+      const r = currentManifest ? resolveMotionSpec(currentManifest, 'drag') : null;
+      if (r && currentModel?.motion) {
+        try {
+          currentModel.motion(r.group, r.index);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    onDragMove: ({ deltaX, deltaY }) => {
+      // Task 8 会补上 moveWindowBy 的 IPC；此处的可选链保证在补上之前不报错
+      window.pet.moveWindowBy?.(deltaX, deltaY);
+    },
+    onContextMenu: () => {
+      window.pet.showContextMenu();
+    },
+  });
 
   // 主进程请求切换形象（pet:modelSwitchRequest）。
   // 这是既有的唯一切换入口，不另开 IPC 通道。
