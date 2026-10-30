@@ -9,6 +9,7 @@ import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
+import { clampToDisplays, defaultPosition } from './display.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -143,6 +144,20 @@ app.whenReady().then(async () => {
     },
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
+    // 拖拽的增量位移：读当前窗口位置 → 加增量 → 夹紧到可见区域 → 落盘。
+    // 增量式是刻意的：渲染层把「这一段拖了多远」递过来，
+    // 累加结果正好等于光标相对按下点的总位移，窗口不会与光标脱节。
+    onMoveBy: (dx, dy) => {
+      if (!win || win.isDestroyed()) return;
+      const [x, y] = win.getPosition();
+      const [w, h] = win.getSize();
+      const displays = currentDisplays();
+      const next = displays.length
+        ? clampToDisplays(x + dx, y + dy, w, h, displays)
+        : defaultPosition(w, h, displays);
+      win.setPosition(next.x, next.y);
+      persist({ position: next });
+    },
   });
 
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });

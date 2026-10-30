@@ -8,6 +8,7 @@ export function registerIpc({
   switchModel,
   onOpenSettings,
   onShowContextMenu,
+  onMoveBy,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -15,4 +16,10 @@ export function registerIpc({
   ipcMain.handle('pet:switchModel', (_e, modelId) => switchModel(modelId));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
+  // 增量位移：主进程负责累加、夹紧到可见区域并持久化位置。
+  // 渲染层只负责把「这一段拖了多远」递过来，绝不传绝对坐标。
+  ipcMain.handle('pet:moveWindowBy', (_e, delta) => {
+    if (!delta) return;
+    onMoveBy(Number(delta.dx) || 0, Number(delta.dy) || 0);
+  });
 }

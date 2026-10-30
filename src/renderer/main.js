@@ -22,6 +22,9 @@ window.__pet = {
   lastExpression: null,
   lastMotion: null,
   focusPoint: null,
+  // 最近一次拖拽的增量位移（相对上一次移动事件）。累加起来应当正好等于
+  // 光标相对按下点的总位移——窗口与光标是否脱节，看这个就够了。
+  lastDragDelta: null,
   // 空闲计时器的间隔（毫秒）。暴露出来，测试不必真的等 20 秒。
   idleMs: null,
 };
@@ -30,6 +33,9 @@ let stage = null;
 let currentModel = null;
 let currentManifest = null;
 let userScale = 1;
+// 上一次拖拽事件里光标的**屏幕**坐标。见 onDragMove 的说明：
+// 增量必须在屏幕坐标系里算，否则窗口追着光标跑会把增量吃掉一半。
+let lastPointerScreen = null;
 
 // 切换请求序号：并发切换时只有最后一次请求允许提交到舞台，
 // 否则「谁先加载完谁上屏」，屏幕上可能不是用户最后选的那个。
@@ -240,6 +246,9 @@ async function boot() {
       }
     },
     onDragStart: () => {
+      // 每次拖拽重新开始：屏幕坐标的累计基准要清零，
+      // 否则上一次拖拽的终点会被当成本次的起点。
+      lastPointerScreen = null;
       const r = currentManifest ? resolveMotionSpec(currentManifest, 'drag') : null;
       if (r && currentModel?.motion) {
         try {
@@ -249,9 +258,33 @@ async function boot() {
         }
       }
     },
-    onDragMove: ({ deltaX, deltaY }) => {
-      // Task 8 会补上 moveWindowBy 的 IPC；此处的可选链保证在补上之前不报错
-      window.pet.moveWindowBy?.(deltaX, deltaY);
+    onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
+      // 增量必须换算到**屏幕**坐标再累加。
+      //
+      // clientX/clientY 是窗口内的坐标：窗口追着光标跑，窗口每移动 1px，
+      // 下一个事件的 clientX 就少 1px。于是「所有 clientX 增量之和」
+      // = 光标的屏幕位移 − 窗口自己的位移，角色只走到光标位移的一半
+      // （实测拖 120px 只走了 60px，角色落在光标后面）。
+      //
+      // window.screenX + clientX 才是光标在**屏幕**上的位置，
+      // 它的增量就是光标真实的屏幕位移：累加起来正好等于光标走过的距离，
+      // 角色才会严丝合缝地跟着光标走。
+      // 传给主进程的仍然是增量，主进程照旧累加、夹紧、持久化。
+      const pointer = { x: window.screenX + clientX, y: window.screenY + clientY };
+      let dx = deltaX;
+      let dy = deltaY;
+      if (lastPointerScreen) {
+        dx = pointer.x - lastPointerScreen.x;
+        dy = pointer.y - lastPointerScreen.y;
+      }
+      // 第一次移动时窗口还没动过，clientX 的增量本身就是屏幕位移，
+      // 直接用；之后一律用屏幕坐标的增量。
+      lastPointerScreen = pointer;
+      window.__pet.lastDragDelta = { deltaX: dx, deltaY: dy };
+      window.pet.moveWindowBy?.(dx, dy);
+    },
+    onDragEnd: () => {
+      // 主进程已在每次 moveWindowBy 时持久化位置，这里无需额外处理
     },
     onContextMenu: () => {
       window.pet.showContextMenu();
