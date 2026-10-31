@@ -1,19 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchApp } from './helpers.js';
-
-/**
- * 收集渲染层的未捕获异常与 console.error。
- * 与 switch.spec.js 用的是同一套模式：这是新代码在浏览器里唯一跑的地方，
- * 「渲染进程不得产生未捕获错误」这条必须在这里被断言。
- */
-function collectErrors(win) {
-  const errors = [];
-  win.on('pageerror', (err) => errors.push(`pageerror: ${err?.message || err}`));
-  win.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
-  });
-  return errors;
-}
+import { launchApp, collectErrors } from './helpers.js';
 
 test('点击头部与身体触发不同反应', async () => {
   const ctx = await launchApp();

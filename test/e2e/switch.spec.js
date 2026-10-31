@@ -1,19 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchApp } from './helpers.js';
-
-/**
- * 收集渲染层的未捕获异常与 console.error。
- * 切换形象要走「加载新模型 → 销毁旧模型 → 释放纹理」一整条链路，
- * 任何一步抛错都会让桌宠变成空白或直接崩溃，必须看得见。
- */
-function collectErrors(win) {
-  const errors = [];
-  win.on('pageerror', (err) => errors.push(`pageerror: ${err?.message || err}`));
-  win.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
-  });
-  return errors;
-}
+import { launchApp, collectErrors } from './helpers.js';
 
 test('切换形象后模型、表情与命中区均更换', async () => {
   const ctx = await launchApp();

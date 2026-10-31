@@ -2,58 +2,12 @@ import { test, expect } from '@playwright/test';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launchApp } from './helpers.js';
+import { launchApp, collectErrors, dragBy, windowPos, moveToTopLeft } from './helpers.js';
 
 /**
- * 收集渲染层的未捕获异常与 console.error。
- * 与 interaction.spec.js 同款：拖拽是本次新增的代码路径，
- * 「渲染进程不得产生未捕获错误」必须在这里被断言。
+ * 拖拽夹具（dragBy / windowPos / moveToTopLeft）与错误收集器统一放在
+ * test/e2e/helpers.js：抄一份会漂移，而且抄出来的那份通常更弱。
  */
-function collectErrors(win) {
-  const errors = [];
-  win.on('pageerror', (err) => errors.push(`pageerror: ${err?.message || err}`));
-  win.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`);
-  });
-  return errors;
-}
-
-/**
- * 模拟一次拖拽：按下 → 分步移动 → 松手。
- *
- * 光标沿着**屏幕**上的一条直线移动；每一步都用窗口当前的屏幕原点
- * 把光标的屏幕坐标换算成窗口内坐标（clientX/clientY）。
- *
- * 必须这样换算：真实拖拽里窗口追着光标跑，窗口内坐标的增量会被窗口
- * 自己的移动吃掉一半——写死 clientX 增量等于假装「窗口没有动过」。
- * 换算用的 window.screenX 与渲染层算增量时读的是同一个值，
- * 所以光标的屏幕位移与窗口的位移在同一个坐标系里，累加结果才精确。
- */
-const dragBy = async (win, dx, dy, steps = 5) => {
-  await win.evaluate(
-    async ({ dx, dy, steps }) => {
-      const canvas = window.__pet.stage.app.view;
-      const startScreen = { x: window.screenX + 150, y: window.screenY + 300 };
-      const opts = (sx, sy) => ({
-        clientX: sx - window.screenX,
-        clientY: sy - window.screenY,
-        pointerId: 1,
-        button: 0,
-        bubbles: true,
-      });
-      canvas.dispatchEvent(new PointerEvent('pointerdown', opts(startScreen.x, startScreen.y)));
-      for (let i = 1; i <= steps; i++) {
-        const sx = startScreen.x + (dx * i) / steps;
-        const sy = startScreen.y + (dy * i) / steps;
-        canvas.dispatchEvent(new PointerEvent('pointermove', opts(sx, sy)));
-        await new Promise((r) => setTimeout(r, 30));
-      }
-      canvas.dispatchEvent(new PointerEvent('pointerup', opts(startScreen.x + dx, startScreen.y + dy)));
-      await new Promise((r) => setTimeout(r, 400));
-    },
-    { dx, dy, steps }
-  );
-};
 
 /**
  * 一次**不松手**的连续拖拽：沿着一串偏移量移动光标，中途不抬起指针。
@@ -88,13 +42,6 @@ const dragAlong = async (win, offsets) => {
   }, offsets);
 };
 
-const windowPos = (ctx) =>
-  ctx.app.evaluate(async ({ BrowserWindow }) => {
-    const w = BrowserWindow.getAllWindows()[0];
-    const [x, y] = w.getPosition();
-    return { x, y };
-  });
-
 /**
  * 读取主进程落盘的 settings.json。
  *
@@ -125,35 +72,6 @@ const waitForSettings = async (ctx, predicate, timeout = 8000) => {
     }
     if (Date.now() >= deadline) return last;
     await new Promise((r) => setTimeout(r, 100));
-  }
-};
-
-/**
- * 把窗口挪到主显示器工作区的左上角，给「向右下拖」腾出空间。
- *
- * 必须挪：桌宠的默认位置就是主显示器右下角，而右下角**正好压在夹紧边界上**
- * （clampToDisplays 的 maxX/maxY 就是那个点）。在那里往右下拖，
- * 每一步都会被夹回原位，窗口纹丝不动——那不是「拖不动」，
- * 而是「已经在边界上」，测不出位移。
- *
- * setPosition 是异步落到原生窗口上的（Windows），所以要等**真正请求的那个位置**
- * 生效再返回——不能等一个写死的坐标：主显示器工作区不一定从 (0,0) 开始。
- */
-const moveToTopLeft = async (ctx) => {
-  const target = await ctx.app.evaluate(({ BrowserWindow, screen }) => {
-    const w = BrowserWindow.getAllWindows()[0];
-    const wa = screen.getPrimaryDisplay().workArea;
-    const x = wa.x + 20;
-    const y = wa.y + 20;
-    w.setPosition(x, y);
-    return { x, y };
-  });
-  const deadline = Date.now() + 5000;
-  for (;;) {
-    const pos = await windowPos(ctx);
-    if (pos.x === target.x && pos.y === target.y) return pos;
-    if (Date.now() >= deadline) return pos;
-    await new Promise((r) => setTimeout(r, 50));
   }
 };
 

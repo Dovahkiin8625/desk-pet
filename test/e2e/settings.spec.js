@@ -1,19 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { launchApp } from './helpers.js';
+import { launchApp, collectErrors } from './helpers.js';
 
 /**
- * 收集渲染层的未捕获异常与 console.error。
+ * 收集渲染层与设置页的未捕获异常与 console.error。
  * 设置窗口走的是同一套 preload 与 app:// 协议，
  * 任何一步抛错都会让设置界面半死不活，必须看得见。
+ * 收集器统一放在 test/e2e/helpers.js（全仓库只有一份实现）。
  */
-function collectErrors(page, bucket) {
-  page.on('pageerror', (err) => bucket.push(`pageerror: ${err?.message || err}`));
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') bucket.push(`console.error: ${msg.text()}`);
-  });
-}
 
 /** 打开设置窗口并等到它加载完毕。 */
 async function openSettingsWindow(ctx) {
