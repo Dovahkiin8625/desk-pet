@@ -27,12 +27,12 @@ function setModel(id) {
   modelSelect.value = known ? id : modelSelect.options[0]?.value || '';
 }
 
-function setScale(v) {
+function updateScale(v) {
   scaleInput.value = String(v);
   scaleVal.textContent = formatScale(v);
 }
 
-function setOpacity(v) {
+function updateOpacity(v) {
   opacityInput.value = String(v);
   opacityVal.textContent = formatOpacity(v);
 }
@@ -43,8 +43,8 @@ async function init() {
   window.pet.onSettingsChanged((s) => {
     if (!s) return;
     if (typeof s.modelId === 'string') setModel(s.modelId);
-    if (typeof s.scale === 'number') setScale(s.scale);
-    if (typeof s.opacity === 'number') setOpacity(s.opacity);
+    if (typeof s.scale === 'number') updateScale(s.scale);
+    if (typeof s.opacity === 'number') updateOpacity(s.opacity);
   });
 
   const [settings, models] = await Promise.all([window.pet.getSettings(), window.pet.listModels()]);
@@ -55,8 +55,8 @@ async function init() {
     modelSelect.appendChild(opt);
   }
   setModel(settings.modelId);
-  setScale(settings.scale);
-  setOpacity(settings.opacity);
+  updateScale(settings.scale);
+  updateOpacity(settings.opacity);
 }
 
 modelSelect.addEventListener('change', async () => {
