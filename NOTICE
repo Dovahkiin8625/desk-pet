@@ -1,0 +1,28 @@
+# 第三方素材与许可说明
+
+本项目包含以下第三方内容，均非本项目原创。
+
+## Live2D Cubism Core
+
+- 来源：npm 包 `live2dcubismcore@1.0.2`（内含 Live2D Cubism Core for Web）
+- 版权：© Live2D Inc.
+- 许可：Live2D Proprietary Software License Agreement
+  <https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html>
+- 说明：Cubism Core 为专有许可代码，**不是** MIT 许可。个人使用与内部分发无碍；
+  若要公开分发本项目或其编译产物，必须先阅读并履行上述许可条款。
+
+## Live2D 官方样例模型（Haru、Natori）
+
+- 来源：<https://github.com/Live2D/CubismWebSamples> 的 `Samples/Resources/` 目录
+- 版权：© Live2D Inc.
+- 许可：Live2D 官方样例素材条款，**限非商业用途**
+- 说明：本仓库不提交这些二进制资源，由 `npm run setup` 自动获取。
+  若要用于商业场景，请改用你拥有授权的模型。
+
+## pixi.js
+
+- npm 包 `pixi.js@6.5.10`，MIT 许可，© PixiJS
+
+## pixi-live2d-display
+
+- npm 包 `pixi-live2d-display@0.4.0`，MIT 许可
