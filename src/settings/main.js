@@ -18,11 +18,25 @@ function formatOpacity(v) {
   return `${Math.round(Number(v) * 100)}%`;
 }
 
+// init() 完成之前收到的广播：先记下来，等初始化结束时统一应用。
+//
+// 监听器是先于 Promise.all([getSettings(), listModels()]) 注册的，
+// 两者之间到达的广播会撞上空的 options：setModel 只能把 value 置空，
+// 随后 init() 结束时又用**更旧**的 getSettings 结果覆盖一次——
+// 下拉框显示的就不是桌面上跑的那个，而且不会有下一次广播来纠正。
+// 缩放与透明度同理：广播里的新值会被 init 的旧值盖回去。
+let pending = null;
+
 // 下拉框只认注册表里的 id：存着的 id 不在列表里（比如形象被删了），
 // 就退回到列表第一项——那正是渲染层 loadManifest 的回退规则，
 // 两边不一致的话，设置窗口显示的形象会和桌面上显示的对不上。
 function setModel(id) {
   if (typeof id !== 'string' || id === '') return;
+  if (modelSelect.options.length === 0) {
+    // 选项还没填好：先记下来，填充完再应用。
+    pending = { ...(pending || {}), modelId: id };
+    return;
+  }
   const known = Array.from(modelSelect.options).some((o) => o.value === id);
   modelSelect.value = known ? id : modelSelect.options[0]?.value || '';
 }
@@ -42,6 +56,8 @@ async function init() {
   // 会让界面停在旧值上。
   window.pet.onSettingsChanged((s) => {
     if (!s) return;
+    // 记下最近一次广播：init() 结束时要用它，而不是更旧的 getSettings 结果。
+    pending = { ...(pending || {}), ...s };
     if (typeof s.modelId === 'string') setModel(s.modelId);
     if (typeof s.scale === 'number') updateScale(s.scale);
     if (typeof s.opacity === 'number') updateOpacity(s.opacity);
@@ -54,9 +70,12 @@ async function init() {
     opt.textContent = m.name;
     modelSelect.appendChild(opt);
   }
-  setModel(settings.modelId);
-  updateScale(settings.scale);
-  updateOpacity(settings.opacity);
+  // 选项填好了：广播里的值比 getSettings 的结果新，优先用它。
+  const latest = { ...settings, ...(pending || {}) };
+  pending = null;
+  setModel(latest.modelId);
+  updateScale(latest.scale);
+  updateOpacity(latest.opacity);
 }
 
 modelSelect.addEventListener('change', async () => {

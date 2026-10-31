@@ -29,6 +29,8 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
+let appliedOpacity = null;
 // 设置窗口全局只有一个：重复打开时聚焦已有的那个，而不是开一堆。
 let settingsWin = null;
 // 当前拖拽的**期望**位置（未夹紧）：拖拽起点 + Σ增量。
@@ -75,7 +77,13 @@ function persist(patch) {
   // 透明度由主进程直接施加在**宠物窗口**上（win.setOpacity）。
   // 必须在 persist 里做：设置可能来自设置窗口的滑块、也可能来自别处，
   // 落盘只是持久化，不等于已经生效。
-  if (win && !win.isDestroyed()) applySettingsToWindow(win, settings);
+  //
+  // 只有透明度**真的变了**才调原生接口：persist 在拖拽的每一帧都会被调用，
+  // 而拖拽过程中透明度根本不变——每次都发一次 win.setOpacity() 是在最热的路径上做无用功。
+  if (win && !win.isDestroyed() && settings.opacity !== appliedOpacity) {
+    applySettingsToWindow(win, settings);
+    appliedOpacity = settings.opacity;
+  }
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -213,6 +221,15 @@ app.whenReady().then(async () => {
     },
     listModels: readModelRegistry,
     switchModel: async (modelId) => {
+      // 空 id（''/undefined/null）不是「切换到某个形象」，而是「没有指定」。
+      //
+      // resolveModelId 会把任何不认识的 id 都映射到 models[0].id，
+      // 于是 switchModel('') 会把一个存得好好的 modelId 覆盖成第一个形象——
+      // 原来的 persist({ modelId }) 原样落盘，反而不会动它。
+      // 所以这里必须把「没有 id」当成「不变」：返回当前 id，什么都不持久化。
+      if (typeof modelId !== 'string' || modelId === '') {
+        return settings.modelId;
+      }
       // 先按注册表解析：请求了不存在的 id 时落地的其实是回退后的那个。
       // 落盘与广播都用解析后的 id，设置窗口的下拉框才不会与桌面上跑的形象脱节。
       const models = await readModelRegistry();

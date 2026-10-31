@@ -321,7 +321,9 @@ async function boot() {
   // 而只改缩放时并没有换模型，不重新适配的话画面不会变。
   window.pet.onSettingsChanged((s) => {
     if (!s) return;
-    if (typeof s.scale === 'number') {
+    if (typeof s.scale === 'number' && s.scale !== userScale) {
+      // 只有缩放**真的变了**才重新适配：广播带的是完整设置对象，
+      // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
       userScale = s.scale;
       window.__pet.scale = userScale;
       if (currentModel && currentManifest) {
@@ -335,6 +337,11 @@ async function boot() {
     }
   });
 
+  // 诊断钩子：**直接**挂载模型，绕过主进程——
+  // 不落盘、不广播，也不走主进程的 resolveModelId 解析。
+  //
+  // 与 window.pet.switchModel（走 IPC、会持久化并广播）是两套语义：
+  // 别把这个当设置路径用，它只服务于「在测试里直接换个模型跑一下」。
   window.__pet.switchModel = async (modelId) => {
     try {
       await mountModel(modelId);
