@@ -3808,8 +3808,11 @@ function openSettings() {
 
 ```js
   window.pet.onSettingsChanged(async (s) => {
-    if (typeof s.scale === 'number') {
+    if (typeof s.scale === 'number' && s.scale !== userScale) {
+      // 只有缩放真的变了才重新适配：广播带的是完整设置对象，
+      // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
       userScale = s.scale;
+      window.__pet.scale = userScale;
       if (currentModel) stage.fitModel(currentModel, currentManifest, userScale);
     }
     if (typeof s.opacity === 'number') {
