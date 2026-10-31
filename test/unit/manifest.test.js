@@ -35,9 +35,13 @@ test('清单优先于探测值', () => {
   assert.ok(merged.expressions.normal);
 });
 
-test('缺失语义时回退到第一个可用表情', () => {
+test('缺失语义时返回 null：只播动作，不套表情', () => {
+  // 猜表情比不猜更糟：Natori 的表情表第一项是 Angry，
+  // 按序号猜会让「摸头」触发生气。spec §4.4 的降级表写的是
+  // 「语义缺失 → 退化为播放对应动作；仍缺失 → 仅播动作」。
   const m = deriveManifest(MODEL3, { id: 'x' });
-  assert.equal(resolveExpressionName(m, 'happy'), 'A');
+  assert.equal(resolveExpressionName(m, 'happy'), null);
+  assert.equal(resolveExpressionName(m, 'angry'), null);
 });
 
 test('模型完全没有表情时返回 null', () => {
@@ -63,7 +67,7 @@ test('动作组名不存在时返回 null', () => {
 
 test('探测阶段不按序号猜语义，探测清单的表情映射始终为空', () => {
   // 官方样例 Haru 的 expressions[1] 是 F02，而 pet.json 里 F02 是 angry——
-  // 按序号猜会让「摸头」触发生气。降级时宁可留空，由 resolveExpressionName 回退。
+  // 按序号猜会让「摸头」触发生气。降级时宁可留空：未映射的语义只播动作。
   const m = deriveManifest(MODEL3, { id: 'x' });
   assert.deepEqual(m.expressions, {});
 });
@@ -73,9 +77,27 @@ test('降级清单只为普通表情兜底，其余语义保持未映射', () =>
   const merged = mergeManifest(null, derived);
   assert.deepEqual(Object.keys(merged.expressions), ['normal']);
   assert.equal(merged.expressions.normal, 'A');
-  // 未映射的语义仍能解析出可用表情（回退到第一个可用表情）
-  assert.equal(resolveExpressionName(merged, 'happy'), 'A');
-  assert.equal(resolveExpressionName(merged, 'angry'), 'A');
+  // 未映射的语义解析为 null —— 交互层因此只播动作、不套表情。
+  assert.equal(resolveExpressionName(merged, 'happy'), null);
+  assert.equal(resolveExpressionName(merged, 'angry'), null);
+  // 普通表情仍然有值：唯一被允许的猜测（「普通」不猜错任何情绪）。
+  assert.equal(resolveExpressionName(merged, 'normal'), 'A');
+});
+
+test('没有 pet.json 且模型第一个表情是 Angry 时，摸头不会触发生气', () => {
+  // Natori 的表情表第一项就是 Angry。一个只放了目录、没有 pet.json 的模型
+  // （正是 §4.6「只放目录也能加载」的路径）如果按序号猜语义，
+  // 「摸头」就会触发生气的脸。
+  const derived = deriveManifest(
+    { FileReferences: { Expressions: [{ Name: 'Angry' }, { Name: 'Smile' }, { Name: 'Normal' }] } },
+    { id: 'natori' }
+  );
+  const merged = mergeManifest(null, derived);
+  // 未映射的语义一律不猜：解析为 null → 交互层只播动作、不套表情。
+  assert.equal(resolveExpressionName(merged, 'happy'), null);
+  assert.equal(resolveExpressionName(merged, 'smile'), null);
+  // 唯一被允许的兜底是「普通表情」——它不猜错情绪，只是可能不是中性脸。
+  assert.equal(resolveExpressionName(merged, 'normal'), 'Angry');
 });
 
 test('清单指定普通表情时以清单为准', () => {

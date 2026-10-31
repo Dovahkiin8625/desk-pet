@@ -80,16 +80,25 @@ async function init() {
 
 modelSelect.addEventListener('change', async () => {
   const requested = modelSelect.value;
+  let result;
   try {
-    // switchModel 返回**实际生效**的形象 id：请求了未知 id 时，
-    // 主进程会按注册表回退，这里必须把下拉框也拨回回退后的那个，
-    // 否则界面显示的与桌面上跑的就对不上了。
-    const applied = await window.pet.switchModel(requested);
-    if (typeof applied === 'string' && applied !== requested) setModel(applied);
+    // switchModel 现在**等渲染层的回执**：主进程拿到「模型真的上屏了」
+    // 才算成功。加载失败时主进程会把磁盘上的 modelId 回滚到屏幕上
+    // 那个形象，并在这里报告失败——不能先显示「已切换到 …」。
+    result = await window.pet.switchModel(requested);
   } catch (err) {
     show(`切换失败：${err?.message || err}`);
     return;
   }
+  if (!result || result.ok !== true) {
+    // 失败：下拉框拨回**屏幕上那个**形象，别停在用户点的那个。
+    if (result?.modelId) setModel(result.modelId);
+    show(`切换失败：${result?.error || '模型加载失败'}`);
+    return;
+  }
+  // 成功：请求了未知 id 时主进程会按注册表回退，
+  // 这里必须把下拉框也拨回实际生效的那个。
+  if (typeof result.modelId === 'string' && result.modelId !== requested) setModel(result.modelId);
   const label = modelSelect.options[modelSelect.selectedIndex]?.text || requested;
   show(`已切换到 ${label}`);
 });

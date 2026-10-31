@@ -10,6 +10,14 @@
   <https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html>
 - 说明：Cubism Core 为专有许可代码，**不是** MIT 许可。个人使用与内部分发无碍；
   若要公开分发本项目或其编译产物，必须先阅读并履行上述许可条款。
+- **npm 包的 `package.json` 写着 `"license": "ISC"`，那是打包元数据错误。**
+  以文件自带的许可声明为准：`live2dcubismcore.min.js` 的文件头自述为
+  Live2D 专有许可协议下的 "Redistributable Code"（可再分发代码），
+  该声明约束本项目的使用与分发。
+- **它是随包分发的运行时组件，不只是一个 npm 依赖**：渲染层在运行时
+  直接从 `node_modules` 加载它（见 `src/renderer/index.html`），
+  因此随本项目一同分发即构成对 Cubism Core 的再分发，
+  必须履行上述专有许可条款。
 
 ## Live2D 官方样例模型（Haru、Natori）
 

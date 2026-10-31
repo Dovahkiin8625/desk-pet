@@ -11,6 +11,9 @@ export function registerIpc({
   onMoveBy,
   onDragStart,
   onDragEnd,
+  onRendererReady,
+  onModelSwitchResult,
+  onModelError,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -18,6 +21,12 @@ export function registerIpc({
   ipcMain.handle('pet:switchModel', (_e, modelId) => switchModel(modelId));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
+  // 以下三个是**单向**通道（send 而非 invoke）：
+  // 渲染层只是回报结果，主进程不需要回执；单向通道也不会产生
+  // 「invoke 找不到处理器」的拒绝。
+  ipcMain.on('pet:rendererReady', () => onRendererReady());
+  ipcMain.on('pet:modelSwitchResult', (_e, result) => onModelSwitchResult(result));
+  ipcMain.on('pet:modelError', (_e, info) => onModelError(info));
   // 增量位移：主进程负责累加、夹紧到可见区域并持久化位置。
   // 渲染层只负责把「这一段拖了多远」递过来，绝不传绝对坐标。
   ipcMain.handle('pet:moveWindowBy', (_e, delta) => {

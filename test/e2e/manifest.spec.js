@@ -28,7 +28,7 @@ async function createFixtureModelDir() {
   }
 }
 
-test('模型目录没有 pet.json 时自动探测补齐，仍能加载并渲染', async () => {
+test('模型目录没有 pet.json 时自动探测补齐，仍能加载', async () => {
   await createFixtureModelDir();
   let ctx = null;
   try {
@@ -121,19 +121,19 @@ test('模型目录没有 pet.json 时自动探测补齐，仍能加载并渲染'
     expect(info.motionKeys).toContain('idle');
     expect(info.motionKeys).toContain('tapHead');
 
-    // 语义解析不崩溃：普通表情有值，未映射的语义回退到第一个可用表情，
-    // 动作组不存在时如实返回 null。
+    // 语义解析不崩溃：普通表情有值；未映射的语义**不猜**，返回 null
+    // （交互层因此只播动作、不套表情）；动作组不存在时如实返回 null。
     expect(typeof info.normal).toBe('string');
-    expect(typeof info.happy).toBe('string');
+    expect(info.happy).toBeNull();
+    expect(info.angry).toBeNull();
     expect(info.motion).not.toBeNull();
     expect(info.motionUnknown).toBeNull();
 
     // 降级时**不按序号猜语义**：Haru 的 expressions[1] 是 F02，而 pet.json 里 F02 是 angry。
-    // 按序号猜会让「摸头」触发生气的脸，所以降级路径只能回退到第一个可用表情。
+    // 按序号猜会让「摸头」触发生气的脸，所以未映射的语义必须解析为 null。
     expect(info.normal).toBe(info.availableExpressions[0]);
-    expect(info.happy).toBe(info.availableExpressions[0]);
-    expect(info.angry).toBe(info.availableExpressions[0]);
     expect(info.happy).not.toBe('F02');
+    expect(info.happy).not.toBe(info.availableExpressions[0]);
 
     // 夹具模型真的能加载（moc3 / 贴图都在，缺的只是清单）。
     expect(info.modelError).toBeNull();

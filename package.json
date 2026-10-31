@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Live2D 桌面宠物",
   "main": "src/main/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
     "setup": "node scripts/setup-assets.mjs && node scripts/gen-icon.mjs",

@@ -76,12 +76,13 @@ export function attachInteraction({
       canvas.setPointerCapture(e.pointerId);
     } catch (err) {
       // 捕获失败不能默默吞掉：生产环境里拖拽会静默丢掉窗口外的事件。
-      // NotFoundError 是「该 pointerId 没有活动指针」——规范规定此时必须抛，
-      // 测试里用 dispatchEvent 造的合成事件就是这种情况（不是故障）。
+      // NotFoundError 的含义是「未知的 pointer id」——规范规定此时必须抛。
+      // 真实鼠标的 pointer id 是已知的（不会抛），用 dispatchEvent 造的
+      // 合成事件带的是不存在的 id，于是抛错——那不是故障，是测试手法。
       // 其它错误（例如环境根本没有 setPointerCapture）才是真问题。
-      const synthetic = err?.name === 'NotFoundError';
+      const unknownPointerId = err?.name === 'NotFoundError';
       console.warn(
-        `[desk-pet] 指针捕获失败${synthetic ? '（合成事件，无活动指针）' : ''}，拖拽移出窗口后可能丢事件：`,
+        `[desk-pet] 指针捕获失败${unknownPointerId ? '（未知的 pointer id）' : ''}，拖拽移出窗口后可能丢事件：`,
         err?.message || err
       );
     }
@@ -97,17 +98,4 @@ export function attachInteraction({
   canvas.addEventListener('pointerup', handleUp);
   canvas.addEventListener('pointercancel', handleCancel);
   canvas.addEventListener('contextmenu', handleContextMenu);
-
-  return {
-    dispose() {
-      canvas.removeEventListener('pointerdown', handleDown);
-      canvas.removeEventListener('pointermove', handleMove);
-      canvas.removeEventListener('pointerup', handleUp);
-      canvas.removeEventListener('pointercancel', handleCancel);
-      canvas.removeEventListener('contextmenu', handleContextMenu);
-    },
-    get dragging() {
-      return drag.dragging;
-    },
-  };
 }

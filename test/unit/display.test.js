@@ -90,3 +90,46 @@ test('拖拽夹紧与启动恢复语义不同', () => {
   // 启动恢复：回到主显示器右下角
   assert.deepEqual(restored, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
 });
+
+// ---------------------------------------------------------------------------
+// 最近显示器的选择：distanceToRect（到矩形边界的距离）而不是到中心的距离。
+//
+// 多显示器是 spec §1.8 的要求，而「选哪块屏幕」这条规则此前没有任何用例钉住：
+// 现有用例要么位置完整落在某块屏幕内，要么只有一块屏幕，
+// 把 distanceToRect 换成 distanceToCenter 仍然会全绿。
+// ---------------------------------------------------------------------------
+
+const TOP = {
+  id: 1,
+  bounds: { x: 0, y: 0, width: 1920, height: 1040 },
+  workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+};
+const BOTTOM = {
+  id: 2,
+  bounds: { x: 0, y: 1040, width: 1920, height: 1040 },
+  workArea: { x: 0, y: 1040, width: 1920, height: 1040 },
+};
+
+test('点在两块上下叠放的屏幕下方时，夹到更近的那块（下屏）', () => {
+  const r = clampToDisplays(100, 2500, 300, 560, [TOP, BOTTOM]);
+  // 下屏更近：夹到下屏的可见区域里。
+  assert.equal(r.x, 100);
+  assert.equal(r.y, BOTTOM.workArea.y + BOTTOM.workArea.height - 560);
+  // 换一块中心更近的规则（到屏幕中心的距离）会得到别的结果：
+  assert.notDeepEqual(r, { x: 100, y: TOP.workArea.height - 560 });
+});
+
+test('矩形距离与中心距离给出不同答案时，选矩形更近的那块', () => {
+  // 主屏 1920 宽；下方挂一块 960 宽的小屏，横向居中偏左（x=480）。
+  const small = {
+    id: 3,
+    bounds: { x: 480, y: 1040, width: 960, height: 1040 },
+    workArea: { x: 480, y: 1040, width: 960, height: 1040 },
+  };
+  // 点在两块屏幕之间的缝隙里，且靠左：到主屏矩形 20px，到小屏矩形 380px。
+  const r = clampToDisplays(100, 1060, 300, 560, [TOP, small]);
+  // 矩形距离 → 主屏更近 → 夹到主屏下边缘。
+  assert.deepEqual(r, { x: 100, y: TOP.workArea.height - 560 });
+  // 若改用「到屏幕中心距离」：到小屏中心更近（995 < 1016），
+  // 结果会变成 { x: 480, y: 1060 } —— 本用例正是为了钉住这个区别。
+});

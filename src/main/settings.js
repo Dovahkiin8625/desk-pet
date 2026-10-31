@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -63,6 +63,19 @@ export async function loadSettings(userDataDir) {
 export async function saveSettings(userDataDir, settings) {
   const clean = sanitizeSettings(settings);
   await mkdir(userDataDir, { recursive: true });
-  await writeFile(join(userDataDir, 'settings.json'), JSON.stringify(clean, null, 2), 'utf8');
+  const target = join(userDataDir, 'settings.json');
+  const tmp = join(userDataDir, 'settings.json.tmp');
+  // 先写临时文件再改名：直接 writeFile 会先把目标文件**截断成 0 字节**，
+  // 写到一半被强杀（任务管理器 / 断电）就留下一个 0 字节文件——
+  // 下次启动读到空文件会静默重置位置、形象、缩放与透明度，用户毫无察觉。
+  // rename 在 NTFS 上是原子的：要么还是旧文件，要么已经是新文件。
+  await writeFile(tmp, JSON.stringify(clean, null, 2), 'utf8');
+  try {
+    await rename(tmp, target);
+  } catch (err) {
+    // 改名失败：临时文件留在那儿，下次启动前先清掉。
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
   return clean;
 }

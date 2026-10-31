@@ -1,4 +1,4 @@
-import { app, screen, BrowserWindow } from 'electron';
+import { app, screen, dialog, BrowserWindow } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -44,23 +44,62 @@ let desiredPosition = null;
 // 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
 let pendingWrite = null;
 
+// 显示器列表缓存：拖拽时每一帧都要用它夹紧窗口（60Hz），
+// 而 getPrimaryDisplay()/getAllDisplays() 每次都是同步的跨进程查询——
+// 每帧问一遍 Electron 既慢又没有意义。显示器拓扑变化时缓存失效即可。
+let displayCache = null;
+
 function currentDisplays() {
+  if (displayCache) return displayCache;
   // 主显示器必须排在第一位：display.js 的 defaultPosition 依赖 displays[0] 是主显示器，
   // 而 Electron 的 getAllDisplays() 并不保证这一点。
   const primary = screen.getPrimaryDisplay();
   const all = screen.getAllDisplays();
-  return [primary, ...all.filter((d) => d.id !== primary.id)].map((d) => ({
+  displayCache = [primary, ...all.filter((d) => d.id !== primary.id)].map((d) => ({
     id: d.id,
     bounds: d.bounds,
     workArea: d.workArea,
   }));
+  return displayCache;
 }
 
+/** 显示器拓扑/尺寸变化：缓存的列表不再可信，丢掉让下次重新读取。 */
+function invalidateDisplayCache() {
+  displayCache = null;
+}
+
+/**
+ * 读取形象注册表，并把条目**规整**成可用形状。
+ *
+ * 原始 JSON 是用户手写的：漏字段就直接用会让下拉框出现
+ * 「undefined」这样的条目名，或让模型指向不存在的文件。
+ * 这里的默认值与渲染层 loadManifest 的回退规则**必须一致**
+ * （manifest → `<id>/pet.json`，model3 → `<id>.model3.json`），
+ * 否则设置窗口显示的形象与桌面上跑的对不上。
+ */
 async function readModelRegistry() {
   try {
     const text = await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8');
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed.models) ? parsed.models : [];
+    const list = Array.isArray(parsed.models) ? parsed.models : [];
+    const out = [];
+    for (const entry of list) {
+      if (!entry || typeof entry.id !== 'string' || entry.id.trim() === '') {
+        // 没有 id 的条目无法被选中，也无法生成回退路径：直接丢掉，但留痕。
+        console.warn('[desk-pet] 形象注册表条目缺少 id，已忽略：', JSON.stringify(entry));
+        continue;
+      }
+      const id = entry.id.trim();
+      out.push({
+        ...entry,
+        id,
+        // 名字缺失时退回 id：下拉框里出现「undefined」比显示 id 更糟。
+        name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
+        manifest: entry.manifest || `${id}/pet.json`,
+        model3: entry.model3 || `${id}.model3.json`,
+      });
+    }
+    return out;
   } catch (err) {
     // 注册表损坏或读不到时静默返回空列表，会让「形象列表是空的」这件事无从排查——
     // 与 settings 损坏同理，必须留痕。
@@ -117,6 +156,127 @@ function resolveModelId(models, modelId) {
   if (!Array.isArray(models) || models.length === 0) return modelId;
   const found = models.find((m) => m && m.id === modelId);
   return found ? found.id : models[0].id;
+}
+
+// ---------------------------------------------------------------------------
+// 形象切换：主进程 ↔ 渲染层 的回执协议
+//
+// 为什么必须有回执：主进程不能自己知道模型加载成功与否。
+// 渲染层加载失败时只写自己的 window.__pet.switchError，主进程收不到，
+// 于是磁盘上的 modelId 指向一个**没上屏**的形象，而设置窗口照样显示
+// 「已切换到 …」——用户看到的是「Natori」，桌面上跑的是 Haru。
+// spec §4.5 第 4 步要求「失败则回滚到原形象并提示」。
+// ---------------------------------------------------------------------------
+
+// 渲染层回执的超时：超时按失败处理（磁盘上不落新 id）。
+const SWITCH_ACK_TIMEOUT_MS = 30000;
+
+// 渲染层是否已经注册好监听器。
+//
+// Electron 的 webContents.send 对**尚未注册监听器**的渲染层是丢弃而不是排队：
+// 启动期间（首次 mountModel 要加载 model3.json + moc3 + 2048² 贴图，
+// 约 0.5~2 秒）发出去的切换请求会凭空消失——磁盘写着 Natori、屏幕上是 Haru。
+let rendererReady = false;
+
+// 切换请求序号：回执必须能对回具体的那一次请求（并发切换不能串台）。
+let switchCounter = 0;
+
+// 等待回执的切换请求：requestId → { resolve, delivered, modelId }。
+const pendingSwitches = new Map();
+
+/** 把一次切换请求发给渲染层。渲染层不在时返回 false（请求留在待发队列里）。 */
+function deliverSwitch(requestId, modelId) {
+  if (!win || win.isDestroyed()) return false;
+  win.webContents.send('pet:modelSwitchRequest', { requestId, modelId });
+  return true;
+}
+
+/** 渲染层注册好监听器了：把启动期间积压的请求补发出去。 */
+function deliverPendingSwitches() {
+  for (const [requestId, entry] of pendingSwitches) {
+    if (entry.delivered) continue;
+    if (deliverSwitch(requestId, entry.modelId)) entry.delivered = true;
+  }
+}
+
+/**
+ * 请求渲染层切换形象，并等待它的回执。
+ *
+ * @returns {Promise<object|null>} 渲染层的回执；超时返回 null（按失败处理）。
+ */
+function requestModelSwitch(modelId) {
+  const requestId = ++switchCounter;
+  return new Promise((resolve) => {
+    let timer = null;
+    const finish = (result) => {
+      if (timer) clearTimeout(timer);
+      pendingSwitches.delete(requestId);
+      resolve(result);
+    };
+    const entry = { resolve: finish, delivered: false, modelId };
+    pendingSwitches.set(requestId, entry);
+    if (rendererReady && deliverSwitch(requestId, modelId)) entry.delivered = true;
+    // 渲染层没回执（页面崩了 / 模型加载卡死）：不能让磁盘上的 id
+    // 指向一个没上屏的形象，超时后按失败处理。
+    timer = setTimeout(() => finish(null), SWITCH_ACK_TIMEOUT_MS);
+  });
+}
+
+/** 渲染层的切换回执：把结果交给等待它的那次请求。 */
+function onModelSwitchResult(result) {
+  const entry = pendingSwitches.get(result?.requestId);
+  if (!entry) return;
+  entry.resolve(result);
+}
+
+/** 渲染层就绪：补发积压的切换请求，并重新广播一次设置。 */
+function onRendererReady() {
+  rendererReady = true;
+  deliverPendingSwitches();
+  // 启动期间到达的设置广播同样可能被丢弃（监听器那时还没注册），
+  // 重新广播一次当前设置：缩放/透明度/形象 id 都以这一刻的为准。
+  broadcastSettings(settings);
+}
+
+/**
+ * 渲染层报告「模型加载失败」（启动阶段）。
+ *
+ * 渲染层的 console.* 不进终端：用户在 `npm start` 里只会看到一份干净的日志
+ * 和一个全透明的空窗口——完全不可见的失败。
+ * 所以失败必须由主进程留痕：终端里一条 console.error，用户看得见。
+ */
+function onModelError(info) {
+  const message = typeof info === 'string' ? info : info?.message || String(info);
+  console.error('[desk-pet] 模型加载失败：', message);
+  if (!IS_E2E) {
+    // 弹窗让失败在界面上也看得见（不阻塞主进程）。
+    dialog
+      .showMessageBox({
+        type: 'error',
+        title: '桌面宠物 · 模型加载失败',
+        message: '桌宠模型加载失败',
+        detail:
+          `${message}\n\n` +
+          '若还没有下载官方样例资源，请先在项目目录执行 npm run setup；' +
+          '若模型文件不完整，删除 assets/live2d/models/ 下的对应目录后重跑 npm run setup。',
+        buttons: ['知道了'],
+      })
+      .catch(() => {});
+  }
+  // 磁盘上的 modelId 指向一个加载不了的形象 → 下次启动还是空白，
+  // 而用户根本不知道该删哪个文件。回退到注册表首项（应用自己的默认值），
+  // 让下一次启动有机会把桌宠显示出来。
+  void resetModelIdToFallback();
+}
+
+/** 把磁盘上的 modelId 回退到注册表首项（加载失败后的兜底）。 */
+async function resetModelIdToFallback() {
+  const models = await readModelRegistry();
+  const fallback = models[0]?.id;
+  if (!fallback || settings?.modelId === fallback) return;
+  console.warn(`[desk-pet] modelId 回退到默认形象 ${fallback}（原值加载失败）`);
+  persist({ modelId: fallback });
+  broadcastSettings(settings);
 }
 
 function writeSettings() {
@@ -228,17 +388,44 @@ app.whenReady().then(async () => {
       // 原来的 persist({ modelId }) 原样落盘，反而不会动它。
       // 所以这里必须把「没有 id」当成「不变」：返回当前 id，什么都不持久化。
       if (typeof modelId !== 'string' || modelId === '') {
-        return settings.modelId;
+        return { ok: true, modelId: settings.modelId };
       }
       // 先按注册表解析：请求了不存在的 id 时落地的其实是回退后的那个。
       // 落盘与广播都用解析后的 id，设置窗口的下拉框才不会与桌面上跑的形象脱节。
       const models = await readModelRegistry();
       const resolved = resolveModelId(models, modelId);
-      persist({ modelId: resolved });
-      if (win && !win.isDestroyed()) win.webContents.send('pet:modelSwitchRequest', resolved);
+      // 等渲染层回执再决定落盘什么：**不能**先落盘——
+      // 加载失败时磁盘上的 id 会指向一个没上屏的形象（spec §4.5 第 4 步）。
+      const ack = await requestModelSwitch(resolved);
+      if (!ack) {
+        // 超时：渲染层没有回执。磁盘上的 modelId 保持不变——
+        // 它至少还指向「上一次成功上屏」的那个形象。
+        return { ok: false, modelId: settings.modelId, error: '渲染层未在超时时间内回应切换请求' };
+      }
+      if (ack.ok) {
+        // 成功：落盘渲染层**真正上屏**的 id（渲染层可能回退到别的形象）。
+        persist({ modelId: ack.modelId || resolved });
+        broadcastSettings(settings);
+        return { ok: true, modelId: settings.modelId };
+      }
+      // 被后来的请求顶掉：什么都不落盘，由那一次请求的结果决定。
+      if (ack.superseded) {
+        return { ok: false, modelId: settings.modelId, error: '该切换请求已被更新的请求取代' };
+      }
+      // 失败：回滚。磁盘上的 modelId 必须回到**屏幕上那个**形象。
+      // 失败必须留痕：否则用户看到的只是「桌宠没换」，却没有任何线索。
+      console.warn('[desk-pet] 形象切换失败：', ack.error || '未知原因');
+      const onScreen = typeof ack.modelId === 'string' && ack.modelId !== '' ? ack.modelId : null;
+      if (onScreen) {
+        persist({ modelId: onScreen });
+      } else {
+        // 屏幕上什么都没有（连启动时的模型都没上屏）：把 id 回退到注册表首项，
+        // 否则下次启动会再次加载同一个坏模型，桌宠永久空白。
+        const fallback = models[0]?.id;
+        if (fallback) persist({ modelId: fallback });
+      }
       broadcastSettings(settings);
-      // 返回实际生效的 id，设置窗口据此校准下拉框。
-      return resolved;
+      return { ok: false, modelId: settings.modelId, error: ack.error || '模型加载失败' };
     },
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
@@ -271,7 +458,19 @@ app.whenReady().then(async () => {
     onDragEnd: () => {
       desiredPosition = null;
     },
+    // 渲染层注册好推送频道的监听器了。
+    onRendererReady,
+    // 渲染层报告形象切换的结果（成功 / 失败 / 被顶掉）。
+    onModelSwitchResult,
+    // 渲染层报告模型加载失败（启动阶段）。
+    onModelError,
   });
+
+  // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
+  // 必须在 app ready 之后注册：screen 模块在 ready 之前不可用。
+  screen.on('display-added', invalidateDisplayCache);
+  screen.on('display-removed', invalidateDisplayCache);
+  screen.on('display-metrics-changed', invalidateDisplayCache);
 
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
 
@@ -290,6 +489,14 @@ app.whenReady().then(async () => {
 // 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
 // 退出前把待写入的设置落盘，否则用户在 300ms 防抖窗口内退出就会丢掉改动。
 app.on('before-quit', flushPendingSave);
+
+// 第二次启动：单实例锁挡住了它，但原来的那个应用**什么也不做**——
+// 用户看到的是「双击了图标却没反应」。这里把已有的桌宠叫到前面来。
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return;
+  if (!win.isVisible()) win.showInactive();
+  win.focus();
+});
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();

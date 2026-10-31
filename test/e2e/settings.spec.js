@@ -228,7 +228,10 @@ test('空 id 的切换请求不会覆盖已存的形象', async () => {
     // 按注册表解析会把任何不认识的 id 落到第一个形象，
     // 于是 switchModel('') 会把存得好好的 modelId 覆盖掉。
     const applied = await ctx.win.evaluate(async () => await window.pet.switchModel(''));
-    expect(applied).toBe('natori');
+    // switchModel 返回的是结果对象 { ok, modelId, error }：
+    // 它要等渲染层回执才返回，不再是「请求即成功」。
+    expect(applied.ok).toBe(true);
+    expect(applied.modelId).toBe('natori');
 
     await new Promise((r) => setTimeout(r, 500));
     const saved = JSON.parse(await readFile(join(ctx.userDataDir, 'settings.json'), 'utf8'));

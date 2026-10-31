@@ -264,7 +264,8 @@ test('真实指针事件下画布会捕获指针，拖拽移出窗口也不丢�
 
     // 真实（受信任的）指针事件：Playwright 的 mouse 会产生真实的 pointerId，
     // setPointerCapture 在这条路径上才会真的生效——
-    // 合成事件（dispatchEvent）没有活动指针，规范要求此时必须抛 NotFoundError。
+    // 合成事件（dispatchEvent）带的是不存在的 pointer id，
+    // 规范要求此时必须抛 NotFoundError（含义是「未知的 pointer id」）。
     await ctx.win.mouse.move(150, 150);
     await ctx.win.mouse.down();
 
@@ -316,9 +317,6 @@ test('空闲计时会反复播放随机 idle 动作并回到 normal 表情', asy
     // 只播一次就再也不响的实现会在这里露馅。
     const applied = await ctx.win.evaluate(() => window.__pet.setIdleMs(300));
     expect(applied).toBe(300);
-
-    const idleCount = () =>
-      ctx.win.evaluate(() => window.__idleCalls.motions.filter((m) => m.group === 'Idle').length);
 
     await ctx.win.waitForFunction(
       () => window.__idleCalls.motions.filter((m) => m.group === 'Idle').length >= 1,

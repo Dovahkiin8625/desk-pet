@@ -16,6 +16,8 @@ window.__pet = {
   // 那是显存泄漏的信号，必须能从诊断面读到。
   lastReleasedTextures: 0,
   switchError: null,
+  // 最近一次启动/加载失败的错误文本。null 表示没有失败过。
+  error: null,
   // 交互诊断面：最近一次点击命中的语义区域、触发的表情名与动作 spec，
   // 以及当前视线跟随的目标点。null 表示「还没有发生过」。
   lastZone: null,
@@ -41,6 +43,8 @@ let userScale = 1;
 // 上一次拖拽事件里光标的**屏幕**坐标。见 onDragMove 的说明：
 // 增量必须在屏幕坐标系里算，否则窗口追着光标跑会把增量吃掉一半。
 let lastPointerScreen = null;
+// 启动失败时画在画布上的占位提示（用户看得见的失败）。
+let failurePlaceholder = null;
 
 // 切换请求序号：并发切换时只有最后一次请求允许提交到舞台，
 // 否则「谁先加载完谁上屏」，屏幕上可能不是用户最后选的那个。
@@ -60,9 +64,14 @@ let switchChain = Promise.resolve();
  *
  * 请求序号在**调用时**就取好：并发请求里只有最后取到序号的那个允许提交，
  * 先到的那些直接作废，连模型都不加载。
+ *
+ * `initial: true` 用于**启动时的首次挂载**：它的序号固定为 0，
+ * 因此不会顶掉任何用户请求（用户请求的序号从 1 开始），
+ * 但仍会被任何后来的用户请求顶掉——启动期间用户切了形象，
+ * 该由用户的请求说了算。
  */
-function mountModel(modelId) {
-  const token = ++switchSeq;
+function mountModel(modelId, opts = {}) {
+  const token = opts.initial ? 0 : ++switchSeq;
   const run = switchChain.then(
     () => doMountModel(modelId, token),
     () => doMountModel(modelId, token),
@@ -135,6 +144,8 @@ async function doMountModel(modelId, token) {
   const fit = stage.fitModel(model, manifest, userScale);
   currentModel = model;
   currentManifest = manifest;
+  // 模型上屏了：启动失败时画的那块占位提示该撤掉了。
+  removeFailurePlaceholder();
 
   // manifest.id 是注册表里的 id：未知的 modelId 会在 loadManifest 里
   // 回退到注册表首个形象，这里直接把回退后的 id 呈现出来。
@@ -153,17 +164,154 @@ async function doMountModel(modelId, token) {
   return model;
 }
 
+/**
+ * 启动失败时画在画布上的占位提示。
+ *
+ * 失败必须**看得见**：渲染层的 console.* 不进终端，用户在 `npm start` 里
+ * 只看到一份干净的日志和一个全透明的空窗口——完全不可见的失败。
+ * 除了报告给主进程（终端里有痕迹），画一块占位提示，
+ * 让「桌宠没出来」这件事在桌面上也有个解释。
+ */
+function showFailurePlaceholder(message) {
+  removeFailurePlaceholder();
+  try {
+    const PIXI = window.PIXI;
+    if (!PIXI || !stage?.app) return;
+    const box = new PIXI.Graphics();
+    box.beginFill(0x2a2a36, 0.92).drawRoundedRect(24, 150, 252, 180, 12).endFill();
+    box.lineStyle(2, 0xd06a6a).drawRoundedRect(24, 150, 252, 180, 12);
+    const title = new PIXI.Text('模型加载失败', { fontSize: 20, fill: 0xffd7d7, align: 'center' });
+    title.anchor.set(0.5, 0);
+    title.position.set(150, 176);
+    const detail = new PIXI.Text(String(message || '').slice(0, 120), {
+      fontSize: 12,
+      fill: 0xcfcfd8,
+      align: 'center',
+      wordWrap: true,
+      wordWrapWidth: 220,
+    });
+    detail.anchor.set(0.5, 0);
+    detail.position.set(150, 212);
+    stage.app.stage.addChild(box, title, detail);
+    failurePlaceholder = [box, title, detail];
+  } catch (err) {
+    // 占位图画不出来也不能让启动崩掉：失败已经报告给主进程了。
+    console.warn('[desk-pet] 失败占位绘制失败：', err?.message || err);
+  }
+}
+
+function removeFailurePlaceholder() {
+  if (!failurePlaceholder) return;
+  for (const node of failurePlaceholder) {
+    try {
+      node.parent?.removeChild(node);
+      node.destroy?.({ children: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  failurePlaceholder = null;
+}
+
+/**
+ * 注册渲染层的推送频道监听器。
+ *
+ * 必须在第一次 mountModel **之前**调用：Electron 的 webContents.send
+ * 对尚未注册监听器的渲染层是**丢弃**而不是排队。启动期间
+ * （首次 mountModel 要加载 model3.json + moc3 + 2048² 贴图，约 0.5~2 秒）
+ * 发出的切换请求与设置广播会凭空消失：磁盘写着 Natori、
+ * 下拉框显示 Natori，桌面上跑的还是 Haru。
+ */
+function registerChannels() {
+  // 主进程请求切换形象（pet:modelSwitchRequest）。
+  // 这是既有的唯一切换入口，不另开 IPC 通道。
+  window.pet.onModelSwitchRequest(async (modelId, requestId) => {
+    try {
+      const mounted = await mountModel(modelId);
+      if (mounted === null) {
+        // 被**更新的**请求顶掉了：这一次没有上屏，交给那一次请求回报结果。
+        window.pet?.reportModelSwitchResult?.({
+          requestId,
+          ok: false,
+          superseded: true,
+          modelId: currentManifest?.id || null,
+        });
+        return;
+      }
+      window.__pet.switchError = null;
+      // 回报主进程：**必须**让它知道模型真的上屏了。
+      // 没有回执的话，主进程无法知道该落盘哪个 id——
+      // 磁盘上的 modelId 会指向一个没上屏的形象，
+      // 而设置窗口还会若无其事地显示「已切换到 …」。
+      window.pet?.reportModelSwitchResult?.({
+        requestId,
+        ok: true,
+        modelId: currentManifest?.id || modelId,
+      });
+    } catch (err) {
+      const message = String(err?.message || err);
+      window.__pet.switchError = message;
+      // 失败也要回报：主进程要把磁盘上的 modelId 回滚到**屏幕上那个**形象，
+      // 设置窗口要显示失败而不是「已切换到 …」（spec §4.5 第 4 步）。
+      window.pet?.reportModelSwitchResult?.({
+        requestId,
+        ok: false,
+        modelId: currentManifest?.id || null,
+        error: message,
+      });
+    }
+  });
+
+  // 设置窗口改了缩放/透明度，主进程会把新设置广播过来。
+  // 缩放要在这里立刻重新适配：切换形象走的是 mountModel，
+  // 而只改缩放时并没有换模型，不重新适配的话画面不会变。
+  window.pet.onSettingsChanged((s) => {
+    if (!s) return;
+    if (typeof s.scale === 'number' && s.scale !== userScale) {
+      // 只有缩放**真的变了**才重新适配：广播带的是完整设置对象，
+      // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
+      userScale = s.scale;
+      window.__pet.scale = userScale;
+      if (currentModel && currentManifest) {
+        stage.fitModel(currentModel, currentManifest, userScale);
+      }
+    }
+    if (typeof s.opacity === 'number') {
+      // 透明度实际由主进程 setOpacity 施加在宠物窗口上，
+      // 这里只是把生效值记到诊断面上。
+      window.__pet.opacity = s.opacity;
+    }
+  });
+}
+
 async function boot() {
   const container = document.getElementById('stage');
   stage = createStage(container);
   window.__pet.stage = stage;
 
+  // 监听器先注册、ready 信号先发：启动期间主进程推过来的东西不能丢。
+  registerChannels();
+  window.pet?.reportRendererReady?.();
+
   const settings = await window.pet.getSettings();
   userScale = settings?.scale ?? 1;
   window.__pet.scale = userScale;
   window.__pet.opacity = typeof settings?.opacity === 'number' ? settings.opacity : 1;
-  // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
-  await mountModel(settings?.modelId);
+  try {
+    // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
+    // initial: true —— 首次挂载不顶掉用户请求，但会被用户请求顶掉。
+    await mountModel(settings?.modelId, { initial: true });
+  } catch (err) {
+    // 模型加载失败必须让主进程知道（spec §4.5 第 4 步的「提示」）。
+    // 渲染层的 console.* 不进终端：只写 window.__pet.error 的话，
+    // 用户在 npm start 里只看到一份干净的日志和一个全透明的空窗口。
+    window.__pet.error = String(err?.stack ? err.stack : err);
+    window.pet?.reportModelError?.({
+      message: String(err?.message || err),
+      stack: window.__pet.error,
+    });
+    showFailurePlaceholder(err?.message || err);
+  }
 
   const canvas = stage.app.view;
 
@@ -292,7 +440,10 @@ async function boot() {
       // 直接用；之后一律用屏幕坐标的增量。
       lastPointerScreen = pointer;
       window.__pet.lastDragDelta = { deltaX: dx, deltaY: dy };
-      window.pet.moveWindowBy?.(dx, dy);
+      // invoke 返回 promise：窗口在拖拽途中被拆掉时它会拒绝。
+      // 这是最热的路径（每个 pointermove 一次），但拒绝必须吃掉——
+      // 渲染层没有全局 unhandledrejection 兜底。
+      window.pet.moveWindowBy?.(dx, dy)?.catch?.(() => {});
     },
     onDragEnd: () => {
       // 拖拽结束同样通知主进程清掉累加器：
@@ -301,40 +452,9 @@ async function boot() {
       window.pet.dragEnd?.()?.catch?.(() => {});
     },
     onContextMenu: () => {
-      window.pet.showContextMenu();
+      // 同上：invoke 的 promise 必须处理掉，不能变成未处理拒绝。
+      window.pet.showContextMenu?.()?.catch?.(() => {});
     },
-  });
-
-  // 主进程请求切换形象（pet:modelSwitchRequest）。
-  // 这是既有的唯一切换入口，不另开 IPC 通道。
-  window.pet.onModelSwitchRequest(async (modelId) => {
-    try {
-      await mountModel(modelId);
-      window.__pet.switchError = null;
-    } catch (err) {
-      window.__pet.switchError = String(err && err.message ? err.message : err);
-    }
-  });
-
-  // 设置窗口改了缩放/透明度，主进程会把新设置广播过来。
-  // 缩放要在这里立刻重新适配：切换形象走的是 mountModel，
-  // 而只改缩放时并没有换模型，不重新适配的话画面不会变。
-  window.pet.onSettingsChanged((s) => {
-    if (!s) return;
-    if (typeof s.scale === 'number' && s.scale !== userScale) {
-      // 只有缩放**真的变了**才重新适配：广播带的是完整设置对象，
-      // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
-      userScale = s.scale;
-      window.__pet.scale = userScale;
-      if (currentModel && currentManifest) {
-        stage.fitModel(currentModel, currentManifest, userScale);
-      }
-    }
-    if (typeof s.opacity === 'number') {
-      // 透明度实际由主进程 setOpacity 施加在宠物窗口上，
-      // 这里只是把生效值记到诊断面上。
-      window.__pet.opacity = s.opacity;
-    }
   });
 
   // 诊断钩子：**直接**挂载模型，绕过主进程——
@@ -357,6 +477,13 @@ async function boot() {
 }
 
 boot().catch((err) => {
+  // 启动过程本身崩了（不只是模型加载失败）：同样必须让主进程知道。
+  // 只写 window.__pet.error 的话，用户在终端里看不到任何线索。
   window.__pet.error = String(err && err.stack ? err.stack : err);
+  window.pet?.reportModelError?.({
+    message: String(err?.message || err),
+    stack: window.__pet.error,
+  });
+  showFailurePlaceholder(err?.message || err);
   window.__pet.ready = true;
 });

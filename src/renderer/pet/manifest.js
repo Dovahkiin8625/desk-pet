@@ -24,8 +24,7 @@ export function deriveManifest(model3, opts = {}) {
 
   // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
   // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
-  // 猜不准就不猜：留空，由 resolveExpressionName 回退到第一个可用表情。
-  const derived = {};
+  // 猜不准就不猜：expressions 留空（见下方返回值的说明）。
 
   const groupNames = Object.keys(motionGroups);
   const motions = {};
@@ -43,7 +42,9 @@ export function deriveManifest(model3, opts = {}) {
     model3: opts.model3 || '',
     viewport: opts.viewport || { width: 300, height: 560 },
     fit: opts.fit || { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
-    expressions: Object.keys(derived).length > 0 ? derived : {},
+    // 探测阶段永远不猜语义：表情映射保持为空。
+    // （猜错的后果是「摸头」触发生气的脸，比不猜更糟。）
+    expressions: {},
     motions,
     derived: true,
     availableExpressions: expressions,
@@ -56,14 +57,11 @@ export function deriveManifest(model3, opts = {}) {
  *
  * 表情方面只补一个键：`normal`。
  * 探测阶段不猜语义（见 deriveManifest 的注释），但「普通表情」总得有个值，
- * 否则清单缺项时连中性表情都拿不到。这里用**模型第一个可用表情**兜底。
+ * 否则清单缺项时连中性表情都拿不到。这里用**模型第一个可用表情**兜底——
+ * 这是唯一被允许的猜测，因为「普通」不猜错任何情绪。
  *
- * 这**不是**按序号猜语义：补出来的值与 resolveExpressionName 对缺失语义的
- * 回退取值（availableExpressions[0]）完全一致，所以对 resolveExpressionName
- * 而言行为没有任何变化——它读到的还是同一个表情。
- * 其余语义（happy/angry/...）一律不补，保持未映射。
- * 这条边界很重要：Haru 的 expressions[1] 是 F02，而 pet.json 里 F02 是 angry——
- * 一旦按序号把语义铺开，「摸头」就会触发生气的脸。
+ * 其余语义（happy/angry/...）一律不补，保持未映射：
+ * 未映射的语义在 resolveExpressionName 里返回 null，交互层就只播动作、不套表情。
  */
 export function mergeManifest(base, derived) {
   const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
@@ -84,12 +82,18 @@ export function mergeManifest(base, derived) {
   };
 }
 
+/**
+ * 语义 → 模型自己的表情名。
+ *
+ * **未映射的语义返回 null**（不是「第一个可用表情」）：
+ * 猜出来的表情可能是完全相反的情绪——Natori 的表情表第一项是 Angry，
+ * 于是「摸头」会触发生气。spec §4.4 的降级表写的是
+ * 「语义缺失 → 退化为播放对应动作；仍缺失 → 仅播动作」，
+ * 交互层拿到 null 表情名时正是只播动作。
+ */
 export function resolveExpressionName(manifest, semantic) {
   const map = manifest?.expressions || {};
-  if (map[semantic]) return map[semantic];
-  const available = manifest?.availableExpressions || [];
-  if (Array.isArray(available) && available.length > 0) return available[0] || null;
-  return null;
+  return map[semantic] || null;
 }
 
 /**

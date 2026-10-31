@@ -2,8 +2,11 @@ import { test, expect } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { launchApp } from './helpers.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('应用能启动并打开窗口', async () => {
   const ctx = await launchApp();
@@ -80,6 +83,15 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
 });
 
 test('app:// 拒绝点开头的路径段及其编码变体', async () => {
+  // 前置条件：这条用例的检测力依赖 checkout 里存在 .git/config。
+  // 在源码 tarball 或没有 .git 的导出里，所有路径都会 404，
+  // 用例会**静默通过**——那正是它要防的失败模式。
+  // 与其空转，不如响亮地失败。
+  expect(
+    existsSync(join(ROOT, '.git', 'config')),
+    '本用例需要仓库里存在 .git/config（源码 tarball 里没有）'
+  ).toBe(true);
+
   const ctx = await launchApp();
   try {
     const results = await ctx.win.evaluate(async () => {

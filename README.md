@@ -2,6 +2,10 @@
 
 Windows 桌面上的 Live2D 桌宠。默认形象为 Live2D 官方样例角色 Haru。
 
+> **许可提示：** 官方样例模型（Haru / Natori）**限非商业用途**；Cubism Core 为
+> Live2D 专有许可代码。`npm run setup` 会把官方样例素材下载到你的机器上，
+> 分发前请先读 [NOTICE](./NOTICE)。
+
 ## 功能
 
 - 透明无边框、置顶的桌宠窗口
@@ -29,6 +33,10 @@ npm start       # 启动桌宠
 
 `npm run setup` 需要联网（从 GitHub 拉取官方样例资源）。执行一次后资源会缓存在
 `assets/live2d/models/` 下，之后可离线重复运行。
+
+> `npm run setup` 下载的是 Live2D 官方样例素材，**限非商业用途**；
+> Cubism Core（运行时从 `node_modules` 加载）是 Live2D 专有许可代码。
+> 详见 [NOTICE](./NOTICE)。
 
 > **模型二进制不在版本库里。** 仓库只提交手写的 `pet.json` 清单，
 > Haru / Natori 的 `.moc3`、贴图、动作等二进制由 `npm run setup` 下载。
@@ -61,6 +69,26 @@ assets/live2d/  模型资源与 pet.json 清单
 1. 把模型目录放到 `assets/live2d/models/<id>/`（需含 `.model3.json`、`.moc3`、纹理等）
 2. 在 `assets/live2d/index.json` 注册该形象
 3. 可选：写一份 `pet.json` 清单，把表情/动作映射到语义键
+
+### 注册表条目格式
+
+`assets/live2d/index.json` 里每个形象是一个对象：
+
+```jsonc
+{
+  "models": [
+    {
+      "id": "haru",                    // 唯一标识；设置里存的就是它
+      "name": "Haru",                  // 下拉框里显示的名字
+      "manifest": "haru/pet.json",     // 清单路径（相对 models/ 目录）；缺省为 "<id>/pet.json"
+      "model3": "Haru.model3.json"     // model3 文件名（相对 <id>/ 目录）；缺省为 "<id>.model3.json"
+    }
+  ]
+}
+```
+
+只有 `id` 是必须的：`name` 缺省用 `id`，`manifest` / `model3` 缺省按上面的规则推导。
+没有 `id` 的条目会被忽略并在终端里留痕。
 
 清单缺失时应用会自动从 `model3.json` 探测能力并降级运行，因此**只放目录也能加载**。
 
@@ -102,13 +130,26 @@ assets/live2d/  模型资源与 pet.json 清单
 | 动作 | `tapBody` | 点击身体时的动作 |
 | 动作 | `drag` | 开始拖拽时的动作 |
 
-语义键缺失时不会报错：表情回退到模型的第一个可用表情，动作组不存在则跳过该动作。
+语义键缺失时不会报错：**未映射的表情语义一律不套表情，只播对应动作**，
+动作组不存在则跳过该动作。（spec §4.4 的降级表：「语义缺失 → 退化为播放对应动作；
+仍缺失 → 仅播动作」。）
+
+唯一的例外是 `normal`：降级（没有 `pet.json`）时它会被兜底成模型的**第一个可用表情**。
+注意这不保证是中性脸——Natori 的表情表第一项是 `Angry`，
+所以没写清单的 Natori 在空闲时会回到那个表情。写一份 `pet.json` 把 `normal` 指对即可。
+
+> Natori 的清单里 `happy` 与 `smile` 都映射到 `Smile`：
+> 选 Natori 时摸头与点击身体的**表情相同**，只有动作不同。
+
 **降级（没有 `pet.json`）时只探测能力、不猜语义**——按序号猜会让「摸头」触发生气的脸。
 
 ## 已知限制
 
 这些是开发期间实测确认的事实，不是待办事项。
 
+- **桌宠窗口会挡住它下面的东西。** 桌宠窗口是 300×560 的**整块透明矩形**，
+  而角色只占其中一部分——角色周围那片透明区域同样会吃掉鼠标点击，
+  压在下面的窗口、按钮因此点不到。鼠标穿透（click-through）不在本项目范围内。
 - **混合 DPI 跨显示器拖拽会有一次跳变。** 拖拽增量由 `window.screenX` 算出，
   而它是 DIP 单位；角色一旦被拖到缩放比例不同的显示器上，这段拖拽的增量
   会在两套比例之间混用，产生一次跳变，并让该次拖拽余下部分的移动速率有偏差。

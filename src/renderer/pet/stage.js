@@ -9,12 +9,6 @@ export function createStage(container) {
   });
   container.appendChild(app.view);
 
-  // 不再自己挂 resize 监听：pixi 的 resizeTo: window 已经处理画布尺寸，
-  // 而窗口是固定尺寸不可缩放，重复处理只是白费力气。
-  function resize() {
-    app.renderer.resize(window.innerWidth, window.innerHeight);
-  }
-
   /**
    * 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。
    * 自然尺寸只在首次调用时测量并缓存——之后 getBounds() 返回的是**已缩放**的尺寸，
@@ -42,5 +36,5 @@ export function createStage(container) {
     return { naturalWidth: nw, naturalHeight: nh, scale: model.scale.x };
   }
 
-  return { app, resize, fitModel };
+  return { app, fitModel };
 }

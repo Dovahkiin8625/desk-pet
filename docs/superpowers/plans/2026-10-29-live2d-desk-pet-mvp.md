@@ -67,9 +67,8 @@
 | `src/renderer/pet/texture.js` | 显式释放 Live2D 纹理（切换形象时防止显存泄漏） |
 | `src/renderer/pet/hitZone.js` | 命中区归一化与几何兜底 |
 | `src/renderer/pet/behavior.js` | 反应表：交互 → 表情 + 动作 |
-| `src/renderer/pet/interaction.js` | 指针事件编排 |
+| `src/renderer/pet/interaction.js` | 指针事件编排（点击 / 拖拽 / 视线 / 右键菜单） |
 | `src/renderer/ui/drag.js` | 拖拽状态机（点击 vs 拖拽判定） |
-| `src/renderer/ui/contextMenu.js` | 右键菜单 IPC |
 | `src/settings/index.html` + `src/settings/main.js` | 设置窗口 |
 | `test/unit/*.test.js` | node:test 单测（纯函数） |
 | `test/e2e/*.spec.js` | Playwright `_electron` 端到端 |
