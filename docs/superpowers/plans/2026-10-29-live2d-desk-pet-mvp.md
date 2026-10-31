@@ -4008,7 +4008,7 @@ npm start       # 启动桌宠
 ## 测试
 
 ```bash
-npm run test:unit   # 主进程纯函数单测（node:test）
+npm run test:unit   # 纯函数单测：主进程 + 渲染层（node:test）
 npm run test:e2e    # 端到端测试（Playwright + Electron）
 npm test            # 全部
 ```
