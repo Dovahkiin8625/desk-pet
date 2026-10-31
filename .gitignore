@@ -11,3 +11,12 @@ Thumbs.db
 test-results/
 playwright-report/
 .playwright-mcp/
+
+# Live2D 官方样例模型资源（约 9MB），由 `npm run setup` 下载，不入库。
+# 仅保留各模型的手写清单 pet.json。
+# 注意：不要写成 `assets/live2d/models/*`，那样会把模型目录整体排除，
+# git 不会进入被排除的目录，反向规则也就无法重新包含 pet.json。
+assets/live2d/models/haru/*
+!assets/live2d/models/haru/pet.json
+assets/live2d/models/natori/*
+!assets/live2d/models/natori/pet.json

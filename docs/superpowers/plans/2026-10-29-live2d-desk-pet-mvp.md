@@ -67,9 +67,8 @@
 | `src/renderer/pet/texture.js` | 显式释放 Live2D 纹理（切换形象时防止显存泄漏） |
 | `src/renderer/pet/hitZone.js` | 命中区归一化与几何兜底 |
 | `src/renderer/pet/behavior.js` | 反应表：交互 → 表情 + 动作 |
-| `src/renderer/pet/interaction.js` | 指针事件编排 |
+| `src/renderer/pet/interaction.js` | 指针事件编排（点击 / 拖拽 / 视线 / 右键菜单） |
 | `src/renderer/ui/drag.js` | 拖拽状态机（点击 vs 拖拽判定） |
-| `src/renderer/ui/contextMenu.js` | 右键菜单 IPC |
 | `src/settings/index.html` + `src/settings/main.js` | 设置窗口 |
 | `test/unit/*.test.js` | node:test 单测（纯函数） |
 | `test/e2e/*.spec.js` | Playwright `_electron` 端到端 |
@@ -114,7 +113,7 @@
     "start": "electron .",
     "setup": "node scripts/setup-assets.mjs && node scripts/gen-icon.mjs",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "node --test test/unit/",
+    "test:unit": "node --test \"test/unit/**/*.test.js\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -146,7 +145,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_ROOT = join(ROOT, 'assets', 'live2d', 'models');
 const API = 'https://api.github.com/repos/Live2D/CubismWebSamples/git/trees/develop?recursive=1';
-const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop/Samples/Resources';
+// 注意：GitHub tree API 返回的 f.path 已含 "Samples/Resources/" 前缀，
+// 所以这里只能到 develop 为止，再拼 ${RAW}/${f.path}，否则会重复一层导致全部 404。
+const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop';
 
 const MODELS = [
   { id: 'haru', dir: 'Haru' },
@@ -365,11 +366,14 @@ for (const size of [32, 64]) {
 ```json
 {
   "models": [
-    { "id": "haru", "name": "Haru", "manifest": "haru/pet.json" },
-    { "id": "natori", "name": "Natori", "manifest": "natori/pet.json" }
+    { "id": "haru", "name": "Haru", "manifest": "haru/pet.json", "model3": "Haru.model3.json" },
+    { "id": "natori", "name": "Natori", "manifest": "natori/pet.json", "model3": "Natori.model3.json" }
   ]
 }
 ```
+
+> 注册表里的 `model3` 字段是**兜底**用的：当某个模型目录没有 `pet.json` 时，
+> `loadManifest` 仍能知道该加载哪个 `.model3.json`，从而满足「把模型目录放进去就能加载」的要求。
 
 `assets/live2d/models/haru/pet.json`：
 
@@ -462,13 +466,17 @@ function createWindow() {
     alwaysOnTop: true,
     backgroundColor: '#00000000',
     webPreferences: {
-      preload: join(ROOT, 'src', 'preload', 'index.cjs'),
+      // 注意：此时 src/preload/index.cjs 还不存在（Task 3 才创建），先不挂 preload
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
-  win.loadURL('data:text/html,<body style="background:transparent"><script>window.__pet={ready:true}</script></body>');
+  // 标题必须是 "Desk Pet"：本任务的冒烟测试会断言 window.title()
+  win.loadURL(
+    'data:text/html,<title>Desk Pet</title><body style="background:transparent">' +
+      '<script>window.__pet={ready:true}</script></body>'
+  );
 }
 
 app.whenReady().then(() => {
@@ -630,7 +638,7 @@ git commit -m "feat: 初始化 Electron 脚手架、模型资源脚本与托盘�
 - Produces:
   - `src/main/staticFiles.js` → `resolveStaticFile(rootDir: string, urlPath: string): { filePath: string } | null`
   - `src/main/settings.js` → `DEFAULT_SETTINGS: object`、`sanitizeSettings(raw: unknown): Settings`、`loadSettings(userDataDir: string): Promise<Settings>`、`saveSettings(userDataDir: string, settings: unknown): Promise<Settings>`
-  - `src/main/display.js` → `clampToDisplays(x, y, width, height, displays): { x: number, y: number }`、`defaultPosition(width, height, displays): { x: number, y: number }`
+  - `src/main/display.js` → `clampToDisplays(x, y, width, height, displays): { x: number, y: number }`、`restorePosition(saved, width, height, displays): { x: number, y: number }`、`defaultPosition(width, height, displays): { x: number, y: number }`
   - `displays` 元素结构：`{ id: number|string, bounds: {x,y,width,height}, workArea: {x,y,width,height} }`
 
 - [ ] **Step 1: 写 `test/unit/staticFiles.test.js`**
@@ -658,6 +666,13 @@ test('阻止目录穿越', () => {
   assert.equal(resolveStaticFile(ROOT, '/../../secret.txt'), null);
   assert.equal(resolveStaticFile(ROOT, '/..%2f..%2fsecret.txt'), null);
   assert.equal(resolveStaticFile(ROOT, '/src/../../secret.txt'), null);
+});
+
+test('阻止与根目录同前缀的兄弟目录', () => {
+  // 关键用例：/../app-evil/secret.txt 解析到 C:\app-evil\secret.txt。
+  // 只做 startsWith(root) 的朴素实现会错误地放行它；
+  // 只有带路径分隔符边界的检查（root + sep）才会拒绝。
+  assert.equal(resolveStaticFile(ROOT, '/../app-evil/secret.txt'), null);
 });
 
 test('允许 node_modules 下的路径', () => {
@@ -713,7 +728,10 @@ Expected: PASS（4 passed）。
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitizeSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { sanitizeSettings, loadSettings, saveSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
 
 test('空输入返回默认设置', () => {
   assert.deepEqual(sanitizeSettings(undefined), DEFAULT_SETTINGS);
@@ -753,6 +771,46 @@ test('数值被夹紧到合法区间', () => {
   assert.equal(sanitizeSettings({ scale: 99 }).scale, 2);
   assert.equal(sanitizeSettings({ scale: 0.01 }).scale, 0.5);
   assert.equal(sanitizeSettings({ opacity: -1 }).opacity, 0.2);
+});
+
+test('配置文件缺失时回退默认值', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  try {
+    assert.deepEqual(await loadSettings(dir), DEFAULT_SETTINGS);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('配置文件损坏时回退默认值', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  try {
+    await writeFile(join(dir, 'settings.json'), '{ 这不是合法 JSON', 'utf8');
+    assert.deepEqual(await loadSettings(dir), DEFAULT_SETTINGS);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('保存后能读回，且会创建不存在的目录', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-settings-'));
+  const dir = join(root, 'nested', 'deeper');
+  try {
+    const saved = await saveSettings(dir, {
+      modelId: 'natori',
+      scale: 1.5,
+      opacity: 0.8,
+      position: { x: 10, y: 20 },
+    });
+    assert.equal(saved.modelId, 'natori');
+    const loaded = await loadSettings(dir);
+    assert.equal(loaded.modelId, 'natori');
+    assert.equal(loaded.scale, 1.5);
+    assert.equal(loaded.opacity, 0.8);
+    assert.deepEqual(loaded.position, { x: 10, y: 20 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 ```
 
@@ -815,7 +873,13 @@ export async function loadSettings(userDataDir) {
   try {
     const text = await readFile(join(userDataDir, 'settings.json'), 'utf8');
     return sanitizeSettings(JSON.parse(text));
-  } catch {
+  } catch (err) {
+    // 文件不存在是正常情况（首次启动），静默回退默认值即可。
+    // 但读不了/解析失败说明配置已损坏——同样回退默认值，却必须留痕，
+    // 否则用户会遇到「改了设置没生效」且无从排查。
+    if (err?.code !== 'ENOENT') {
+      console.warn('[desk-pet] settings.json 无法读取或解析，已回退默认值：', err?.message);
+    }
     return { ...DEFAULT_SETTINGS };
   }
 }
@@ -838,7 +902,7 @@ Expected: PASS（5 passed）。
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clampToDisplays, defaultPosition } from '../../src/main/display.js';
+import { clampToDisplays, defaultPosition, restorePosition } from '../../src/main/display.js';
 
 const PRIMARY = {
   id: 1,
@@ -887,6 +951,38 @@ test('默认位置落在主显示器右下角', () => {
 test('没有显示器时返回原点', () => {
   assert.deepEqual(defaultPosition(300, 560, []), { x: 0, y: 0 });
 });
+
+test('恢复位置：位置可见时原样返回', () => {
+  const r = restorePosition({ x: 100, y: 100 }, 300, 560, [PRIMARY, SECOND]);
+  assert.deepEqual(r, { x: 100, y: 100 });
+});
+
+test('恢复位置：副显示器上的位置同样原样返回', () => {
+  const r = restorePosition({ x: 3000, y: 200 }, 300, 560, [PRIMARY, SECOND]);
+  assert.deepEqual(r, { x: 3000, y: 200 });
+});
+
+test('恢复位置：显示器被拔掉时回落到主显示器右下角', () => {
+  const r = restorePosition({ x: 3000, y: 200 }, 300, 560, [PRIMARY]);
+  assert.deepEqual(r, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
+
+test('恢复位置：没有保存位置时回落到主显示器右下角', () => {
+  const r = restorePosition(null, 300, 560, [PRIMARY]);
+  assert.deepEqual(r, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
+
+test('拖拽夹紧与启动恢复语义不同', () => {
+  const saved = { x: 3000, y: 200 };
+  // 副显示器被拔掉后
+  const clamped = clampToDisplays(saved.x, saved.y, 300, 560, [PRIMARY]);
+  const restored = restorePosition(saved, 300, 560, [PRIMARY]);
+  // 拖拽：停在主显示器可见区域边缘，不跳回右下角
+  assert.notDeepEqual(clamped, restored);
+  assert.ok(clamped.x >= 0 && clamped.y >= 0);
+  // 启动恢复：回到主显示器右下角
+  assert.deepEqual(restored, { x: PRIMARY.workArea.width - 300, y: PRIMARY.workArea.height - 560 });
+});
 ```
 
 - [ ] **Step 10: 跑测试确认失败**
@@ -906,14 +1002,18 @@ function rectContains(area, x, y, width, height) {
   );
 }
 
-function distanceToCenter(area, x, y) {
-  const cx = area.x + area.width / 2;
-  const cy = area.y + area.height / 2;
-  return Math.hypot(x - cx, y - cy);
+function distanceToRect(area, x, y) {
+  // 到矩形的距离（而非到中心的距离）：点在两块屏幕正下方时，
+  // 中心距离会选中更远的那块，矩形距离才总是选最近的。
+  const dx = Math.max(area.x - x, 0, x - (area.x + area.width));
+  const dy = Math.max(area.y - y, 0, y - (area.y + area.height));
+  return Math.hypot(dx, dy);
 }
 
 /**
  * 把窗口位置夹紧到某个显示器的可见工作区内。
+ * 用于**拖拽过程中的实时夹紧**——角色被拖到屏幕边缘时应停在最近的可见处，
+ * 而不是跳回主显示器。
  * 若原位置已完整落在某显示器内则原样返回。
  */
 export function clampToDisplays(x, y, width, height, displays) {
@@ -925,11 +1025,11 @@ export function clampToDisplays(x, y, width, height, displays) {
     if (rectContains(d.workArea, x, y, width, height)) return { x, y };
   }
 
-  // 选中心距离最近的那块屏幕
+  // 选与该点距离最近的屏幕
   let best = list[0];
   let bestDist = Infinity;
   for (const d of list) {
-    const dist = distanceToCenter(d.workArea, x, y);
+    const dist = distanceToRect(d.workArea, x, y);
     if (dist < bestDist) {
       bestDist = dist;
       best = d;
@@ -944,7 +1044,32 @@ export function clampToDisplays(x, y, width, height, displays) {
   };
 }
 
-/** 主显示器可见区域右下角的位置。 */
+/**
+ * 启动时恢复上次保存的位置（spec §5.5）。
+ * 位置完整落在某显示器可见区域内 → 原样恢复；
+ * 否则（例如保存位置所在的显示器已被拔掉）→ 回落到**主显示器可见区域内的默认位置（右下角）**。
+ *
+ * 与 clampToDisplays 的分工：clampToDisplays 服务于拖拽（停在最近的可见处），
+ * restorePosition 服务于启动恢复（回到主显示器默认位置）。两者语义不同，不能混用。
+ */
+export function restorePosition(saved, width, height, displays) {
+  const list = (displays || []).filter((d) => d && d.workArea);
+  if (list.length === 0) return { x: 0, y: 0 };
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    for (const d of list) {
+      if (rectContains(d.workArea, saved.x, saved.y, width, height)) {
+        return { x: saved.x, y: saved.y };
+      }
+    }
+  }
+  return defaultPosition(width, height, list);
+}
+
+/**
+ * 主显示器可见区域右下角的位置。
+ * **前置条件：`displays[0]` 必须是主显示器**——调用方（Task 3 的 currentDisplays）
+ * 负责把主显示器排在数组第一位，Electron 的 `getAllDisplays()` 并不保证这一点。
+ */
 export function defaultPosition(width, height, displays) {
   const list = (displays || []).filter((d) => d && d.workArea);
   if (list.length === 0) return { x: 0, y: 0 };
@@ -959,7 +1084,7 @@ export function defaultPosition(width, height, displays) {
 - [ ] **Step 12: 跑全部单测**
 
 Run: `npm run test:unit`
-Expected: PASS（14 passed）。
+Expected: PASS（29 passed —— 本任务 26 个 + Task 1 遗留的 icon 3 个）。
 
 - [ ] **Step 13: 提交**
 
@@ -1041,13 +1166,42 @@ export function registerSchemePrivileges() {
 export function registerAppProtocol(rootDir) {
   protocol.handle(SCHEME, async (request) => {
     const url = new URL(request.url);
+    // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
+    // app:// 的根是整个项目目录，渲染层不需要这些内容，
+    // 一旦漏出去就能读到版本库配置与本地密钥文件。
+    // 每个路径段都要**先解码再判断**：WHATWG URL 不会规范化 %2e，
+    // 而 resolveStaticFile 会解码——不先解码的话 %2egit 能绕过这个检查，
+    // 实测 app://bundle/%2egit/config 曾返回 200。
+    const segments = url.pathname
+      .split('/')
+      .filter(Boolean)
+      .flatMap((seg) => {
+        let decoded = seg;
+        try {
+          decoded = decodeURIComponent(seg);
+        } catch {
+          decoded = seg;
+        }
+        // 反斜杠同样是分隔符：%5c 解码后是 "\"，不当作分隔符的话
+        // "\.git" 不以 "." 开头，能绕过这个检查；而 resolveStaticFile 会把
+        // "\" 归一化成 "/"，最终仍指向 <root>/.git/config。
+        return decoded.replace(/\\/g, '/').split('/');
+      })
+      .filter(Boolean);
+    if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
+      return new Response('Forbidden', { status: 403 });
+    }
     const resolved = resolveStaticFile(rootDir, url.pathname);
     if (!resolved) return new Response('Not Found', { status: 404 });
     try {
       const data = await readFile(resolved.filePath);
       const type = MIME[extname(resolved.filePath).toLowerCase()] || 'application/octet-stream';
       return new Response(data, { status: 200, headers: { 'content-type': type } });
-    } catch {
+    } catch (err) {
+      // 权限错误、EISDIR 等与「文件不存在」必须区分，否则无法排查。
+      if (err?.code !== 'ENOENT') {
+        console.warn('[desk-pet] 资源读取失败：', resolved.filePath, err?.message);
+      }
       return new Response('Not Found', { status: 404 });
     }
   });
@@ -1064,13 +1218,17 @@ export function appUrl(pathname) {
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from './protocol.js';
-import { clampToDisplays } from './display.js';
+import { restorePosition } from './display.js';
+
+// 视口尺寸与 assets/live2d/models/*/pet.json 的 viewport 保持一致。
+// settings 里的 viewport 会被 sanitizeSettings 丢弃，所以不能从那里取。
+const PET_VIEWPORT = { width: 300, height: 560 };
 
 export function createPetWindow({ rootDir, settings, displays }) {
-  const vp = settings.viewport || { width: 300, height: 560 };
-  const pos = settings.position
-    ? clampToDisplays(settings.position.x, settings.position.y, vp.width, vp.height, displays)
-    : { x: 0, y: 0 };
+  const vp = PET_VIEWPORT;
+  // 用 restorePosition 而不是 clampToDisplays：启动恢复时若保存位置所在的显示器
+  // 已被拔掉，应回落到主显示器右下角（spec §5.5），而不是停在原坐标的可见边缘。
+  const pos = restorePosition(settings.position, vp.width, vp.height, displays);
 
   const win = new BrowserWindow({
     width: vp.width,
@@ -1098,7 +1256,6 @@ export function createPetWindow({ rootDir, settings, displays }) {
   });
 
   win.setAlwaysOnTop(true);
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
   win.loadURL(appUrl('/src/renderer/index.html'));
   win.once('ready-to-show', () => {
     applySettingsToWindow(win, settings);
@@ -1191,12 +1348,14 @@ Expected: PASS（2 passed）。
 ```js
 import { Tray, nativeImage } from 'electron';
 
-export function createTray({ iconPath, onAction }) {
+export function createTray({ iconPath }) {
   const image = nativeImage.createFromPath(iconPath);
   const resized = image.isEmpty() ? image : image.resize({ width: 16, height: 16 });
   const tray = new Tray(resized);
   tray.setToolTip('桌面宠物');
-  tray.on('click', () => onAction('toggleVisible'));
+  // 刻意不注册 click 回调：Windows 上托盘带右键菜单时，左键点击可能
+  // 既触发 click 又弹出菜单，导致「显示/隐藏」被连按两次。
+  // 托盘的三个动作（显示/隐藏、设置、退出）都在右键菜单里。
   return tray;
 }
 ```
@@ -1236,6 +1395,9 @@ export function registerIpc({
   switchModel,
   onOpenSettings,
   onShowContextMenu,
+  onMoveBy,
+  onDragStart,
+  onDragEnd,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -1271,21 +1433,23 @@ export function registerIpc({
 - [ ] **Step 11: 重写 `src/main/index.js`**
 
 ```js
-import { app, BrowserWindow, Menu, screen } from 'electron';
+import { app, screen } from 'electron';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
-import { createPetWindow, applySettingsToWindow } from './window.js';
+import { mkdirSync } from 'node:fs';
+import { registerSchemePrivileges, registerAppProtocol } from './protocol.js';
+import { createPetWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
-import { loadSettings, saveSettings } from './settings.js';
-import { defaultPosition } from './display.js';
+import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 if (process.env.DESK_PET_USER_DATA) {
+  // setPath 要求目标目录已存在，否则会抛错（Task 1 的 E2E 用例依赖这一点）。
+  mkdirSync(process.env.DESK_PET_USER_DATA, { recursive: true });
   app.setPath('userData', process.env.DESK_PET_USER_DATA);
 }
 registerSchemePrivileges();
@@ -1299,9 +1463,20 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
+let appliedOpacity = null;
+// 拖拽中的期望位置（未夹紧）。见 onMoveBy 的说明。
+let desiredPosition = null;
+// 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
+// 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
+let pendingWrite = null;
 
 function currentDisplays() {
-  return screen.getAllDisplays().map((d) => ({
+  // 主显示器必须排在第一位：display.js 的 defaultPosition 依赖 displays[0] 是主显示器，
+  // 而 Electron 的 getAllDisplays() 并不保证这一点。
+  const primary = screen.getPrimaryDisplay();
+  const all = screen.getAllDisplays();
+  return [primary, ...all.filter((d) => d.id !== primary.id)].map((d) => ({
     id: d.id,
     bounds: d.bounds,
     workArea: d.workArea,
@@ -1313,18 +1488,58 @@ async function readModelRegistry() {
     const text = await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8');
     const parsed = JSON.parse(text);
     return Array.isArray(parsed.models) ? parsed.models : [];
-  } catch {
+  } catch (err) {
+    // 注册表损坏或读不到时静默返回空列表，会让「形象列表是空的」这件事无从排查——
+    // 与 settings 损坏同理，必须留痕。
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
     return [];
   }
 }
 
 function persist(patch) {
-  settings = { ...settings, ...patch };
+  // 必须过一遍 sanitizeSettings：否则渲染层传来的越界值（例如 opacity=1.5）
+  // 会留在内存里，而落盘时被夹紧——内存与磁盘不一致，
+  // getSettings 会把越界值发回渲染层，Task 9 还会拿它去调 win.setOpacity()。
+  settings = sanitizeSettings({ ...settings, ...patch });
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveSettings(app.getPath('userData'), settings).catch(() => {});
+    saveTimer = null;
+    writeSettings();
   }, 300);
   return settings;
+}
+
+function writeSettings() {
+  // 串行化：若上一次写入还没落盘，新的写入必须排在它后面。
+  // 否则两次写入重叠时，先发的旧内容可能后落盘，把新设置覆盖掉。
+  const p = (pendingWrite || Promise.resolve())
+    .catch(() => {})
+    .then(() => saveSettings(app.getPath('userData'), settings))
+    .catch((err) => {
+      // 写失败必须留痕：用户改了设置没生效，却既没有现象也没有日志，无从排查。
+      console.warn('[desk-pet] settings 保存失败：', err?.message);
+    })
+    .finally(() => {
+      if (pendingWrite === p) pendingWrite = null;
+    });
+  pendingWrite = p;
+  return p;
+}
+
+// 退出前把待写入的设置落盘——否则用户在 300ms 防抖窗口内退出，改动就丢了。
+function flushPendingSave(event) {
+  // 要覆盖两种情况：还有防抖计时器没触发；或者写入已经在进行中。
+  // 只看 saveTimer 不够——计时器触发后会把 saveTimer 置空，
+  // 此刻退出的话 writeFile 已经把文件截断成 0 字节却还没写完。
+  if (!saveTimer && !pendingWrite) return;
+  event.preventDefault();
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    writeSettings();
+  }
+  const wait = pendingWrite || Promise.resolve();
+  wait.finally(() => app.quit());
 }
 
 function toggleVisible() {
@@ -1336,8 +1551,7 @@ function toggleVisible() {
 }
 
 function openSettings() {
-  // Task 8 实现设置窗口；此前至少保证不崩溃
-  Menu.buildFromTemplate([]);
+  // Task 9 实现设置窗口；在此之前是空操作，保证不崩溃
 }
 
 function showContextMenu() {
@@ -1352,26 +1566,10 @@ function showContextMenu() {
 app.whenReady().then(async () => {
   registerAppProtocol(ROOT);
   settings = await loadSettings(app.getPath('userData'));
-  if (!settings.position) {
-    const p = defaultPosition(300, 560, currentDisplays());
-    settings.position = p;
-  }
-  win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
-
-  tray = createTray({
-    iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),
-    onAction: (action) => {
-      if (action === 'toggleVisible') toggleVisible();
-    },
-  });
-  tray.setContextMenu(
-    buildTrayMenu({
-      toggleVisible,
-      openSettings,
-      quit: () => app.quit(),
-    })
-  );
-
+  // 没有保存过位置时不需要在这里补默认值：createPetWindow 的 restorePosition
+  // 会用真实视口尺寸算出主显示器右下角，避免这里写死 300×560 与清单脱节。
+  // 必须先注册 IPC 再创建窗口：渲染层页面一加载就会调用 getSettings()，
+  // 顺序反了会撞上 "No handler registered"。
   registerIpc({
     getSettings: () => settings,
     saveSettings: (patch) => persist(patch),
@@ -1384,12 +1582,27 @@ app.whenReady().then(async () => {
     onShowContextMenu: showContextMenu,
   });
 
-  app.on('activate', () => {
-    if (!win || win.isDestroyed()) {
-      win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
-    }
+  win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
+
+  tray = createTray({
+    iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),
   });
+  tray.setContextMenu(
+    buildTrayMenu({
+      toggleVisible,
+      openSettings,
+      quit: () => app.quit(),
+    })
+  );
+
 });
+
+// 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
+//
+// 注意：before-quit 的处理器是同步的。若直接调用异步写入，进程会在写入完成前退出，
+// writeFile 已经把文件截断成 0 字节——设置丢失，且下次启动读到空文件会重置全部设置。
+// 正确做法是 preventDefault，等写入真正完成后再退出。
+app.on('before-quit', flushPendingSave);
 
 app.on('window-all-closed', () => {
   if (!IS_E2E) app.quit();
@@ -1412,6 +1625,67 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
     expect(info.url).toContain('app://bundle/src/renderer/index.html');
     expect(info.ready).toBe(true);
     expect(info.bodyBg).toContain('rgba(0, 0, 0, 0)');
+
+    // 置顶只能从主进程侧断言：渲染层拿不到 BrowserWindow。
+    //
+    // 但 isAlwaysOnTop() 并非在所有 Windows 会话里都可靠：
+    // 在没有交互桌面的会话里，setAlwaysOnTop(true) 根本不生效，
+    // 连构造参数 alwaysOnTop: true 也不体现出来（实测普通窗口同样返回 false）。
+    // 所以先用一次性普通窗口探测「这个环境是否支持置顶」，
+    // 不支持就跳过这条断言——而不是让整套测试因为环境而变红。
+    const topmostSupported = await ctx.app.evaluate(({ BrowserWindow }) => {
+      // 探测窗口必须与真实桌宠窗口**同形**：已显示 + 构造参数 alwaysOnTop。
+      // 用「隐藏且不带构造参数」的窗口去探测，在真实窗口其实能置顶的环境里
+      // 也会返回 false——那会让这条断言静默退化成空操作，套件全绿却什么都没断言。
+      const probe = new BrowserWindow({ show: true, alwaysOnTop: true, width: 80, height: 60 });
+      probe.setAlwaysOnTop(true);
+      const ok = probe.isAlwaysOnTop();
+      probe.destroy();
+      return ok;
+    });
+    if (topmostSupported) {
+      const alwaysOnTop = await ctx.app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
+      );
+      expect(alwaysOnTop).toBe(true);
+    } else {
+      // 跳过也要留痕：否则「绿色的套件」可能只是因为断言没跑。
+      console.warn('[e2e] 当前 Windows 会话不支持置顶，已跳过置顶断言');
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('app:// 拒绝点开头的路径段及其编码变体', async () => {
+  const ctx = await launchApp();
+  try {
+    const results = await ctx.win.evaluate(async () => {
+      const paths = [
+        '/.git/config',
+        '/%2egit/config',
+        '/%2Egit/config',
+        '/%5c.git/config',
+        '/%5c%5c.git/config',
+        '/.superpowers/sdd/plan-path',
+      ];
+      const out = [];
+      for (const p of paths) {
+        const res = await fetch('app://bundle' + p);
+        const body = await res.text();
+        out.push({
+          path: p,
+          status: res.status,
+          leaked: body.includes('repositoryformatversion') || body.includes('[core]'),
+        });
+      }
+      return out;
+    });
+
+    for (const r of results) {
+      expect(r.status, r.path).not.toBe(200);
+      expect(r.leaked, r.path).toBe(false);
+    }
   } finally {
     await ctx.close();
   }
@@ -1460,8 +1734,6 @@ git commit -m "feat: app:// 协议、宠物窗口、托盘、菜单与 IPC 装�
 - [ ] **Step 1: 写 `src/renderer/pet/manifest.js`**
 
 ```js
-const SEMANTIC_ORDER = ['normal', 'happy', 'smile', 'shy', 'angry', 'surprised', 'sad'];
-
 function pickExpression(model3) {
   const list = model3?.FileReferences?.Expressions;
   if (!Array.isArray(list)) return [];
@@ -1486,10 +1758,10 @@ export function deriveManifest(model3, opts = {}) {
   const expressions = pickExpression(model3);
   const motionGroups = pickMotionGroups(model3);
 
+  // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
+  // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
+  // 猜不准就不猜：留空，由 resolveExpressionName 返回 null（只播动作、不套表情）。
   const derived = {};
-  SEMANTIC_ORDER.forEach((semantic, i) => {
-    if (expressions[i]) derived[semantic] = expressions[i];
-  });
 
   const groupNames = Object.keys(motionGroups);
   const motions = {};
@@ -1517,15 +1789,26 @@ export function deriveManifest(model3, opts = {}) {
 
 /** 清单与探测结果合并：清单优先，缺失项用探测值补齐。 */
 export function mergeManifest(base, derived) {
-  if (!base) return derived;
-  const expressions = { ...(derived?.expressions || {}), ...(base.expressions || {}) };
-  const motions = { ...(derived?.motions || {}), ...(base.motions || {}) };
+  const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
+  const motions = { ...(derived?.motions || {}), ...(base?.motions || {}) };
+  // 降级时**只**补 normal，而且**按名字**补：只认模型里叫 "Normal" 的表情。
+  // 刻意不按序号补任何语义：Haru 的 expressions[1] 是 F02，而清单里 F02 是 angry，
+  // 按序号猜会让「摸头」触发生气的表情。猜不准比不猜更糟。
+  // 名字也匹配不上就留空（Haru 的表情名是 F01…F08）：未映射的语义
+  // 在 resolveExpressionName 里返回 null，交互层就只播动作、不套表情。
+  if (!expressions.normal) {
+    const named = (derived?.availableExpressions || []).find(
+      (n) => typeof n === 'string' && n.trim().toLowerCase() === 'normal'
+    );
+    if (named) expressions.normal = named;
+  }
   return {
     ...derived,
-    ...base,
+    ...(base || {}),
     expressions,
     motions,
-    derived: false,
+    // derived 为 true 表示「没有用户清单，全部来自探测」。
+    derived: !base,
     availableExpressions: derived?.availableExpressions || [],
     motionGroups: derived?.motionGroups || {},
   };
@@ -1553,12 +1836,30 @@ export function resolveMotionSpec(manifest, key) {
 
 /** 读取形象注册表与清单；清单缺失时回退到探测。 */
 export async function loadManifest(modelId) {
-  const registryRes = await fetch('/assets/live2d/index.json');
-  const registry = await registryRes.json();
-  const entry = (registry.models || []).find((m) => m.id === modelId) || (registry.models || [])[0];
+  // 注册表读不出来时不能直接崩掉整个 boot——降级成空列表并让调用方拿到
+  // 一个明确的错误，而不是一个未捕获的 fetch 异常。
+  let registry = { models: [] };
+  try {
+    const registryRes = await fetch('/assets/live2d/index.json');
+    if (!registryRes.ok) throw new Error(`HTTP ${registryRes.status}`);
+    registry = await registryRes.json();
+  } catch (err) {
+    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
+  }
+  const models = Array.isArray(registry.models) ? registry.models : [];
+  // id 两边都要 trim：主进程读注册表时会 trim，渲染层若拿原始的 m.id 去比，
+  // 两边就指的不是同一个形象。
+  const wanted = typeof modelId === 'string' ? modelId.trim() : '';
+  const entry =
+    models.find((m) => typeof m?.id === 'string' && m.id.trim() === wanted) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
+  const entryId = typeof entry.id === 'string' ? entry.id.trim() : '';
 
-  const manifestUrl = `/assets/live2d/models/${entry.manifest}`;
+  // 注册表条目缺 manifest 时按与主进程**完全相同**的规则推导：`<id>/pet.json`。
+  // 直接把 entry.manifest 拼进 URL 会得到 `…/undefined/pet.json` → 404 →
+  // 模型静默降级成「没有语义映射」的样子。
+  const manifestPath = entry.manifest || `${entryId}/pet.json`;
+  const manifestUrl = `/assets/live2d/models/${manifestPath}`;
   let base = null;
   try {
     const res = await fetch(manifestUrl);
@@ -1567,27 +1868,30 @@ export async function loadManifest(modelId) {
     base = null;
   }
 
-  const model3Url = base?.model3
-    ? `/assets/live2d/models/${entry.id}/${base.model3}`
-    : null;
+  const model3Name = base?.model3 || entry.model3 || `${entry.id}.model3.json`;
+  const model3Url = `/assets/live2d/models/${entry.id}/${model3Name}`;
   let model3 = null;
-  if (model3Url) {
-    try {
-      const res = await fetch(model3Url);
-      if (res.ok) model3 = await res.json();
-    } catch {
-      model3 = null;
-    }
+  try {
+    const res = await fetch(model3Url);
+    if (res.ok) model3 = await res.json();
+  } catch {
+    model3 = null;
   }
 
   const derived = deriveManifest(model3, {
     id: entry.id,
     name: entry.name,
-    model3: base?.model3,
+    model3: model3Name,
     viewport: base?.viewport,
     fit: base?.fit,
   });
-  return mergeManifest(base, derived);
+  const merged = mergeManifest(base, derived);
+  // 即使没有 pet.json，也要保证 model3 有值，否则模型无法加载
+  merged.model3 = model3Name;
+  // id 以注册表为准：pet.json 里的 id 若与注册表不一致，
+  // 用它拼 URL 会 404，而且没有回退到已知可用的 entry.id。
+  merged.id = entry.id;
+  return merged;
 }
 ```
 
@@ -1605,18 +1909,26 @@ export function createStage(container) {
   });
   container.appendChild(app.view);
 
+  // 不再自己挂 resize 监听：pixi 的 resizeTo: window 已经处理画布尺寸，
+  // 而窗口是固定尺寸不可缩放，重复处理只是白费力气。
   function resize() {
     app.renderer.resize(window.innerWidth, window.innerHeight);
   }
-  window.addEventListener('resize', resize);
 
-  /** 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。 */
+  /**
+   * 把模型缩放适配到视口：先按自然尺寸等比 contain，再乘清单与用户缩放。
+   * 自然尺寸只在首次调用时测量并缓存——之后 getBounds() 返回的是**已缩放**的尺寸，
+   * 重复用它计算适配比例会让模型越缩越小（Task 9 调整缩放时会再次调用本函数）。
+   */
   function fitModel(model, manifest, userScale = 1) {
     const viewW = app.screen.width;
     const viewH = app.screen.height;
-    const natural = model.getBounds();
-    const nw = natural.width || 1;
-    const nh = natural.height || 1;
+    if (!model.__naturalSize) {
+      const natural = model.getBounds();
+      model.__naturalSize = { w: natural.width || 1, h: natural.height || 1 };
+    }
+    const nw = model.__naturalSize.w;
+    const nh = model.__naturalSize.h;
     const fitScale = Math.min((viewH * 0.96) / nh, (viewW * 0.98) / nw);
     const manifestScale = manifest?.fit?.scale ?? 1;
     model.scale.set(fitScale * manifestScale * userScale);
@@ -1648,18 +1960,26 @@ export async function loadPetModel(manifest) {
 
 /** 销毁模型并显式释放纹理，避免多次切换后显存持续增长。 */
 export function disposePetModel(model) {
-  if (!model) return;
+  if (!model) return 0;
+  let released = 0;
   try {
-    disposeTextures(model);
-  } catch {
-    /* 释放失败不应阻断切换 */
+    released = disposeTextures(model);
+    if (released === 0) {
+      console.warn('[desk-pet] 未释放任何模型纹理，显存可能持续增长');
+    }
+  } catch (err) {
+    // 释放失败不应阻断切换，但必须留痕——否则显存泄漏完全不可见。
+    console.warn('[desk-pet] 模型纹理释放失败：', err?.message);
   }
+  // 注意：释放数量要等模型销毁完再返回。提前 return 会跳过下面的
+  // removeChild/destroy，模型就永远留在 stage 上——那比重启更糟。
   try {
     if (model.parent) model.parent.removeChild(model);
     model.destroy({ children: true });
   } catch {
     /* ignore */
   }
+  return released;
 }
 ```
 
@@ -1668,33 +1988,76 @@ export function disposePetModel(model) {
 ```js
 /**
  * 释放 Live2D 模型占用的纹理。
- * pixi 的纹理缓存以 URL 为键，模型销毁不会自动清理，必须显式移除。
+ * pixi 的纹理缓存以**加载时用的相对路径**为键，模型销毁不会自动清理，必须显式移除。
  */
 export function disposeTextures(model) {
   const PIXI = window.PIXI;
-  const internal = model?.internalModel;
-  const textures = internal?._textures || internal?.textures || [];
-  const urls = [];
+
+  // pixi v6 的全局纹理缓存挂在 PIXI.utils.TextureCache 上。
+  // 浏览器构建里 PIXI.TextureCache 是 undefined——写错命名空间会让整个函数
+  // 静默地什么都不释放。
+  const cache = PIXI.TextureCache || PIXI.utils?.TextureCache;
+  if (!cache) return 0;
+
+  // 模型的 PIXI 纹理挂在 model.textures 上（Live2DModel 用 Texture.fromURL 加载，
+  // 纹理以**加载时用的相对路径**为键缓存在 PIXI.utils.TextureCache 里）。
+  //
+  // 不要去碰 internalModel._textures——那是 CubismRenderer_WebGL 持有的原始
+  // WebGLTexture 句柄数组，不可迭代；internalModel.textures 只是 model3.json 里的
+  // 文件名数组。两者都拿不到我们要的键。
+  const textures = model?.textures || [];
+  const keys = [];
   for (const t of textures) {
-    if (!t) continue;
-    if (t.baseTexture?.resource?.url) urls.push(t.baseTexture.resource.url);
-    else if (t.url) urls.push(t.url);
+    // 缓存键是**加载时用的那个 URL**（相对 app:// 根的路径，如
+    // /assets/live2d/models/haru/Haru.2048/texture_00.png），
+    // 不是 baseTexture.resource.url 里的绝对地址——用绝对地址查不到缓存。
+    const key = t?.baseTexture?.cacheId || t?.baseTexture?.resource?.url;
+    if (key) keys.push(key);
   }
-  for (const url of urls) {
-    const cached = PIXI.TextureCache?.[url];
-    if (cached) {
-      PIXI.Texture.removeFromCache(url);
-      cached.destroy(true);
-    }
-  }
-  // 兜底：把模型相关的所有纹理都从缓存里摘掉
-  for (const key of Object.keys(PIXI.TextureCache || {})) {
-    if (key.includes(`/${model?.internalModel?.settings?.getModelFile?.() || ''}`)) {
-      const cached = PIXI.TextureCache[key];
+
+  let released = 0;
+  for (const key of keys) {
+    const cached = cache[key];
+    if (!cached) continue;
+    try {
       PIXI.Texture.removeFromCache(key);
-      cached?.destroy(true);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      // 单个键失败不能中断整批：其余纹理仍要释放，
+      // 而且「释放了几个」必须如实反映，否则 0 会被误读成泄漏。
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
     }
   }
+
+  // 刻意**不做**「把缓存里所有 URL 形状的键都清掉」这种兜底：
+  // PIXI 的纹理缓存是全局命名空间，那样会把别的模型或未来任何资源的纹理
+  // 一起销毁，表现为切换形象后渲染空白。
+  return released;
+}
+
+/**
+ * 按路径前缀清理缓存中的纹理。用于「模型加载到一半失败」——
+ * 那时拿不到模型对象，但已经进缓存的纹理必须清掉，否则反复失败会堆积显存。
+ * 前缀带结尾斜杠，不会误伤名字以此前缀开头的其它目录。
+ */
+export function disposeTexturesUnderPath(pathPrefix) {
+  const PIXI = window.PIXI;
+  const cache = PIXI.TextureCache || PIXI.utils?.TextureCache;
+  if (!cache) return 0;
+  let released = 0;
+  for (const key of Object.keys(cache)) {
+    if (!key.startsWith(pathPrefix)) continue;
+    const cached = cache[key];
+    try {
+      PIXI.Texture.removeFromCache(key);
+      cached.destroy(true);
+      released++;
+    } catch (err) {
+      console.warn('[desk-pet] 纹理释放失败：', key, err?.message);
+    }
+  }
+  return released;
 }
 ```
 
@@ -1730,6 +2093,9 @@ async function boot() {
 
   window.__pet.modelId = manifest.id;
   window.__pet.modelLoaded = true;
+  // window.__pet.expressions = 模型**原始**表情名列表（如 Haru 的 F01..F08）
+  // 语义映射（happy/angry/...）在 window.__pet.manifest.expressions 里。
+  // 两者不要混淆：交互层要语义，测试与诊断要原始名。
   window.__pet.expressions = manifest.availableExpressions || [];
   window.__pet.hitAreas = Object.keys(model.internalModel?.hitAreas || {});
   window.__pet.naturalSize = { w: fit.naturalWidth, h: fit.naturalHeight };
@@ -1768,6 +2134,12 @@ boot().catch((err) => {
 
 - [ ] **Step 7: 写 `test/e2e/render.spec.js`**
 
+> 实现时补强（Task 4 修复轮次 2 的结论，已在提交 `b914596` 中落地）：
+> 像素采样断言不只要证明「模型在动」，还要证明「取到的是目标区域」——
+> 需同时断言 、（取错区域会掉到 0.06）、
+>  与 （脸部比上半部亮）。
+> 复审已独立复现：步长翻倍 → meanLum 88.6 < 阈值 137.8；区域翻倍 → opaqueRatio 0.062 < 0.5。
+
 ```js
 import { test, expect } from '@playwright/test';
 import { launchApp } from './helpers.js';
@@ -1790,13 +2162,20 @@ test('模型成功加载并具备能力', async () => {
     expect(info.error).toBeNull();
     expect(info.ready).toBe(true);
     expect(info.modelLoaded).toBe(true);
-    expect(info.modelId).toBe('haru');
+    // 不写死 'haru'：注册表里第一个形象将来可能换人。
+    // 从注册表推导期望值，这条断言才不会因为与渲染层无关的原因失败。
+    const registry = await ctx.win.evaluate(() =>
+      fetch('/assets/live2d/index.json').then((r) => r.json())
+    );
+    expect(info.modelId).toBe(registry.models[0].id);
     expect(info.hasPixi).toBe(true);
     expect(info.hasCore).toBe(true);
     expect(info.hasLive2d).toBe(true);
     expect(info.expressions.length).toBeGreaterThan(0);
-    expect(info.hitAreas).toContain('Head');
-    expect(info.hitAreas).toContain('Body');
+    // 命中区名按名字归一化（head/body），具体叫法由模型作者决定，
+    // 这里只断言存在头/身两类命中区，不断言字面拼写。
+    expect(info.hitAreas.some((h) => /head/i.test(h))).toBe(true);
+    expect(info.hitAreas.some((h) => /body/i.test(h))).toBe(true);
     expect(info.naturalSize.w).toBeGreaterThan(0);
   } finally {
     await ctx.close();
@@ -1813,19 +2192,33 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       // 注意：extract.pixels() 每次都会重新渲染；extract.canvas() 返回缓存画面，不可用于逐帧比较
       const extract = app.renderer.plugins.extract;
       const bounds = app.stage.getBounds();
-      const W = Math.round(bounds.width);
-      const H = Math.round(bounds.height);
+      // extract.pixels() 返回的行宽是 round(frame.width * resolution)。
+      // 渲染器的 resolution 取的是 devicePixelRatio，在 150% 缩放的 Windows 11 上
+      // 真实步长是假设值的 1.5 倍——不乘 resolution 会取到完全错位的行，
+      // 测试「通过」但证明不了它声称证明的事。
+      // 行宽必须从实际像素数组里取，**不要**自己乘 renderer.resolution：
+      // extract 对 DisplayObject 走 renderer.generateTexture()，
+      // 它按 getLocalBounds 创建 RenderTexture 且不传 resolution，
+      // 因此行宽恒等于 bounds 宽度（settings.RESOLUTION 默认为 1），
+      // 与 renderer.resolution 无关。乘上 resolution 反而会在
+      // 150% 缩放的 Windows 11 上取到完全错位的行。
+      // _rawPixels 直接返回 {pixels, width, height}，是最不容易算错的取法。
+      const raw = extract._rawPixels(app.stage);
+      const W = raw.width;
+      const H = raw.height;
       // 取眼部区域（上部中央）
       const ex = Math.round(W * 0.38);
       const ey = Math.round(H * 0.115);
       const ew = Math.round(W * 0.24);
       const eh = Math.round(H * 0.055);
-      const regionHash = (px) => {
+      const regionHash = () => {
+        // 每帧重新提取：_rawPixels 每次都会重新渲染 target。
+        const r = extract._rawPixels(app.stage);
         let v = 0;
         for (let y = ey; y < ey + eh; y++) {
           for (let x = ex; x < ex + ew; x++) {
-            const i = (y * W + x) * 4;
-            v = (v * 31 + px[i] + px[i + 1] * 3) >>> 0;
+            const i = (y * r.width + x) * 4;
+            v = (v * 31 + r.pixels[i] + r.pixels[i + 1] * 3) >>> 0;
           }
         }
         return v;
@@ -1834,7 +2227,7 @@ test('模型在无输入时自动产生画面变化（呼吸/眨眼/物理生效
       const t0 = performance.now();
       await new Promise((resolve) => {
         const iv = setInterval(() => {
-          hashes.add(regionHash(extract.pixels(app.stage)));
+          hashes.add(regionHash());
           if (performance.now() - t0 > 6000) {
             clearInterval(iv);
             resolve();
@@ -1939,13 +2332,14 @@ test('清单优先于探测值', () => {
   assert.equal(merged.expressions.happy, 'B');
   assert.equal(merged.motions.tapHead.group, 'TapBody');
   assert.equal(merged.motions.tapHead.index, 2);
-  // 清单未覆盖的语义保留探测值
-  assert.ok(merged.expressions.normal);
+  // 清单没写的语义保持未映射：探测阶段不猜语义。
+  // MODEL3 的表情名是 A/B/C，没有一个叫 "Normal"，所以 normal 也不填。
+  assert.equal(merged.expressions.normal, undefined);
 });
 
-test('缺失语义时回退到第一个可用表情', () => {
+test('缺失语义时返回 null：只播动作，不套表情', () => {
   const m = deriveManifest(MODEL3, { id: 'x' });
-  assert.equal(resolveExpressionName(m, 'happy'), 'A');
+  assert.equal(resolveExpressionName(m, 'happy'), null);
 });
 
 test('模型完全没有表情时返回 null', () => {
@@ -1979,12 +2373,12 @@ export function resolveMotionSpec(manifest, key) {
   if (!spec || typeof spec.group !== 'string' || spec.group === '') return null;
   const groups = manifest?.motionGroups || {};
   const count = groups[spec.group];
-  if (typeof count === 'number') {
-    if (count <= 0) return null;
-    const index = Math.min(Math.max(0, spec.index | 0), count - 1);
-    return { group: spec.group, index };
-  }
-  return { group: spec.group, index: Math.max(0, spec.index | 0) };
+  // 动作组不存在（模型里没有这一组）时返回 null：
+  // 返回一个未经验证的 spec 只会把失败推迟到调用点，模型上「没有这个动作组」
+  // 应当诚实地表现为 null，让调用方降级而不是在深处抛错。
+  if (typeof count !== 'number' || count <= 0) return null;
+  const index = Math.min(Math.max(0, spec.index | 0), count - 1);
+  return { group: spec.group, index };
 }
 ```
 
@@ -2075,6 +2469,7 @@ git commit -m "feat: 模型语义映射与能力探测降级"
 import { createStage } from './pet/stage.js';
 import { loadManifest } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
+import { disposeTexturesUnderPath } from './pet/texture.js';
 
 window.__pet = {
   ready: false,
@@ -2090,13 +2485,95 @@ let currentModel = null;
 let currentManifest = null;
 let userScale = 1;
 
-async function mountModel(modelId) {
+// 切换请求序号：并发切换时只有最后一次请求允许提交到舞台，
+// 否则「谁先加载完谁上屏」，屏幕上可能不是用户最后选的那个。
+let switchSeq = 0;
+
+// 切换串行化：同一时刻只允许一次加载在进行。
+//
+// pixi 的纹理缓存以 URL 为键，两次**并发**加载同一形象会拿到同一批
+// Texture 实例（Texture.from 命中缓存就直接返回那个对象）。
+// 先完成的那次一旦销毁自己的模型，就会把另一次正在用的纹理一起销毁——
+// 胜出的模型变成「没有绑定纹理的空壳」，而 switchModel 仍然报告成功。
+// 串行化之后任何时刻只有一个模型在被加载，不存在共享纹理。
+let switchChain = Promise.resolve();
+
+/**
+ * 排队一次形象切换。
+ *
+ * 请求序号在**调用时**就取好：并发请求里只有最后取到序号的那个允许提交，
+ * 先到的那些直接作废，连模型都不加载。
+ */
+function mountModel(modelId) {
+  const token = ++switchSeq;
+  const run = switchChain.then(
+    () => doMountModel(modelId, token),
+    () => doMountModel(modelId, token),
+  );
+  // 链条本身不能被拒绝打断：某一次切换失败不能卡死后面的切换。
+  switchChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * 加载并挂载一个形象（串行化后的实际执行体）。
+ *
+ * 顺序很重要：**先加载新模型，再销毁旧模型**。反过来的话中间会出现
+ * 一帧空舞台，而且一旦新模型加载失败，旧模型也已经被销毁了——
+ * 用户的桌宠就彻底没了。
+ */
+async function doMountModel(modelId, token) {
+  // 还没开始就已经被更新的请求顶掉了：什么都不用做。
+  if (token !== switchSeq) return null;
+
   const manifest = await loadManifest(modelId);
-  const model = await loadPetModel(manifest);
-  if (currentModel) {
-    stage.app.stage.removeChild(currentModel);
-    disposePetModel(currentModel);
+
+  // 切换到**当前已挂载的同一个形象**时直接返回。
+  // pixi 对已缓存的 URL 会返回同一个 Texture 实例，新旧模型因此共享同一批
+  // 纹理对象；紧接着调用 disposeTextures 会把新模型自己的纹理销毁掉——
+  // 桌宠变成「没有绑定纹理的空壳」，而 switchModel 仍然报告成功。
+  if (currentModel && manifest.id === currentManifest?.id) {
+    return currentModel;
   }
+
+  let model;
+  try {
+    model = await loadPetModel(manifest);
+  } catch (err) {
+    // 加载失败时旧模型仍挂在舞台上，用户不会看到桌宠凭空消失。
+    // 但失败的加载可能已经把纹理塞进了全局缓存，必须清掉，
+    // 否则反复失败的切换会不断堆积显存。
+    disposeTexturesUnderPath(`/assets/live2d/models/${manifest.id}/`);
+    throw err;
+  }
+
+  // 加载期间可能又发起了新的切换——过期请求直接放弃，不要动舞台。
+  if (token !== switchSeq) {
+    disposePetModel(model);
+    return null;
+  }
+
+  let released = 0;
+  if (currentModel) {
+    // 先把旧模型摘出舞台：它马上要被销毁，留在渲染列表里只会
+    // 让渲染循环去访问已经释放的纹理。
+    if (currentModel.parent) currentModel.parent.removeChild(currentModel);
+    released = disposePetModel(currentModel);
+    currentModel = null;
+  }
+  window.__pet.lastReleasedTextures = released;
+
+  // 缩放每次挂载时重读：userScale 是启动时抓的，
+  // 用户在设置里改过缩放后再切换形象，新模型必须用新缩放。
+  //
+  // 这一句必须放在**提交之前**：提交段（销毁旧模型 → 挂载新模型 → 更新状态）
+  // 要保持整体同步，中途 await 会让并发请求插进来，导致舞台上同时挂着两个模型。
+  const settings = await window.pet.getSettings();
+  if (typeof settings?.scale === 'number') userScale = settings.scale;
+
   stage.app.stage.addChild(model);
   const fit = stage.fitModel(model, manifest, userScale);
   currentModel = model;
@@ -2119,7 +2596,8 @@ async function boot() {
 
   const settings = await window.pet.getSettings();
   userScale = settings?.scale ?? 1;
-  await mountModel(settings?.modelId || 'haru');
+  // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
+  await mountModel(settings?.modelId);
 
   // 主进程请求切换形象
   window.pet.onModelSwitchRequest(async (modelId) => {
@@ -2261,7 +2739,18 @@ git commit -m "feat: 运行时切换形象并显式释放纹理"
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeZone, geometricZone } from '../../src/renderer/pet/hitZone.js';
+import { normalizeZone, geometricZone, hitZoneAt } from '../../src/renderer/pet/hitZone.js';
+
+const BOUNDS = { x: 0, y: 0, width: 300, height: 560 };
+
+/** 造一个命中区行为可控的假模型。 */
+function stubModel({ hit = [], areas = { Head: {}, Body: {} }, bounds = BOUNDS } = {}) {
+  return {
+    internalModel: { hitAreas: areas },
+    hitTest: () => hit,
+    getBounds: () => bounds,
+  };
+}
 
 test('命中区名归一化', () => {
   assert.equal(normalizeZone('Head'), 'head');
@@ -2274,16 +2763,51 @@ test('命中区名归一化', () => {
 });
 
 test('几何兜底：上 35% 判为头部', () => {
-  const bounds = { x: 0, y: 0, width: 300, height: 560 };
-  assert.equal(geometricZone(bounds, 150, 50), 'head');
-  assert.equal(geometricZone(bounds, 150, 190), 'head');
-  assert.equal(geometricZone(bounds, 150, 250), 'body');
-  assert.equal(geometricZone(bounds, 150, 500), 'body');
+  assert.equal(geometricZone(BOUNDS, 150, 50), 'head');
+  assert.equal(geometricZone(BOUNDS, 150, 190), 'head');
+  assert.equal(geometricZone(BOUNDS, 150, 250), 'body');
+  assert.equal(geometricZone(BOUNDS, 150, 500), 'body');
+});
+
+test('几何兜底：包围盒之外的点返回 other', () => {
+  // 桌宠周围的空白处点击不应该触发反应——用户点了桌子，桌宠不该摸头。
+  assert.equal(geometricZone(BOUNDS, 150, -20), 'other');
+  assert.equal(geometricZone(BOUNDS, -10, 150), 'other');
+  assert.equal(geometricZone(BOUNDS, 400, 150), 'other');
+  assert.equal(geometricZone(BOUNDS, 150, 700), 'other');
 });
 
 test('包围盒无效时返回 other', () => {
   assert.equal(geometricZone(null, 10, 10), 'other');
   assert.equal(geometricZone({ x: 0, y: 0, width: 0, height: 0 }, 10, 10), 'other');
+});
+
+test('hitZoneAt 优先使用模型原生命中区', () => {
+  // 关键用例：y=150 在几何判定下是 body（rel=0.27 <= 0.35 → head，实际 head），
+  // 这里选一个几何判定会答 body、原生会答 head 的点，证明原生优先。
+  const model = stubModel({ hit: ['Head'] });
+  assert.equal(hitZoneAt(model, 150, 400), 'head');
+  const model2 = stubModel({ hit: ['Body'] });
+  assert.equal(hitZoneAt(model2, 150, 60), 'body');
+});
+
+test('hitZoneAt 在原生命中区未命中时退回几何判定', () => {
+  const model = stubModel({ hit: [] });
+  assert.equal(hitZoneAt(model, 150, 50), 'head');
+  assert.equal(hitZoneAt(model, 150, 400), 'body');
+});
+
+test('hitZoneAt 在模型之外返回 other', () => {
+  const model = stubModel({ hit: [] });
+  assert.equal(hitZoneAt(model, 150, -20), 'other');
+  assert.equal(hitZoneAt(model, -10, 150), 'other');
+  assert.equal(hitZoneAt(model, 150, 700), 'other');
+});
+
+test('hitZoneAt 在模型没有命中区时退回几何判定', () => {
+  const model = stubModel({ hit: [], areas: {} });
+  assert.equal(hitZoneAt(model, 150, 50), 'head');
+  assert.equal(hitZoneAt(model, 150, 400), 'body');
 });
 ```
 
@@ -2434,11 +2958,25 @@ export function normalizeZone(name) {
   return 'other';
 }
 
-/** 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。 */
+/**
+ * 模型没有命中区时的几何兜底：包围盒上 35% 视为头部。
+ *
+ * 点必须落在包围盒**内**才返回 head/body，否则一律 other：
+ * 桌宠周围的空白处点击也会触发反应是很糟的体验——
+ * 用户点了桌子，结果桌宠摸头卖萌。
+ */
 export function geometricZone(bounds, x, y) {
-  if (!bounds || !Number.isFinite(bounds.height) || bounds.height <= 0) return 'other';
+  if (!bounds) return 'other';
+  if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)) return 'other';
+  if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return 'other';
+  if (bounds.height <= 0) return 'other';
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 'other';
+  if (x < bounds.x || x > bounds.x + bounds.width) return 'other';
   const rel = (y - bounds.y) / bounds.height;
+  // NaN 的比较结果全是 false，会一路落到 rel <= 0.35 → 返回 'body'，
+  // 对任何 x 都成立——所以这里必须显式挡掉非有限值。
   if (!Number.isFinite(rel)) return 'other';
+  if (rel < 0 || rel > 1) return 'other';
   return rel <= 0.35 ? 'head' : 'body';
 }
 
@@ -2517,6 +3055,9 @@ export function createDragController({ threshold = DRAG_THRESHOLD, onTap, onDrag
     },
     pointerDown(e) {
       if (e.button !== 0) return;
+      // 已有拖拽在进行时，第二根手指的 pointerdown 不能打断它：
+      // 无条件覆盖 down/last 会把锚点跳到第二根手指上，窗口会突然位移。
+      if (down && e.pointerId !== down.pointerId) return;
       down = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
       last = { x: e.clientX, y: e.clientY };
       dragging = false;
@@ -2577,6 +3118,9 @@ export function attachInteraction({
   onInteract,
 }) {
   const local = (clientX, clientY) => {
+    // hitTest / focus 的入参是**世界坐标**（库内部用 worldTransform.applyInverse 换算）。
+    // 这里画布铺满窗口且 stage 在原点，世界坐标与画布坐标数值相同；
+    // 但一旦画布内缩或 stage 被平移，两者就不一样了——所以别把注释写成「以画布为原点」。
     const rect = canvas.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
@@ -2606,6 +3150,9 @@ export function attachInteraction({
 
   const handleMove = (e) => {
     const { x, y } = local(e.clientX, e.clientY);
+    // 悬停也算交互：空闲动画是给「用户走开了」的场景准备的，
+    // 鼠标还在桌宠身上动的时候，桌宠正被看着，不该自说自话。
+    onInteract?.();
     onHover?.(x, y);
   };
 
@@ -2615,7 +3162,19 @@ export function attachInteraction({
     onContextMenu?.();
   };
 
-  canvas.addEventListener('pointerdown', (e) => drag.pointerDown(e));
+  const handleDown = (e) => {
+    // 指针捕获：没有它，光标一旦移出画布，pointermove/pointerup 就不再送达——
+    // 拖拽会丢失增量、onDragEnd 永不触发。
+    // 桌宠窗口是跟着光标走的（差一个 IPC 往返），快速移动时光标会跑出窗口。
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* 个别环境不支持捕获，忽略即可 */
+    }
+    drag.pointerDown(e);
+  };
+
+  canvas.addEventListener('pointerdown', handleDown);
   canvas.addEventListener('pointermove', (e) => {
     drag.pointerMove(e);
     handleMove(e);
@@ -2648,23 +3207,50 @@ Expected: PASS（10 passed）。
   const canvas = stage.app.view;
 
   // 空闲计时：20 秒无交互则播一次 idle 动作（spec §5.1）
-  const IDLE_MS = 20000;
+  const DEFAULT_IDLE_MS = 20000;
+  let idleMs = DEFAULT_IDLE_MS;
   let idleTimer = null;
   function resetIdleTimer() {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      if (!currentModel || !currentManifest) return;
+      idleTimer = null;
+      if (!currentModel || !currentManifest) {
+        resetIdleTimer();
+        return;
+      }
       const r = idleReaction(currentManifest);
+      // 「随机待机动作」：motion 只给组名、不给索引，库会随机挑该组里的一个动作。
+      // 给固定索引就不是随机的了。
       if (r.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(r.motionSpec.group, r.motionSpec.index);
+          currentModel.motion(r.motionSpec.group)?.catch?.(() => {});
         } catch {
           /* ignore */
         }
       }
-    }, IDLE_MS);
+      // 同时回到 normal 表情——idleReaction 的语义键就是 normal。
+      if (r.expressionName && currentModel?.expression) {
+        try {
+          currentModel.expression(r.expressionName)?.catch?.(() => {});
+        } catch {
+          /* ignore */
+        }
+      }
+      // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
+      resetIdleTimer();
+    }, idleMs);
   }
   resetIdleTimer();
+  // 暴露出来，测试不必真的等 20 秒。
+  window.__pet.idleMs = idleMs;
+  // 测试缝：允许把空闲间隔调短以验证「重新武装」——
+  // 没有它，重新武装只能靠代码审读确认。
+  window.__pet.setIdleMs = (ms) => {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return idleMs;
+    idleMs = ms;
+    resetIdleTimer();
+    return idleMs;
+  };
 
   attachInteraction({
     canvas,
@@ -2675,16 +3261,18 @@ Expected: PASS（10 passed）。
       window.__pet.lastZone = zone;
       window.__pet.lastExpression = reaction.expressionName;
       window.__pet.lastMotion = reaction.motionSpec;
+      // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
+      // 被拒绝的 promise 会变成未处理拒绝，违反「渲染进程不得产生未捕获错误」。
       if (reaction.expressionName && currentModel?.expression) {
         try {
-          currentModel.expression(reaction.expressionName);
+          currentModel.expression(reaction.expressionName)?.catch?.(() => {});
         } catch {
           /* 表情缺失时静默跳过 */
         }
       }
       if (reaction.motionSpec && currentModel?.motion) {
         try {
-          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index);
+          currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});
         } catch {
           /* 动作缺失时静默跳过 */
         }
@@ -2829,6 +3417,10 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 
 ```js
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
+  // 新一次拖拽开始：主进程据此把期望位置重新对齐到当前窗口位置。
+  dragStart: () => ipcRenderer.invoke('pet:dragStart'),
+  // 拖拽结束：主进程清掉累加器，不依赖 dragStart 一定送达。
+  dragEnd: () => ipcRenderer.invoke('pet:dragEnd'),
 ```
 
 在 `src/main/ipc.js` 的 `registerIpc` 中新增处理器：
@@ -2837,6 +3429,12 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
   ipcMain.handle('pet:moveWindowBy', (_e, delta) => {
     if (!delta) return;
     onMoveBy(Number(delta.dx) || 0, Number(delta.dy) || 0);
+  });
+  ipcMain.handle('pet:dragStart', () => {
+    onDragStart();
+  });
+  ipcMain.handle('pet:dragEnd', () => {
+    onDragEnd();
   });
 ```
 
@@ -2847,32 +3445,88 @@ git commit -m "feat: 命中区判定、视线跟随与点击反应"
 ```js
     onMoveBy: (dx, dy) => {
       if (!win || win.isDestroyed()) return;
-      const [x, y] = win.getPosition();
       const [w, h] = win.getSize();
-      const next = clampToDisplays(x + dx, y + dy, w, h, currentDisplays());
-      win.setPosition(next.x, next.y);
-      persist({ position: next });
+      // 期望位置 = 拖拽起点 + Σdelta，**不夹紧**。
+      //
+      // 若把增量直接累加到「已夹紧」的位置上，顶到屏幕边缘时被夹紧吃掉的那部分
+      // 增量就永久丢失了；光标往回走时，返回的增量会从被钉住的位置全额施加，
+      // 角色于是越过光标、跳到相反的边缘并停在那里——而且那个错误位置会被持久化。
+      if (!desiredPosition) {
+        const [x, y] = win.getPosition();
+        desiredPosition = { x, y };
+      }
+      desiredPosition.x += dx;
+      desiredPosition.y += dy;
+      const applied = clampToDisplays(desiredPosition.x, desiredPosition.y, w, h, currentDisplays());
+      win.setPosition(applied.x, applied.y);
+      // 持久化的是**实际可见**的位置，不是可能跑到屏幕外的期望位置。
+      persist({ position: applied });
+    },
+    onDragStart: () => {
+      // 新一次拖拽开始：期望位置重新对齐当前窗口位置。
+      desiredPosition = null;
+    },
+    onDragEnd: () => {
+      // 拖拽结束也清掉累加器。
+      // 这样即使 pet:dragStart 信号在某次丢失（preload 方法被删、onDragStart 没接上），
+      // 下一次拖拽也不会累加到上一次拖拽的未夹紧位置上——那正是 Important #1 描述的缺陷类型。
+      desiredPosition = null;
     },
 ```
 
-并把 import 改为：`import { clampToDisplays, defaultPosition } from './display.js';`
+并把 import 改为：`import { clampToDisplays } from './display.js';`
 
 - [ ] **Step 2: 渲染层把拖拽增量转发给主进程**
 
 Task 7 的 `attachInteraction` 已接上 `onDragMove`。本步骤把转发逻辑补全并留一个可断言的记录：
 
 ```js
-    onDragMove: ({ deltaX, deltaY }) => {
-      window.__pet.lastDragDelta = { deltaX, deltaY };
-      window.pet.moveWindowBy?.(deltaX, deltaY);
+    onDragStart: () => {
+      // 告诉主进程「新一次拖拽开始」，让它把期望位置重新对齐当前窗口位置。
+      // ipcRenderer.invoke 返回 promise：主进程抛错或帧被拆除时会拒绝，
+      // 而渲染层没有全局 unhandledrejection 兜底——拒绝会变成未处理错误。
+      window.pet.dragStart?.()?.catch?.(() => {});
+      lastPointerScreen = null;
     },
     onDragEnd: () => {
-      // 主进程已在每次 moveWindowBy 时持久化位置，这里无需额外处理
+      window.pet.dragEnd?.()?.catch?.(() => {});
+    },
+    onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
+      // 增量必须换算到**屏幕**坐标再累加。
+      //
+      // clientX/clientY 是窗口内的坐标：窗口追着光标跑，窗口每移动 1px，
+      // 下一个事件的 clientX 就少 1px。于是「所有 clientX 增量之和」
+      // = 光标的屏幕位移 − 窗口自己的位移，角色只走到光标位移的一半
+      // （实测拖 120px 只走了 60px，角色落在光标后面）。
+      //
+      // window.screenX + clientX 才是光标在**屏幕**上的位置，
+      // 它的增量就是光标真实的屏幕位移：累加起来正好等于光标走过的距离，
+      // 角色才会严丝合缝地跟着光标走。
+      // 传给主进程的仍然是增量，主进程照旧累加、夹紧、持久化。
+      const pointer = { x: window.screenX + clientX, y: window.screenY + clientY };
+      let dx = deltaX;
+      let dy = deltaY;
+      if (lastPointerScreen) {
+        dx = pointer.x - lastPointerScreen.x;
+        dy = pointer.y - lastPointerScreen.y;
+      }
+      // 第一次移动时窗口还没动过，clientX 的增量本身就是屏幕位移，
+      // 直接用；之后一律用屏幕坐标的增量。
+      lastPointerScreen = pointer;
+      window.__pet.lastDragDelta = { deltaX: dx, deltaY: dy };
+      window.pet.moveWindowBy?.(dx, dy);
     },
 ```
 
 > **不要**为拖拽再单独挂一套指针监听器。Task 7 的 `attachInteraction` 是画布上唯一的指针事件入口；
 > 重复挂载会导致一次拖拽被处理两次——窗口位移翻倍，且松手时同时触发「摸头」反应。
+
+> **E2E 里读取 settings.json 要在测试进程里读**（用 `app.evaluate(({app}) => app.getPath('userData'))`
+> 拿到目录，再由测试进程读文件）——Playwright 的 `app.evaluate` 环境里既没有 `require`，
+> 动态 `import()` 也会报「A dynamic import callback was not specified」。
+
+> **拖拽测试前先把窗口挪到工作区左上角**：桌宠的默认位置是主显示器工作区的右下角，
+> 正好压在夹紧边界上，在那里往右下拖是空操作。
 - [ ] **Step 3: 写 `test/e2e/drag.spec.js`**
 
 ```js
@@ -2973,7 +3627,7 @@ Expected: PASS（2 passed）。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/renderer/ui/windowDrag.js src/renderer/main.js src/main/index.js src/main/ipc.js src/preload/index.cjs test/e2e/drag.spec.js
+git add src/renderer/main.js src/main/index.js src/main/ipc.js src/preload/index.cjs test/e2e/drag.spec.js
 git commit -m "feat: 拖拽移动窗口与位置记忆"
 ```
 
@@ -3137,6 +3791,11 @@ function openSettings() {
 
 把 Task 3 中的占位 `openSettings` 替换为此实现，并保留 `showContextMenu` 调用 `openSettings` 的行为。
 
+> 注意：Task 3 的 `src/main/index.js` **没有** import `appUrl` 与 `applySettingsToWindow`（那时还没用到）。
+> 本步需要在 `src/main/index.js` 顶部补上：
+> `import { appUrl } from './protocol.js';`
+> `import { applySettingsToWindow } from './window.js';`
+
 同时，`pet:saveSettings` 需要把缩放/透明度变化广播给宠物窗口：
 
 ```js
@@ -3161,8 +3820,11 @@ function openSettings() {
 
 ```js
   window.pet.onSettingsChanged(async (s) => {
-    if (typeof s.scale === 'number') {
+    if (typeof s.scale === 'number' && s.scale !== userScale) {
+      // 只有缩放真的变了才重新适配：广播带的是完整设置对象，
+      // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
       userScale = s.scale;
+      window.__pet.scale = userScale;
       if (currentModel) stage.fitModel(currentModel, currentManifest, userScale);
     }
     if (typeof s.opacity === 'number') {
@@ -3171,13 +3833,25 @@ function openSettings() {
   });
 ```
 
-> 透明度由主进程 `win.setOpacity()` 施加，`persist` 之后需调用 `applySettingsToWindow(win, next)`。在 `src/main/index.js` 的 `persist` 中补上：
+> 透明度由主进程 `win.setOpacity()` 施加，因此 `persist` 之后要调用 `applySettingsToWindow(win, settings)`。
+> **注意：Task 3 的 `persist` 已经是下面这个形态**（内部过 `sanitizeSettings`、写失败有日志、
+> 退出前有 `flushPendingSave`）——本步只加一行 `applySettingsToWindow`，**不要整段替换 persist**：
 
 ```js
 function persist(patch) {
-  settings = { ...settings, ...patch };
-  if (win && !win.isDestroyed()) applySettingsToWindow(win, settings);
-  ...
+  settings = sanitizeSettings({ ...settings, ...patch });
+  // 只有透明度真的变了才调原生接口：persist 在拖拽的每一帧都会被调用，
+  // 而拖拽过程中透明度根本不变——每次都发一次 win.setOpacity() 是在最热的路径上做无用功。
+  if (win && !win.isDestroyed() && settings.opacity !== appliedOpacity) {
+    applySettingsToWindow(win, settings);
+    appliedOpacity = settings.opacity;
+  }
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    writeSettings();
+  }, 300);
+  return settings;
 }
 ```
 
@@ -3257,16 +3931,23 @@ git commit -m "feat: 设置窗口支持形象切换、缩放与透明度"
 - Consumes: 全部前序任务
 - Produces: 可交付的项目文档与一套端到端验收用例
 
-- [ ] **Step 1: 更新 `.gitignore`**
+- [ ] **Step 1: 确认 `.gitignore` 的模型忽略规则**
 
-追加：
+模型二进制的忽略规则 **Task 1 已加入并验证**，本步只需确认，不要重复添加：
 
 ```
-assets/live2d/models/haru/**
-assets/live2d/models/natori/**
+assets/live2d/models/haru/*
 !assets/live2d/models/haru/pet.json
+assets/live2d/models/natori/*
 !assets/live2d/models/natori/pet.json
 ```
+
+> 不要写成 `assets/live2d/models/*` 或 `assets/live2d/models/haru/**`：
+> git 不会进入被排除的目录，反向规则也就无法重新包含 `pet.json`，结果是清单反而没被提交。
+> 逐目录 `/*` + 同级反向 `!` 才是有效写法。
+
+验证：`git ls-files assets/live2d/` 应列出 `index.json` 与两个 `pet.json`；
+`git check-ignore -v assets/live2d/models/haru/Haru.moc3` 应有命中。
 
 - [ ] **Step 2: 写 `NOTICE`**
 
@@ -3339,7 +4020,7 @@ npm start       # 启动桌宠
 ## 测试
 
 ```bash
-npm run test:unit   # 主进程纯函数单测（node:test）
+npm run test:unit   # 纯函数单测：主进程 + 渲染层（node:test）
 npm run test:e2e    # 端到端测试（Playwright + Electron）
 npm test            # 全部
 ```
