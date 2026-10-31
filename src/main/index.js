@@ -169,7 +169,11 @@ function resolveModelId(models, modelId) {
 // ---------------------------------------------------------------------------
 
 // 渲染层回执的超时：超时按失败处理（磁盘上不落新 id）。
-const SWITCH_ACK_TIMEOUT_MS = 30000;
+//
+// 12 秒而不是 30 秒：切换一次模型（加载 model3.json + moc3 + 2048² 贴图）
+// 在正常机器上也就一两秒；渲染层真的一动不动时，让设置窗口的下拉框
+// 干等 30 秒体验极差，而多等的那 18 秒并不会让模型突然加载成功。
+const SWITCH_ACK_TIMEOUT_MS = 12000;
 
 // 渲染层是否已经注册好监听器。
 //
@@ -239,29 +243,46 @@ function onRendererReady() {
 }
 
 /**
- * 渲染层报告「模型加载失败」（启动阶段）。
+ * 渲染层报告「模型加载失败」或「渲染层自身崩溃」。
  *
  * 渲染层的 console.* 不进终端：用户在 `npm start` 里只会看到一份干净的日志
  * 和一个全透明的空窗口——完全不可见的失败。
  * 所以失败必须由主进程留痕：终端里一条 console.error，用户看得见。
+ *
+ * **kind 必须区分开**：只有真正的模型加载失败才回退磁盘上的 modelId。
+ * 渲染层因为别的原因崩溃时，模型可能好好的——那时回退 modelId
+ * 会把用户选好的形象悄悄丢掉，换成一个他没选过的。
  */
 function onModelError(info) {
+  const kind = typeof info === 'object' && info?.kind ? info.kind : 'model-load';
+  const isModelLoad = kind === 'model-load';
   const message = typeof info === 'string' ? info : info?.message || String(info);
-  console.error('[desk-pet] 模型加载失败：', message);
+  if (isModelLoad) {
+    console.error('[desk-pet] 模型加载失败：', message);
+  } else {
+    console.error('[desk-pet] 渲染层异常：', message);
+  }
   if (!IS_E2E) {
     // 弹窗让失败在界面上也看得见（不阻塞主进程）。
     dialog
       .showMessageBox({
         type: 'error',
-        title: '桌面宠物 · 模型加载失败',
-        message: '桌宠模型加载失败',
-        detail:
-          `${message}\n\n` +
-          '若还没有下载官方样例资源，请先在项目目录执行 npm run setup；' +
-          '若模型文件不完整，删除 assets/live2d/models/ 下的对应目录后重跑 npm run setup。',
+        title: isModelLoad ? '桌面宠物 · 模型加载失败' : '桌面宠物 · 渲染层异常',
+        message: isModelLoad ? '桌宠模型加载失败' : '桌宠渲染层发生异常',
+        detail: isModelLoad
+          ? `${message}\n\n` +
+            '若还没有下载官方样例资源，请先在项目目录执行 npm run setup；' +
+            '若模型文件不完整，删除 assets/live2d/models/ 下的对应目录后重跑 npm run setup。'
+          : `${message}\n\n` +
+            '这是渲染层的问题，与模型文件无关；磁盘上选择的形象不会被改动。' +
+            '若持续出现，请重启应用。',
         buttons: ['知道了'],
       })
       .catch(() => {});
+  }
+  if (!isModelLoad) {
+    // 不是模型加载失败：不动磁盘上的 modelId。
+    return;
   }
   // 磁盘上的 modelId 指向一个加载不了的形象 → 下次启动还是空白，
   // 而用户根本不知道该删哪个文件。回退到注册表首项（应用自己的默认值），
@@ -409,8 +430,15 @@ app.whenReady().then(async () => {
         return { ok: true, modelId: settings.modelId };
       }
       // 被后来的请求顶掉：什么都不落盘，由那一次请求的结果决定。
+      // superseded 标记让设置窗口**不弹失败提示**——这只是一次正常的抢占，
+      // 后面那次请求的结论才是用户该看到的（否则会先看到一条假的失败）。
       if (ack.superseded) {
-        return { ok: false, modelId: settings.modelId, error: '该切换请求已被更新的请求取代' };
+        return {
+          ok: false,
+          superseded: true,
+          modelId: settings.modelId,
+          error: '该切换请求已被更新的请求取代',
+        };
       }
       // 失败：回滚。磁盘上的 modelId 必须回到**屏幕上那个**形象。
       // 失败必须留痕：否则用户看到的只是「桌宠没换」，却没有任何线索。

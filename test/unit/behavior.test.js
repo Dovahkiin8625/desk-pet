@@ -70,8 +70,10 @@ test('空闲反应回到 normal 表情并播放 idle 动作', () => {
 });
 
 test('模型没有动作组时空闲反应不报错', () => {
+  // 降级清单里没有叫 "Normal" 的表情：空闲只播动作、不套任何表情，
+  // 绝不按序号把 availableExpressions[0] 当成「普通表情」。
   const bare = mergeManifest(null, deriveManifest({ FileReferences: { Expressions: [{ Name: 'Only' }] } }, { id: 'z' }));
   const r = idleReaction(bare);
-  assert.equal(r.expressionName, 'Only');
+  assert.equal(r.expressionName, null);
   assert.equal(r.motionSpec, null);
 });

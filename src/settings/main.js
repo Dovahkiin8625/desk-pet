@@ -6,8 +6,21 @@ const opacityVal = document.getElementById('opacityVal');
 const status = document.getElementById('status');
 
 function show(msg) {
+  // data-state 是给自动化用的终态标记：'done' 表示这里已经有一条结论了。
+  status.dataset.state = 'done';
   status.textContent = msg;
   if (msg) setTimeout(() => { if (status.textContent === msg) status.textContent = ''; }, 2000);
+}
+
+/**
+ * 显示「进行中」状态：不会自动消失，必须由后面的 show() 顶掉。
+ *
+ * 没有它时，渲染层迟迟不回执的那 12 秒里状态栏是空的——
+ * 用户按下拉框后看不到任何反馈，只会觉得程序卡住了。
+ */
+function showPending(msg) {
+  status.dataset.state = 'pending';
+  status.textContent = msg;
 }
 
 function formatScale(v) {
@@ -80,6 +93,9 @@ async function init() {
 
 modelSelect.addEventListener('change', async () => {
   const requested = modelSelect.value;
+  // 先给一个「进行中」的反馈：切换要等渲染层回执（最长 12 秒），
+  // 期间状态栏不能是空的。
+  showPending('切换中…');
   let result;
   try {
     // switchModel 现在**等渲染层的回执**：主进程拿到「模型真的上屏了」
@@ -91,6 +107,11 @@ modelSelect.addEventListener('change', async () => {
     return;
   }
   if (!result || result.ok !== true) {
+    // 被**更新的**请求顶掉：这不是失败，不该弹一条「切换失败」——
+    // 后面那次请求的结论才是用户该看到的。
+    // 也不能动下拉框：它已经停在用户最后选的那一项上，
+    // 拨回去反而会让下拉框与屏幕上跑的形象对不上。
+    if (result?.superseded) return;
     // 失败：下拉框拨回**屏幕上那个**形象，别停在用户点的那个。
     if (result?.modelId) setModel(result.modelId);
     show(`切换失败：${result?.error || '模型加载失败'}`);

@@ -251,6 +251,10 @@ function registerChannels() {
     } catch (err) {
       const message = String(err?.message || err);
       window.__pet.switchError = message;
+      // 屏幕上**一个模型都没有**时，必须画一块占位提示：
+      // 启动期的用户请求可能顶掉了首次挂载，若它又失败，窗口就是一个
+      // 全透明的空矩形——用户看不到任何解释（占位提示原先只接在启动路径上）。
+      if (!currentModel) showFailurePlaceholder(message);
       // 失败也要回报：主进程要把磁盘上的 modelId 回滚到**屏幕上那个**形象，
       // 设置窗口要显示失败而不是「已切换到 …」（spec §4.5 第 4 步）。
       window.pet?.reportModelSwitchResult?.({
@@ -307,6 +311,10 @@ async function boot() {
     // 用户在 npm start 里只看到一份干净的日志和一个全透明的空窗口。
     window.__pet.error = String(err?.stack ? err.stack : err);
     window.pet?.reportModelError?.({
+      // kind 必须区分开：「模型加载失败」与「渲染层自己崩了」是两件事。
+      // 主进程只在**真的**模型加载失败时才回退磁盘上的 modelId——
+      // 否则一次与模型无关的崩溃会把用户选好的形象悄悄丢掉。
+      kind: 'model-load',
       message: String(err?.message || err),
       stack: window.__pet.error,
     });
@@ -479,8 +487,13 @@ async function boot() {
 boot().catch((err) => {
   // 启动过程本身崩了（不只是模型加载失败）：同样必须让主进程知道。
   // 只写 window.__pet.error 的话，用户在终端里看不到任何线索。
+  //
+  // kind 是 'renderer-error' 而不是 'model-load'：模型可能好好的，
+  // 崩的是渲染层。这时主进程**不应该**回退磁盘上的 modelId——
+  // 否则一次与模型无关的崩溃会把用户选好的形象悄悄丢掉。
   window.__pet.error = String(err && err.stack ? err.stack : err);
   window.pet?.reportModelError?.({
+    kind: 'renderer-error',
     message: String(err?.message || err),
     stack: window.__pet.error,
   });

@@ -55,20 +55,27 @@ export function deriveManifest(model3, opts = {}) {
 /**
  * 清单与探测结果合并：清单优先，缺失项用探测值补齐。
  *
- * 表情方面只补一个键：`normal`。
+ * 表情方面只补一个键：`normal`，而且**按名字**补、绝不按序号补。
  * 探测阶段不猜语义（见 deriveManifest 的注释），但「普通表情」总得有个值，
- * 否则清单缺项时连中性表情都拿不到。这里用**模型第一个可用表情**兜底——
- * 这是唯一被允许的猜测，因为「普通」不猜错任何情绪。
+ * 否则清单缺项时连中性表情都拿不到。这里在模型**自己叫 "Normal"** 的表情里找：
+ * Natori 有（它的表情表第一项是 Angry——按序号猜就正好猜错），
+ * Haru 没有（它的表情名是 F01…F08），那就留空。
  *
- * 其余语义（happy/angry/...）一律不补，保持未映射：
- * 未映射的语义在 resolveExpressionName 里返回 null，交互层就只播动作、不套表情。
+ * 留空不是缺陷：未映射的语义在 resolveExpressionName 里返回 null，
+ * 交互层于是只播动作、不套表情——这正是 spec §4.4 的降级表写的。
+ *
+ * 其余语义（happy/angry/...）一律不补，保持未映射。
  */
 export function mergeManifest(base, derived) {
   const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
   const motions = { ...(derived?.motions || {}), ...(base?.motions || {}) };
   if (!expressions.normal) {
-    const first = derived?.availableExpressions?.[0];
-    if (first) expressions.normal = first;
+    // 按**名字**匹配，绝不按序号：availableExpressions[0] 是一个序号，
+    // Natori 的第一项是 Angry——那会让降级模型空闲时永远挂着一张生气的脸。
+    const named = (derived?.availableExpressions || []).find(
+      (n) => typeof n === 'string' && n.trim().toLowerCase() === 'normal'
+    );
+    if (named) expressions.normal = named;
   }
   return {
     ...derived,
@@ -125,10 +132,21 @@ export async function loadManifest(modelId) {
     console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
   }
   const models = Array.isArray(registry.models) ? registry.models : [];
-  const entry = models.find((m) => m.id === modelId) || models[0];
+  // id 两边都要 trim：主进程读注册表时会 trim（entry.id 是规整后的值），
+  // 渲染层若拿原始的 m.id 去比，两边就对不上同一个形象。
+  const wanted = typeof modelId === 'string' ? modelId.trim() : '';
+  const entry =
+    models.find(
+      (m) => typeof m?.id === 'string' && m.id.trim() !== '' && m.id.trim() === wanted
+    ) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
+  const entryId = typeof entry.id === 'string' ? entry.id.trim() : '';
 
-  const manifestUrl = `/assets/live2d/models/${entry.manifest}`;
+  // 注册表条目缺 manifest 时按与主进程**完全相同**的规则推导：`<id>/pet.json`。
+  // 直接把 entry.manifest 拼进 URL 会得到 `…/undefined/pet.json` → 404 →
+  // 模型静默降级成「没有语义映射」的样子，而用户完全看不出发生了什么。
+  const manifestPath = entry.manifest || `${entryId}/pet.json`;
+  const manifestUrl = `/assets/live2d/models/${manifestPath}`;
   let base = null;
   try {
     const res = await fetch(manifestUrl);
@@ -137,8 +155,8 @@ export async function loadManifest(modelId) {
     base = null;
   }
 
-  const model3Name = base?.model3 || entry.model3 || `${entry.id}.model3.json`;
-  const model3Url = `/assets/live2d/models/${entry.id}/${model3Name}`;
+  const model3Name = base?.model3 || entry.model3 || `${entryId}.model3.json`;
+  const model3Url = `/assets/live2d/models/${entryId}/${model3Name}`;
   let model3 = null;
   try {
     const res = await fetch(model3Url);
@@ -148,7 +166,7 @@ export async function loadManifest(modelId) {
   }
 
   const derived = deriveManifest(model3, {
-    id: entry.id,
+    id: entryId,
     name: entry.name,
     model3: model3Name,
     viewport: base?.viewport,
@@ -159,6 +177,6 @@ export async function loadManifest(modelId) {
   merged.model3 = model3Name;
   // id 以注册表为准：pet.json 里的 id 若与注册表不一致，
   // 用它拼 URL 会 404，而且没有回退到已知可用的 entry.id。
-  merged.id = entry.id;
+  merged.id = entryId;
   return merged;
 }

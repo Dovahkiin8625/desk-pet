@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   deriveManifest,
+  loadManifest,
   mergeManifest,
   resolveExpressionName,
   resolveMotionSpec,
@@ -31,8 +32,11 @@ test('清单优先于探测值', () => {
   assert.equal(merged.expressions.happy, 'B');
   assert.equal(merged.motions.tapHead.group, 'TapBody');
   assert.equal(merged.motions.tapHead.index, 2);
-  // 清单未覆盖的语义保留探测值
-  assert.ok(merged.expressions.normal);
+  // 清单没写的语义保持未映射：探测阶段不猜语义。
+  // MODEL3 的表情名是 A/B/C，没有一个叫 "Normal"，所以 normal 也不填。
+  assert.equal(merged.expressions.normal, undefined);
+  assert.equal(resolveExpressionName(merged, 'happy'), 'B');
+  assert.equal(resolveExpressionName(merged, 'normal'), null);
 });
 
 test('缺失语义时返回 null：只播动作，不套表情', () => {
@@ -72,16 +76,17 @@ test('探测阶段不按序号猜语义，探测清单的表情映射始终为�
   assert.deepEqual(m.expressions, {});
 });
 
-test('降级清单只为普通表情兜底，其余语义保持未映射', () => {
+test('降级清单只按名字兜底普通表情，其余语义保持未映射', () => {
   const derived = deriveManifest(MODEL3, { id: 'x' });
   const merged = mergeManifest(null, derived);
-  assert.deepEqual(Object.keys(merged.expressions), ['normal']);
-  assert.equal(merged.expressions.normal, 'A');
+  // MODEL3 的表情名是 A/B/C：没有一个叫 "Normal"，所以**一个都不填**。
+  assert.deepEqual(Object.keys(merged.expressions), []);
+  assert.equal(merged.expressions.normal, undefined);
   // 未映射的语义解析为 null —— 交互层因此只播动作、不套表情。
   assert.equal(resolveExpressionName(merged, 'happy'), null);
   assert.equal(resolveExpressionName(merged, 'angry'), null);
-  // 普通表情仍然有值：唯一被允许的猜测（「普通」不猜错任何情绪）。
-  assert.equal(resolveExpressionName(merged, 'normal'), 'A');
+  // 普通表情也解析为 null：没有就叫 "Normal" 的表情，就不猜。
+  assert.equal(resolveExpressionName(merged, 'normal'), null);
 });
 
 test('没有 pet.json 且模型第一个表情是 Angry 时，摸头不会触发生气', () => {
@@ -96,8 +101,32 @@ test('没有 pet.json 且模型第一个表情是 Angry 时，摸头不会触发
   // 未映射的语义一律不猜：解析为 null → 交互层只播动作、不套表情。
   assert.equal(resolveExpressionName(merged, 'happy'), null);
   assert.equal(resolveExpressionName(merged, 'smile'), null);
-  // 唯一被允许的兜底是「普通表情」——它不猜错情绪，只是可能不是中性脸。
-  assert.equal(resolveExpressionName(merged, 'normal'), 'Angry');
+  // 「普通表情」按**名字**匹配到 Normal——绝不是按序号匹配到 Angry。
+  assert.equal(resolveExpressionName(merged, 'normal'), 'Normal');
+  assert.notEqual(resolveExpressionName(merged, 'normal'), 'Angry');
+});
+
+test('没有 pet.json 且模型没有叫 Normal 的表情时，普通表情也保持未映射', () => {
+  // Haru 的表情名是 F01…F08，没有 "Normal"：降级后空闲只播动作、不套表情，
+  // 而不是硬塞一张「第一个表情」（那是按序号猜，正是要避免的）。
+  const derived = deriveManifest(
+    { FileReferences: { Expressions: [{ Name: 'F01' }, { Name: 'F02' }, { Name: 'F03' }] } },
+    { id: 'haru' }
+  );
+  const merged = mergeManifest(null, derived);
+  assert.equal(resolveExpressionName(merged, 'normal'), null);
+  assert.notEqual(resolveExpressionName(merged, 'normal'), 'F01');
+  assert.deepEqual(Object.keys(merged.expressions), []);
+});
+
+test('按名字兜底普通表情时忽略大小写与首尾空白', () => {
+  const derived = deriveManifest(
+    { FileReferences: { Expressions: [{ Name: ' normal ' }, { Name: 'NORMAL' }] } },
+    { id: 'x' }
+  );
+  const merged = mergeManifest(null, derived);
+  // 匹配到的是模型**自己的**名字（保留原样），不是我们拼出来的 "normal"。
+  assert.equal(resolveExpressionName(merged, 'normal'), ' normal ');
 });
 
 test('清单指定普通表情时以清单为准', () => {
@@ -129,4 +158,66 @@ test('清单未定义动作组时降级为空动作表', () => {
   const m = deriveManifest({ FileReferences: { Expressions: [{ Name: 'A' }] } }, { id: 'x' });
   assert.deepEqual(m.motions, {});
   assert.equal(resolveMotionSpec(m, 'tapHead'), null);
+});
+
+// ---------------------------------------------------------------------------
+// 注册表条目规整：渲染层必须与主进程用同一套推导规则。
+// ---------------------------------------------------------------------------
+
+/** 用一个假的 fetch 跑 loadManifest，并记录它请求过的 URL。 */
+async function loadManifestWithFakeFetch(registry, files) {
+  const requested = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requested.push(url);
+    if (url === '/assets/live2d/index.json') {
+      return new Response(JSON.stringify(registry), { status: 200 });
+    }
+    const body = files?.[url];
+    if (body === undefined) return new Response('', { status: 404 });
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
+  };
+  try {
+    return { manifest: await loadManifest(registry.models[0].id), requested };
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+test('注册表条目缺 manifest 时按 <id>/pet.json 推导，不去取 .../undefined/pet.json', async () => {
+  // 主进程把缺 manifest 的条目规整成 `<id>/pet.json`；
+  // 渲染层若把 entry.manifest 直接拼进 URL，得到的是 `…/undefined/pet.json`
+  // → 404 → 模型静默降级成「没有语义映射」的样子。
+  const { manifest, requested } = await loadManifestWithFakeFetch(
+    { models: [{ id: 'natori', name: 'Natori' }] },
+    {
+      '/assets/live2d/models/natori/pet.json': {
+        id: 'natori',
+        expressions: { normal: 'Normal', happy: 'Smile' },
+      },
+    }
+  );
+  assert.ok(
+    !requested.some((u) => u.includes('undefined')),
+    `不应请求 undefined 路径，实际请求：${requested.join(', ')}`
+  );
+  assert.ok(requested.includes('/assets/live2d/models/natori/pet.json'));
+  // 清单真的被读到了：语义映射来自 pet.json，而不是降级。
+  assert.equal(manifest.derived, false);
+  assert.equal(manifest.expressions.normal, 'Normal');
+  assert.equal(manifest.expressions.happy, 'Smile');
+});
+
+test('注册表条目的 id 两侧都 trim：带空格的条目也能被找到', async () => {
+  // 主进程读注册表时会 trim id；渲染层若拿原始的 m.id 去比，
+  // 两边就指的不是同一个形象（设置窗口显示一个、桌面上跑另一个）。
+  const { manifest } = await loadManifestWithFakeFetch(
+    { models: [{ id: ' natori ', name: 'Natori', manifest: 'natori/pet.json' }] },
+    {
+      '/assets/live2d/models/natori/pet.json': { id: 'natori', expressions: { normal: 'Normal' } },
+    }
+  );
+  assert.equal(manifest.id, 'natori');
+  assert.equal(manifest.derived, false);
 });

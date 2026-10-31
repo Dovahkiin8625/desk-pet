@@ -1760,7 +1760,7 @@ export function deriveManifest(model3, opts = {}) {
 
   // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
   // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
-  // 猜不准就不猜：留空，由 resolveExpressionName 回退到第一个可用表情。
+  // 猜不准就不猜：留空，由 resolveExpressionName 返回 null（只播动作、不套表情）。
   const derived = {};
 
   const groupNames = Object.keys(motionGroups);
@@ -1791,13 +1791,16 @@ export function deriveManifest(model3, opts = {}) {
 export function mergeManifest(base, derived) {
   const expressions = { ...(derived?.expressions || {}), ...(base?.expressions || {}) };
   const motions = { ...(derived?.motions || {}), ...(base?.motions || {}) };
-  // 降级时**只**补 normal，且取 availableExpressions[0]——与 resolveExpressionName
-  // 的回退是同一个值，行为一致。
-  // 刻意不按序号补其它语义：Haru 的 expressions[1] 是 F02，而清单里 F02 是 angry，
+  // 降级时**只**补 normal，而且**按名字**补：只认模型里叫 "Normal" 的表情。
+  // 刻意不按序号补任何语义：Haru 的 expressions[1] 是 F02，而清单里 F02 是 angry，
   // 按序号猜会让「摸头」触发生气的表情。猜不准比不猜更糟。
+  // 名字也匹配不上就留空（Haru 的表情名是 F01…F08）：未映射的语义
+  // 在 resolveExpressionName 里返回 null，交互层就只播动作、不套表情。
   if (!expressions.normal) {
-    const first = derived?.availableExpressions?.[0];
-    if (first) expressions.normal = first;
+    const named = (derived?.availableExpressions || []).find(
+      (n) => typeof n === 'string' && n.trim().toLowerCase() === 'normal'
+    );
+    if (named) expressions.normal = named;
   }
   return {
     ...derived,
@@ -1844,10 +1847,19 @@ export async function loadManifest(modelId) {
     console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
   }
   const models = Array.isArray(registry.models) ? registry.models : [];
-  const entry = models.find((m) => m.id === modelId) || models[0];
+  // id 两边都要 trim：主进程读注册表时会 trim，渲染层若拿原始的 m.id 去比，
+  // 两边就指的不是同一个形象。
+  const wanted = typeof modelId === 'string' ? modelId.trim() : '';
+  const entry =
+    models.find((m) => typeof m?.id === 'string' && m.id.trim() === wanted) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
+  const entryId = typeof entry.id === 'string' ? entry.id.trim() : '';
 
-  const manifestUrl = `/assets/live2d/models/${entry.manifest}`;
+  // 注册表条目缺 manifest 时按与主进程**完全相同**的规则推导：`<id>/pet.json`。
+  // 直接把 entry.manifest 拼进 URL 会得到 `…/undefined/pet.json` → 404 →
+  // 模型静默降级成「没有语义映射」的样子。
+  const manifestPath = entry.manifest || `${entryId}/pet.json`;
+  const manifestUrl = `/assets/live2d/models/${manifestPath}`;
   let base = null;
   try {
     const res = await fetch(manifestUrl);
@@ -2320,13 +2332,14 @@ test('清单优先于探测值', () => {
   assert.equal(merged.expressions.happy, 'B');
   assert.equal(merged.motions.tapHead.group, 'TapBody');
   assert.equal(merged.motions.tapHead.index, 2);
-  // 清单未覆盖的语义保留探测值
-  assert.ok(merged.expressions.normal);
+  // 清单没写的语义保持未映射：探测阶段不猜语义。
+  // MODEL3 的表情名是 A/B/C，没有一个叫 "Normal"，所以 normal 也不填。
+  assert.equal(merged.expressions.normal, undefined);
 });
 
-test('缺失语义时回退到第一个可用表情', () => {
+test('缺失语义时返回 null：只播动作，不套表情', () => {
   const m = deriveManifest(MODEL3, { id: 'x' });
-  assert.equal(resolveExpressionName(m, 'happy'), 'A');
+  assert.equal(resolveExpressionName(m, 'happy'), null);
 });
 
 test('模型完全没有表情时返回 null', () => {
