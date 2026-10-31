@@ -1633,7 +1633,10 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
     // 所以先用一次性普通窗口探测「这个环境是否支持置顶」，
     // 不支持就跳过这条断言——而不是让整套测试因为环境而变红。
     const topmostSupported = await ctx.app.evaluate(({ BrowserWindow }) => {
-      const probe = new BrowserWindow({ show: false, width: 80, height: 60 });
+      // 探测窗口必须与真实桌宠窗口**同形**：已显示 + 构造参数 alwaysOnTop。
+      // 用「隐藏且不带构造参数」的窗口去探测，在真实窗口其实能置顶的环境里
+      // 也会返回 false——那会让这条断言静默退化成空操作，套件全绿却什么都没断言。
+      const probe = new BrowserWindow({ show: true, alwaysOnTop: true, width: 80, height: 60 });
       probe.setAlwaysOnTop(true);
       const ok = probe.isAlwaysOnTop();
       probe.destroy();
@@ -1644,6 +1647,9 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
         BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
       );
       expect(alwaysOnTop).toBe(true);
+    } else {
+      // 跳过也要留痕：否则「绿色的套件」可能只是因为断言没跑。
+      console.warn('[e2e] 当前 Windows 会话不支持置顶，已跳过置顶断言');
     }
   } finally {
     await ctx.close();
