@@ -37,7 +37,7 @@ npm start       # 启动桌宠
 > `npm run setup` 下载的是 Live2D 官方样例素材，**限非商业用途**；
 > Cubism Core（运行时从 `node_modules` 加载）是 Live2D 专有许可代码。
 > 详见 [NOTICE](./NOTICE)。
-
+>
 > **模型二进制不在版本库里。** 仓库只提交手写的 `pet.json` 清单，
 > Haru / Natori 的 `.moc3`、贴图、动作等二进制由 `npm run setup` 下载。
 > 全新克隆的仓库必须先跑一次 `npm run setup`，否则桌宠窗口里没有任何模型。
@@ -56,7 +56,7 @@ npm test            # 全部
 
 ## 目录结构
 
-```
+```text
 src/main/       主进程：窗口、托盘、菜单、设置持久化、多显示器
 src/preload/    contextBridge 白名单 API
 src/renderer/   渲染层：pixi + Live2D 模型与交互
