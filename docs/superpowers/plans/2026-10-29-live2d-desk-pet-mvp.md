@@ -1464,6 +1464,8 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
+let appliedOpacity = null;
 // 拖拽中的期望位置（未夹紧）。见 onMoveBy 的说明。
 let desiredPosition = null;
 // 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
@@ -3823,7 +3825,12 @@ function openSettings() {
 ```js
 function persist(patch) {
   settings = sanitizeSettings({ ...settings, ...patch });
-  if (win && !win.isDestroyed()) applySettingsToWindow(win, settings);
+  // 只有透明度真的变了才调原生接口：persist 在拖拽的每一帧都会被调用，
+  // 而拖拽过程中透明度根本不变——每次都发一次 win.setOpacity() 是在最热的路径上做无用功。
+  if (win && !win.isDestroyed() && settings.opacity !== appliedOpacity) {
+    applySettingsToWindow(win, settings);
+    appliedOpacity = settings.opacity;
+  }
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
