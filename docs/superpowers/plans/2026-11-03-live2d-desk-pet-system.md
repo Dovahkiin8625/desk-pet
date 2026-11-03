@@ -1499,15 +1499,58 @@ test('快捷键注册成功：落盘新组合并注销旧的', () => {
         },
         unregister: (acc) => unregistered.push(acc),
         unregisterAll: () => {},
-        isRegistered: () => true,
+        isRegistered: () => false,
       },
     },
   });
   controller.init(settings);
   controller.setHotkey('Control+Alt+P');
-  assert.deepEqual(registered, ['Control+Alt+P']);
+  // init 已经按规格注册了 settings.hotkey，这里再注册新组合——
+  // 两次都在列表里，顺序也反映了真实发生的事。
+  assert.deepEqual(registered, ['Control+Shift+D', 'Control+Alt+P']);
   assert.deepEqual(unregistered, ['Control+Shift+D']);
   assert.equal(settings.hotkey, 'Control+Alt+P');
+});
+
+test('启动时按 settings.hotkey 注册一次', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  assert.deepEqual(registered, ['Control+Shift+D']);
+});
+
+test('裸键被 setHotkey 拒绝：不会注册成全局裸键', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  registered.length = 0;
+  assert.equal(controller.setHotkey('D'), false);
+  assert.deepEqual(registered, []);
+  assert.equal(controller.getState().hotkeyStatus.state, 'error');
 });
 
 test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
@@ -1790,17 +1833,54 @@ export function buildAccelerator(input) {
   把 Task 4 里 `let hotkeyStatus = { ... };` 那一行后面补上这个函数
   （放在 `getState()` 之前即可）。
 
-- `init(settings)` 里加一行（穿透模式之后）：
+- `init(settings)` 里加一段（穿透模式之后）：
 
 ```js
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
+    //
+    // **无条件注册**：进程刚起时这个组合不可能已经被本进程注册过，
+    // 加一道「已注册就不注册」的守卫反而会让「启动时注册一次」这条规格
+    // 变得没法验证——而那条守卫唯一能到达的状态只有测试替身造得出来。
     if (settings.hotkey) {
       const result = registerShortcut(settings.hotkey);
+      if (result === 'ok') {
+        setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
+      } else {
+        // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
+        // 而终端里什么也没有。
+        console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText(result));
+        setHotkeyStatus({
+          state: 'error',
+          accelerator: settings.hotkey,
+          error: shortcutErrorText(result),
+        });
+      }
+    }
+```
+
+- `setHotkey` 入口加一道修饰键校验（规格 §4.3①）：
+
+```js
+  /** 加速键串里至少要有一个修饰键。 */
+  function hasModifier(accelerator) {
+    return /(^|\+)(Control|Ctrl|Alt|Shift|Super|Command|Meta)(\+|$)/i.test(accelerator);
+  }
+```
+
+  在 `setHotkey` 里，`if (typeof accelerator !== 'string' || accelerator === '') return false;` 之后加：
+
+```js
+    // 必须至少一个修饰键：裸键注册是全局的，会劫持用户的字母键
+    // （规格 §4.3①）。buildAccelerator 已经保证过，这里再挡一道——
+    // 因为 setHotkey 可能被别的通道直接调用。
+    if (!hasModifier(accelerator)) {
+      recording = false;
       setHotkeyStatus({
-        state: result === 'ok' ? 'ok' : 'error',
-        accelerator: settings.hotkey,
-        error: result === 'ok' ? '' : shortcutErrorText(result),
+        state: 'error',
+        accelerator: current,
+        error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
       });
+      return false;
     }
 ```
 
@@ -1862,6 +1942,38 @@ export function buildAccelerator(input) {
 > 这三个实现**必须与 `ipc.js` 里的通道注册在同一个任务里**：
 > 只注册通道而不给实现，`registerIpc` 解构出来的是 `undefined`，
 > 通道一旦被调用就会抛「getSystemState is not a function」。
+
+再加两处接线（都在 `src/main/index.js`）：
+
+**退出时注销快捷键**（规格 §4.6）——`app.on('before-quit', flushPendingSave);` 之后：
+
+```js
+// 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
+// 下次启动注册不上。
+app.on('will-quit', () => system?.dispose?.());
+```
+
+**接上快捷键录制的按键捕获**——`openSettings()` 里，`settingsWin.loadURL(...)` **之前**：
+
+```js
+  // 快捷键录制：主进程接管按键捕获。
+  //
+  // 用 before-input-event 而不是渲染层的 keydown：它给的是
+  // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
+  // 而且能 preventDefault——不然那一次按键会漏进页面的输入框
+  // （规格 §4.3②）。
+  settingsWin.webContents.on('before-input-event', (event, input) => {
+    if (!system?.isRecording?.()) return;
+    event.preventDefault();
+    system.handleInput(input);
+  });
+```
+
+> 没有这一段，录制的按键就送不到控制器——设置窗口能点「录制」进入录制态，
+> 但按下的键没有通道能进去，**录制无法完成，用户也就无法真正改快捷键**。
+>
+> 设置窗口关掉再打开时 `openSettings()` 会新建一个窗口，监听器随之重建，
+> 不会重复注册。
 
 - [ ] **Step 8: 跑测试确认通过**
 
@@ -2152,13 +2264,8 @@ function showContextMenu() {
   refreshTrayMenu();
 ```
 
-6. `app.on('before-quit', flushPendingSave);` 之后加：
-
-```js
-// 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
-// 下次启动注册不上。
-app.on('will-quit', () => system?.dispose?.());
-```
+> 退出时注销快捷键的 `will-quit` 钩子**在 Task 5 就接好了**（规格 §4.6），
+> 本任务不用再加一遍。
 
 - [ ] **Step 6: 跑单元测试确认通过**
 
@@ -3107,24 +3214,11 @@ for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox])
  * @param {'appearance'|'assistant'|'voice'|'chat'|'memory'|'system'} key 分区 key
 ```
 
-- [ ] **Step 6: 主进程捕获快捷键按键**
+- [ ] **Step 6: 主进程侧的快捷键状态推送**
 
-`src/main/index.js`，在 `openSettings()` 里，`settingsWin.loadURL(...)` 之前加：
+`src/main/index.js`：
 
-```js
-  // 快捷键录制：主进程接管按键捕获。
-  //
-  // 用 before-input-event 而不是渲染层的 keydown：它给的是
-  // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
-  // 而且能 preventDefault——不然那一次按键会漏进页面的输入框。
-  settingsWin.webContents.on('before-input-event', (event, input) => {
-    if (!system?.isRecording?.()) return;
-    event.preventDefault();
-    system.handleInput(input);
-  });
-```
-
-并在 `createSystemController` 的参数里加：
+`createSystemController` 的 `onHotkeyStatus` 注入项（Task 4 留的位、Task 5 用的）在这里接上实现：
 
 ```js
     onHotkeyStatus: (status) => {
@@ -3134,8 +3228,9 @@ for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox])
     },
 ```
 
-> `onHotkeyStatus` 这个注入项在 Task 4 就已经加进 `createSystemController` 的参数解构里了
-> （Task 5 用它发状态），这里只是把实现接上。
+> **按键捕获本身（`before-input-event`）在 Task 5 就接好了**——
+> 没有它，录制的按键送不到控制器，录制无法完成。
+> 本任务只补「状态送回设置窗口」这一半。
 
 - [ ] **Step 7: 跑端到端测试确认通过**
 
