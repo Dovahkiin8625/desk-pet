@@ -45,6 +45,16 @@ const llmProactiveIntervalSelect = document.getElementById('llmProactiveInterval
 const llmFactsList = document.getElementById('llmFacts');
 const clearFactsBtn = document.getElementById('clearFacts');
 
+// 系统
+const autoLaunchBox = document.getElementById('autoLaunch');
+const clickThroughBox = document.getElementById('clickThrough');
+const edgeSnapBox = document.getElementById('edgeSnap');
+const dockEnabledBox = document.getElementById('dockEnabled');
+const hotkeyInput = document.getElementById('hotkeyValue');
+const recordHotkeyBtn = document.getElementById('recordHotkey');
+const hotkeyHint = document.getElementById('hotkeyHint');
+const systemError = document.getElementById('systemError');
+
 /**
  * 状态栏。
  *
@@ -102,8 +112,8 @@ function setRangeFill(input) {
 // 左边是目录，右边一次只显示一节。
 // ---------------------------------------------------------------------------
 
-/** 五个分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['appearance', 'assistant', 'voice', 'chat', 'memory'];
+/** 六个分区：目录项、面板、摘要都用同一个 key。 */
+const SECTION_KEYS = ['appearance', 'assistant', 'voice', 'chat', 'memory', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -141,6 +151,8 @@ function activateSection(key, { focus = false } = {}) {
   if (focus) navTabs.get(key).focus();
   // 事实列表会过期：在插件面板里聊一句，桌宠就可能多记住一条。
   if (key === 'memory') void refreshFacts();
+  // 系统状态也会过期：开机自启可能写注册表失败了，快捷键可能被别人占了。
+  if (key === 'system') void refreshSystemState();
 }
 
 for (const key of SECTION_KEYS) {
@@ -205,6 +217,16 @@ function refreshNavSummaries() {
   setSummary('chat', llmEnabledBox.checked ? (llmKey ? '已开' : '缺 Key') : '已关');
 
   setSummary('memory', `${llmFactsList.children.length} 条`);
+
+  // 系统：五项里开了几项（快捷键非空即算「开」）。
+  const systemFlags = [
+    autoLaunchBox.checked,
+    Boolean(hotkeyInput.value.trim()),
+    clickThroughBox.checked,
+    edgeSnapBox.checked,
+    dockEnabledBox.checked,
+  ];
+  setSummary('system', `${systemFlags.filter(Boolean).length}/${systemFlags.length}`);
 }
 
 // init() 完成之前收到的广播：先记下来，等初始化结束时统一应用。
@@ -535,6 +557,119 @@ clearFactsBtn.addEventListener('click', async () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// 系统分区
+//
+// 这一区的五项（开机自启、全局快捷键、鼠标穿透、边缘吸附、贴边隐藏）
+// 全部由**主进程**说了算：界面不另存一份状态，只把主进程报上来的
+// 状态显示出来，改动也只是转发过去。
+// ---------------------------------------------------------------------------
+
+/** 主进程报上来的快捷键状态。 */
+let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+
+/**
+ * 用户改动开关的时刻。
+ *
+ * 用来丢弃「改动之前发起的状态拉取」：拉回来的状态是旧的，
+ * 套上去会把用户刚点下的勾选框又拨回去。
+ */
+let systemEditEpoch = 0;
+
+/** 把主进程报上来的系统状态填进控件。 */
+function applySystemState(state) {
+  if (!state) return;
+  autoLaunchBox.checked = Boolean(state.autoLaunch);
+  clickThroughBox.checked = Boolean(state.clickThrough);
+  edgeSnapBox.checked = state.edgeSnap !== false;
+  dockEnabledBox.checked = Boolean(state.dockEnabled);
+  if (typeof state.hotkey === 'string' && state.hotkey) {
+    hotkeyInput.value = state.hotkey;
+  }
+  if (state.hotkeyStatus) hotkeyStatus = state.hotkeyStatus;
+  applyHotkeyStatus();
+  // 系统级失败的原因（开机自启写注册表失败之类）。
+  // 「失败必须留痕 + 在界面上说得出来」那半的载体——只有终端日志用户看不见。
+  if (state.lastError) {
+    systemError.textContent = state.lastError;
+    systemError.hidden = false;
+  } else {
+    systemError.textContent = '';
+    systemError.hidden = true;
+  }
+  refreshNavSummaries();
+}
+
+/**
+ * 重新拉一次主进程的系统状态。
+ *
+ * 切到「系统」分区、以及任何设置广播到达时都要拉：
+ * 勾选框可能是在**别的窗口**里改的（托盘菜单里切穿透），
+ * 而失败原因（lastError）只在主进程的状态里。
+ */
+async function refreshSystemState() {
+  const epoch = systemEditEpoch;
+  try {
+    const state = await window.pet.getSystemState?.();
+    // 拉取期间用户改了开关：这次拉回来的是旧状态，别盖掉用户的操作。
+    if (epoch !== systemEditEpoch) return;
+    applySystemState(state);
+  } catch {
+    // 拉不到就保留页面上已有的值，别把界面清空。
+  }
+}
+
+/** 快捷键那一行的文字：按钮文案 + 说明行。 */
+function applyHotkeyStatus() {
+  if (hotkeyStatus.state === 'recording') {
+    recordHotkeyBtn.textContent = '请按下组合键…（Esc 取消）';
+    hotkeyHint.textContent = '按下 Ctrl / Alt / Shift 加一个键。';
+    return;
+  }
+  recordHotkeyBtn.textContent = '重新录制';
+  if (hotkeyStatus.state === 'error') {
+    hotkeyHint.textContent = hotkeyStatus.error || '这个组合不能用了，原来的组合仍然有效。';
+    return;
+  }
+  if (hotkeyStatus.state === 'ok' && hotkeyStatus.accelerator) {
+    hotkeyHint.textContent = `已生效：${hotkeyStatus.accelerator}`;
+    return;
+  }
+  hotkeyHint.textContent = '呼出 / 隐藏桌宠。被别的程序占用时这里会写明。';
+}
+
+/** 录快捷键：主进程接管按键捕获（before-input-event）。 */
+recordHotkeyBtn.addEventListener('click', async () => {
+  if (hotkeyStatus.state === 'recording') {
+    await window.pet.cancelHotkeyRecording?.();
+    return;
+  }
+  try {
+    await window.pet.recordHotkey?.();
+  } catch (err) {
+    show(`录制失败：${err?.message || err}`, 'error');
+  }
+});
+
+for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox]) {
+  box.addEventListener('change', async () => {
+    systemEditEpoch += 1;
+    refreshNavSummaries();
+    try {
+      // 四个勾选框一起存：saveSettings 是整份设置对象的浅合并补丁，
+      // 四个字段一起送过去省得漏。
+      await window.pet.saveSettings({
+        autoLaunch: autoLaunchBox.checked,
+        clickThrough: clickThroughBox.checked,
+        edgeSnap: edgeSnapBox.checked,
+        dockEnabled: dockEnabledBox.checked,
+      });
+    } catch (err) {
+      show(`保存失败：${err?.message || err}`, 'error');
+    }
+  });
+}
+
 async function init() {
   // 先挂监听再取数据：设置可能在读取期间就变了，漏掉的那次广播
   // 会让界面停在旧值上。
@@ -545,15 +680,30 @@ async function init() {
     if (typeof s.modelId === 'string') setModel(s.modelId);
     if (typeof s.scale === 'number') updateScale(s.scale);
     if (typeof s.opacity === 'number') updateOpacity(s.opacity);
+    if (typeof s.autoLaunch === 'boolean') autoLaunchBox.checked = s.autoLaunch;
+    if (typeof s.clickThrough === 'boolean') clickThroughBox.checked = s.clickThrough;
+    if (typeof s.edgeSnap === 'boolean') edgeSnapBox.checked = s.edgeSnap;
+    if (typeof s.dockEnabled === 'boolean') dockEnabledBox.checked = s.dockEnabled;
+    // 系统状态可能变了（比如开机自启写注册表失败、开关被回退）：
+    // 广播里带的是**设置**，不是系统状态——重新拉一次才能拿到 lastError。
+    void refreshSystemState();
     refreshNavSummaries();
   });
 
-  const [settings, models, assistantState, tts, llm] = await Promise.all([
+  // 快捷键状态：录制中 / 成功 / 失败。
+  window.pet.onHotkeyStatus?.((status) => {
+    if (!status) return;
+    hotkeyStatus = status;
+    applyHotkeyStatus();
+  });
+
+  const [settings, models, assistantState, tts, llm, systemState] = await Promise.all([
     window.pet.getSettings(),
     window.pet.listModels(),
     window.pet.getAssistantState(),
     window.pet.getTtsStatus(),
     window.pet.getLlmStatus(),
+    window.pet.getSystemState(),
   ]);
   // 下拉框照填不误——它所在的分区是不是当前分区，与填充无关。
   // （改成「切到外观分区才填」会让 setModel 的竞态兜底失效，
@@ -578,6 +728,7 @@ async function init() {
   updateScale(latest.scale);
   updateOpacity(latest.opacity);
   applyAssistantState(assistantState);
+  applySystemState(systemState);
   showKeyStatus(tts);
   showLlmKeyStatus(llm);
   refreshNavSummaries();

@@ -208,6 +208,15 @@
 
     /* ---------- 说明与状态 ---------- */
     .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+    /* 系统级失败的提示：它要说清「是什么事、为什么」。 */
+    .hint.error {
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      border-radius: var(--radius-sm);
+      padding: 6px 9px;
+      margin: 0 0 var(--gap);
+    }
     .mask { color: var(--ok); font-size: 12px; }
     .facts {
       list-style: none; margin: 0 0 14px; padding: 0;
@@ -307,6 +316,12 @@
                 aria-selected="false" tabindex="-1">
           <span class="nav-label">记忆</span>
           <span class="nav-summary" data-summary="memory">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-system" role="tab"
+                data-section="system" aria-controls="panel-system"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">系统</span>
+          <span class="nav-summary" data-summary="system">—</span>
         </button>
       </nav>
 
@@ -524,6 +539,54 @@
             <button type="button" id="clearFacts" class="btn danger">忘掉这些</button>
           </div>
           <p class="hint">点「忘掉这些」就全清了。</p>
+        </section>
+
+        <section class="panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>
+          <h1>系统</h1>
+          <p class="panel-sub">开机自启、快捷键、穿透与贴边——这些是桌宠与系统的关系。</p>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="autoLaunch">
+            <label for="autoLaunch">
+              <span class="t-label">开机自启</span>
+              <span class="t-hint">登录 Windows 后自动启动桌宠</span>
+            </label>
+          </div>
+
+          <p class="hint error" id="systemError" hidden></p>
+
+          <div class="field stack">
+            <label for="hotkeyValue">全局快捷键</label>
+            <div class="control inline">
+              <input type="text" id="hotkeyValue" readonly placeholder="未设置">
+              <button type="button" id="recordHotkey" class="btn">重新录制</button>
+            </div>
+            <p class="hint" id="hotkeyHint">呼出 / 隐藏桌宠。被别的程序占用时这里会写明。</p>
+          </div>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="clickThrough">
+            <label for="clickThrough">
+              <span class="t-label">鼠标穿透</span>
+              <span class="t-hint">开启后点不到桌宠，桌面照常操作</span>
+            </label>
+          </div>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="edgeSnap">
+            <label for="edgeSnap">
+              <span class="t-label">边缘吸附</span>
+              <span class="t-hint">拖到屏幕边缘时自动贴齐</span>
+            </label>
+          </div>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="dockEnabled">
+            <label for="dockEnabled">
+              <span class="t-label">贴边隐藏</span>
+              <span class="t-hint">贴齐后滑出屏幕，只留一条边；拖那条边可以把它拉回来</span>
+            </label>
+          </div>
         </section>
       </main>
     </div>

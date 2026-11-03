@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { launchApp, collectErrors, launchWithAssistantState, gotoSection, PET_WINDOW_URL } from './helpers.js';
+import { launchApp, collectErrors, launchWithAssistantState, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
 
 /**
  * 收集渲染层与设置页的未捕获异常与 console.error。
@@ -532,7 +532,7 @@ test('设置窗口按分区显示：一次只显示一个区', async () => {
     const settingsWin = await openSettingsWindow(ctx);
     collectErrors(settingsWin, errors);
 
-    const keys = ['appearance', 'assistant', 'voice', 'chat', 'memory'];
+    const keys = ['appearance', 'assistant', 'voice', 'chat', 'memory', 'system'];
     for (const key of keys) {
       await gotoSection(settingsWin, key);
       for (const other of keys) {
@@ -614,6 +614,140 @@ test('方向键可以在分区之间移动', async () => {
     await settingsWin.waitForSelector('#panel-assistant', { state: 'visible', timeout: 10000 });
     expect(await settingsWin.locator('#tab-assistant').getAttribute('aria-selected')).toBe('true');
     expect(await settingsWin.locator('#tab-appearance').getAttribute('aria-selected')).toBe('false');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('设置窗口有「系统」分区，开关能落到 settings.json', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'system');
+
+    // 开机自启：勾上 → 落盘。
+    await settingsWin.locator('#autoLaunch').check();
+    await settingsWin.waitForFunction(
+      () => document.getElementById('autoLaunch').checked === true,
+      null,
+      { timeout: 5000 },
+    );
+
+    // 鼠标穿透：勾上 → 主进程上报的状态跟着变。
+    await settingsWin.locator('#clickThrough').check();
+    const state = await waitForSystemState(ctx, (s) => s.clickThroughActive === true);
+    expect(state.clickThroughActive, '鼠标穿透应当生效').toBe(true);
+
+    // 边缘吸附 / 贴边隐藏：落盘。
+    await settingsWin.locator('#dockEnabled').check();
+
+    // 落盘：设置的写入是防抖的，轮询等它。
+    let saved = null;
+    for (let i = 0; i < 40; i += 1) {
+      try {
+        saved = JSON.parse(await readFile(join(ctx.userDataDir, 'settings.json'), 'utf8'));
+      } catch {
+        saved = null;
+      }
+      if (saved?.autoLaunch === true && saved?.clickThrough === true && saved?.dockEnabled === true) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(saved?.autoLaunch, '开机自启应当落盘').toBe(true);
+    expect(saved?.clickThrough, '鼠标穿透应当落盘').toBe(true);
+    expect(saved?.dockEnabled, '贴边隐藏应当落盘').toBe(true);
+    expect(saved?.edgeSnap, '边缘吸附默认开着').toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('「系统」分区的摘要在目录上显示', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await settingsWin.waitForFunction(
+      () => document.querySelector('[data-summary="system"]').textContent.trim() !== '—',
+      null,
+      { timeout: 10000 },
+    );
+    const summary = (await settingsWin.locator('[data-summary="system"]').textContent()).trim();
+    // 默认：只有「快捷键」与「边缘吸附」是开的。
+    expect(summary).toBe('2/5');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('「系统」分区把主进程报上来的失败原因显示出来', async () => {
+  const ctx = await launchApp();
+  try {
+    // 让主进程报一个失败原因（开机自启写注册表失败之类）。
+    // 失败必须**在界面上说得出来**：只留在终端日志里，用户根本看不见。
+    const patched = await ctx.app.evaluate(({ ipcMain }) => {
+      const orig = ipcMain._invokeHandlers?.get('pet:getSystemState');
+      if (!orig) return false;
+      ipcMain.removeHandler('pet:getSystemState');
+      ipcMain.handle('pet:getSystemState', async (...args) => {
+        const state = await orig(...args);
+        return { ...state, lastError: '开机自启开启失败：写入注册表被拒绝' };
+      });
+      return true;
+    });
+    // 用的是 Electron 的内部 API（ipcMain._invokeHandlers）：
+    // 一旦 Electron 改名，这条用例就失去意义了——宁可报错，也不要静默跳过。
+    expect(patched, 'ipcMain._invokeHandlers 不可用，这条用例需要重写').toBe(true);
+
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'system');
+    await settingsWin.waitForFunction(
+      () => {
+        const el = document.getElementById('systemError');
+        return el && !el.hidden && el.textContent.includes('开机自启');
+      },
+      null,
+      { timeout: 10000 },
+    );
+    const shown = (await settingsWin.locator('#systemError').textContent()).trim();
+    expect(shown).toContain('开机自启开启失败：写入注册表被拒绝');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('「系统」分区能进入快捷键录制，状态由主进程推回来', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'system');
+
+    await settingsWin.click('#recordHotkey');
+    await settingsWin.waitForFunction(
+      () => document.getElementById('recordHotkey').textContent.includes('请按下组合键'),
+      null,
+      { timeout: 10000 },
+    );
+    // 录制中：说明行要告诉用户该按什么，而不是只把按钮换个样子。
+    expect(await settingsWin.locator('#hotkeyHint').textContent()).toContain('Ctrl');
+    // 录制的状态是主进程说了算的：它推回来「正在录」。
+    const recording = await settingsWin.evaluate(async () =>
+      (await window.pet.getSystemState()).hotkeyStatus
+    );
+    expect(recording.state, '主进程应当处于录制态').toBe('recording');
+
+    // 取消录制（主进程收到 Esc 时走的就是这条路）。
+    //
+    // 这里不按 Esc：Playwright 的合成按键只走渲染进程，
+    // 不经过主进程的 before-input-event——主进程根本收不到那一次按键。
+    // 「Esc 取消」本身由单元测试覆盖（test/unit/system.test.js「录制：Esc 取消」），
+    // 这条用例管的是**主进程的状态推回来时界面怎么变**。
+    await settingsWin.evaluate(() => window.pet.cancelHotkeyRecording());
+    await settingsWin.waitForFunction(
+      () => document.getElementById('recordHotkey').textContent.trim() === '重新录制',
+      null,
+      { timeout: 10000 },
+    );
   } finally {
     await ctx.close();
   }

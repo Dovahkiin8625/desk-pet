@@ -485,7 +485,7 @@ export async function waitForPetVisible(ctx, visible, timeout = 5000) {
  * 但仍要确认面板真的可见，失败时给出的信息也更明确。
  *
  * @param {import('@playwright/test').Page} page 设置窗口的页面对象
- * @param {'appearance'|'assistant'|'voice'|'chat'|'memory'} key 分区 key
+ * @param {'appearance'|'assistant'|'voice'|'chat'|'memory'|'system'} key 分区 key
  */
 export async function gotoSection(page, key) {
   await page.locator(`#nav .nav-tab[data-section="${key}"]`).click();
