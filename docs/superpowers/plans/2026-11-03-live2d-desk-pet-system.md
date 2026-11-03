@@ -2182,9 +2182,27 @@ export function menuTemplate(actions) {
 > 开机自启失败时 `lastError` 要靠这条广播送到设置窗口。
 > 本任务只是**再加**托盘菜单的重建。
 
-2. 加托盘菜单重建函数（放在 `openSettings` 之后）：
+2. 加托盘菜单重建函数与**共用的动作表**（放在 `openSettings` 之后）：
 
 ```js
+/**
+ * 托盘菜单与右键菜单共用的动作表。
+ *
+ * 两处各写一份的后果很具体：加一个动作要改两处，
+ * 漏一处就是「托盘菜单里那个项点了没反应」。
+ */
+function menuActions() {
+  return {
+    toggleVisible,
+    openSettings,
+    quit: () => app.quit(),
+    toggleClickThrough: () => system?.toggleClickThrough?.(),
+    isClickThrough: () => settings?.clickThrough === true,
+    isDocked: () => system?.getState?.().dock != null,
+    retrievePet: () => system?.retrievePet?.(),
+  };
+}
+
 /**
  * 重建托盘菜单。
  *
@@ -2193,17 +2211,7 @@ export function menuTemplate(actions) {
  */
 function refreshTrayMenu() {
   if (!tray) return;
-  tray.setContextMenu(
-    buildTrayMenu({
-      toggleVisible,
-      openSettings,
-      quit: () => app.quit(),
-      toggleClickThrough: () => system?.toggleClickThrough?.(),
-      isClickThrough: () => settings?.clickThrough === true,
-      isDocked: () => system?.getState?.().dock != null,
-      retrievePet: () => system?.retrievePet?.(),
-    })
-  );
+  tray.setContextMenu(buildTrayMenu(menuActions()));
 }
 ```
 
@@ -2230,15 +2238,7 @@ function toggleVisible() {
 ```js
 function showContextMenu() {
   if (!win) return;
-  buildContextMenu({
-    toggleVisible,
-    openSettings,
-    quit: () => app.quit(),
-    toggleClickThrough: () => system?.toggleClickThrough?.(),
-    isClickThrough: () => settings?.clickThrough === true,
-    isDocked: () => system?.getState?.().dock != null,
-    retrievePet: () => system?.retrievePet?.(),
-  }).popup({ window: win });
+  buildContextMenu(menuActions()).popup({ window: win });
 }
 ```
 
@@ -2317,33 +2317,47 @@ Expected: PASS。
 
 - [ ] **Step 8: 写端到端测试**
 
+先在 `test/e2e/helpers.js` 里加一个轮询助手（**Task 8 的用例也要用**）：
+
+```js
+/**
+ * 轮询主进程上报的系统状态，直到满足条件（或超时）。返回最后一次的状态。
+ *
+ * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
+ * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
+ * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
+ * 那条坑会让「等状态变成 true」这种断言变成恒真。
+ */
+export async function waitForSystemState(ctx, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let state = null;
+  for (;;) {
+    state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    if (predicate(state)) return state;
+    if (Date.now() >= deadline) return state;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+```
+
 `test/e2e/system.spec.js` 末尾追加：
 
 ```js
-test('穿透模式：打开后主进程上报穿透状态，窗口不吃点击', async () => {
+test('穿透模式：打开后主进程上报穿透状态', async () => {
   const ctx = await launchApp();
   try {
     const before = await ctx.win.evaluate(() => window.pet.getSystemState());
     expect(before.clickThroughActive).toBe(false);
 
     await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: true }));
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === true,
-      null,
-      { timeout: 10000 },
-    );
-
-    const after = await ctx.win.evaluate(() => window.pet.getSystemState());
-    expect(after.clickThrough).toBe(true);
-    expect(after.clickThroughActive).toBe(true);
+    const after = await waitForSystemState(ctx, (s) => s.clickThroughActive === true);
+    expect(after.clickThrough, '穿透应当被打开').toBe(true);
+    expect(after.clickThroughActive, '穿透应当真的生效了').toBe(true);
 
     // 关掉：点击要还给窗口。
     await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: false }));
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === false,
-      null,
-      { timeout: 10000 },
-    );
+    const off = await waitForSystemState(ctx, (s) => s.clickThroughActive === false);
+    expect(off.clickThroughActive, '穿透应当被关掉').toBe(false);
   } finally {
     await ctx.close();
   }
@@ -2913,7 +2927,14 @@ git commit -m "feat(edge-dock): 边缘吸附与贴边停靠接进拖拽"
 
 - [ ] **Step 1: 写端到端测试**
 
-`test/e2e/settings.spec.js` 的 import 行加上 `gotoSection`（已有）。在文件末尾追加：
+`test/e2e/settings.spec.js` 的 import 行加上 `waitForSystemState`（Task 6 加在
+`test/e2e/helpers.js` 里的那个轮询助手）：
+
+```js
+import { launchApp, collectErrors, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
+```
+
+在文件末尾追加：
 
 ```js
 test('设置窗口有「系统」分区，开关能落到 settings.json', async () => {
@@ -2932,11 +2953,8 @@ test('设置窗口有「系统」分区，开关能落到 settings.json', async 
 
     // 鼠标穿透：勾上 → 主进程上报的状态跟着变。
     await settingsWin.locator('#clickThrough').check();
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === true,
-      null,
-      { timeout: 10000 },
-    );
+    const state = await waitForSystemState(ctx, (s) => s.clickThroughActive === true);
+    expect(state.clickThroughActive, '鼠标穿透应当生效').toBe(true);
 
     // 边缘吸附 / 贴边隐藏：落盘。
     await settingsWin.locator('#dockEnabled').check();
