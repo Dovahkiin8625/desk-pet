@@ -20,8 +20,14 @@ function fakeWindow() {
       calls.push(['setPosition', x, y]);
       pos = [x, y];
     },
+    // 只记录**真正传进去**的参数：关掉穿透时调用方只传了一个参数，
+    // 硬塞一个 undefined 进去会让「调用形状」的断言失真。
     setIgnoreMouseEvents: (ignore, options) =>
-      calls.push(['setIgnoreMouseEvents', ignore, options]),
+      calls.push(
+        options === undefined
+          ? ['setIgnoreMouseEvents', ignore]
+          : ['setIgnoreMouseEvents', ignore, options],
+      ),
   };
 }
 
@@ -327,13 +333,14 @@ test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
   // init 也会注册一次（同样失败）：失败必须留痕，警告要被捕获并断言，
   // 而不是留在测试输出里当噪音。
   const initWarnings = captureWarnings(() => controller.init(settings));
-  assert.ok(initWarnings.length >= 1);
+  // 只留一条：registerShortcut 已经留过痕了，init 不该再 warn 一遍同样的内容。
+  assert.equal(initWarnings.length, 1);
   assert.match(initWarnings.join('\n'), /快捷键注册失败/);
   const warnings = captureWarnings(() => {
     const ok = controller.setHotkey('Control+Alt+P');
     assert.equal(ok, false);
   });
-  assert.ok(warnings.length >= 1);
+  assert.equal(warnings.length, 1);
   assert.match(warnings.join('\n'), /快捷键注册失败/);
   // 磁盘上的组合没变：用户不至于连原来的快捷键也丢掉。
   assert.deepEqual(patched, []);
@@ -361,13 +368,13 @@ test('快捷键语法非法：提示与「被占用」区分开', () => {
   // init 也会尝试注册（同样抛）：失败必须留痕，警告要被捕获并断言，
   // 而不是留在测试输出里当噪音。
   const initWarnings = captureWarnings(() => controller.init(settings));
-  assert.ok(initWarnings.length >= 1);
+  assert.equal(initWarnings.length, 1);
   assert.match(initWarnings.join('\n'), /快捷键注册失败/);
   // 失败必须留痕：警告要被捕获并**断言**，而不是留在测试输出里当噪音。
   const warnings = captureWarnings(() => {
     assert.equal(controller.setHotkey('Control+Alt+P'), false);
   });
-  assert.ok(warnings.length >= 1);
+  assert.equal(warnings.length, 1);
   assert.match(warnings.join('\n'), /快捷键注册失败/);
   const state = controller.getState();
   assert.equal(state.hotkeyStatus.state, 'error');
@@ -452,8 +459,35 @@ test('启动时注册失败：只留痕 + 状态为 error，不抛', () => {
   assert.equal(state.hotkeyStatus.state, 'error');
   assert.match(state.hotkeyStatus.error, /占用/);
   // 留痕也要被验证：终端里要有一条说得清原因的警告。
-  assert.ok(warnings.length >= 1);
+  assert.equal(warnings.length, 1);
   assert.match(warnings.join('\n'), /快捷键注册失败/);
+});
+
+test('启动时设置里的组合没有修饰键：不注册，并说明原因', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    settings: { hotkey: 'D' },
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  // 磁盘上的设置被手改成裸键：注册它就是全局劫持用户的 D 键。
+  const warnings = captureWarnings(() => controller.init(settings));
+  assert.deepEqual(registered, []);
+  // 失败必须留痕，而且界面上要说得出来。
+  assert.equal(warnings.length, 1);
+  assert.match(warnings.join('\n'), /修饰键/);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /不能用/);
 });
 
 test('setHotkey 拒绝没有修饰键的裸键（会全局劫持字母键）', () => {
@@ -530,4 +564,24 @@ test('与当前相同但没注册着：不能算成功，要走一次真实注�
   assert.deepEqual(unregistered, []);
   const state = controller.getState();
   assert.equal(state.hotkeyStatus.state, 'ok');
+});
+
+test('穿透模式：打开时窗口不吃点击但保留 mousemove 转发', () => {
+  const { controller, win, settings } = makeController();
+  controller.init(settings);
+  controller.toggleClickThrough();
+  // 只有一次原生调用：init 时默认是关的，不会多调一次。
+  assert.deepEqual(win.calls, [['setIgnoreMouseEvents', true, { forward: true }]]);
+  assert.equal(settings.clickThrough, true);
+});
+
+test('穿透模式：关掉时把点击还给窗口', () => {
+  const { controller, win, settings } = makeController({
+    settings: { clickThrough: true },
+  });
+  controller.init(settings);
+  controller.toggleClickThrough();
+  // init 时已经开过一次穿透，所以这里看**最后**一次调用。
+  assert.deepEqual(win.calls[win.calls.length - 1], ['setIgnoreMouseEvents', false]);
+  assert.equal(settings.clickThrough, false);
 });

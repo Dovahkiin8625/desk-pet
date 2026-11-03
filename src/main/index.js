@@ -425,8 +425,14 @@ function flushPendingSave(event) {
 function toggleVisible() {
   if (!win) return;
   const next = !win.isVisible();
-  if (next) win.showInactive();
-  else win.hide();
+  if (next) {
+    // 召唤桌宠 = 想看见它：停靠中的桌宠先取回来，
+    // 否则用户召唤来的是一条 24px 的窄边。
+    system?.retrievePet?.();
+    win.showInactive();
+  } else {
+    win.hide();
+  }
   persist({ visible: next });
 }
 
@@ -479,12 +485,37 @@ function openSettings() {
   });
 }
 
+/**
+ * 重建托盘菜单。
+ *
+ * 托盘菜单**只在启动时构建一次**，所以「鼠标穿透」的勾选状态、
+ * 「取回桌宠」的出现与消失都靠重建来同步——否则菜单会一直显示旧状态。
+ */
+function refreshTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(
+    buildTrayMenu({
+      toggleVisible,
+      openSettings,
+      quit: () => app.quit(),
+      toggleClickThrough: () => system?.toggleClickThrough?.(),
+      isClickThrough: () => settings?.clickThrough === true,
+      isDocked: () => system?.getState?.().dock != null,
+      retrievePet: () => system?.retrievePet?.(),
+    })
+  );
+}
+
 function showContextMenu() {
   if (!win) return;
   buildContextMenu({
     toggleVisible,
     openSettings,
     quit: () => app.quit(),
+    toggleClickThrough: () => system?.toggleClickThrough?.(),
+    isClickThrough: () => settings?.clickThrough === true,
+    isDocked: () => system?.getState?.().dock != null,
+    retrievePet: () => system?.retrievePet?.(),
   }).popup({ window: win });
 }
 
@@ -694,6 +725,9 @@ app.whenReady().then(async () => {
     applySettings: (patch) => persist(patch),
     onHotkeyAction: () => toggleVisible(),
     onStateChanged: () => {
+      refreshTrayMenu();
+      // 设置窗口也要跟着变：用户可能是在**托盘菜单**里改的穿透，
+      // 那条路不经过设置窗口自己的 saveSettings，不会自动广播。
       // 系统状态变了要广播出去：设置窗口的勾选框要跟着回退，
       // 而且它靠 getState() 里的 lastError 把失败原因显示出来。
       // persist() 自己不广播——落盘是防抖的，而「生效」不能等落盘。
@@ -842,13 +876,7 @@ app.whenReady().then(async () => {
   tray = createTray({
     iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),
   });
-  tray.setContextMenu(
-    buildTrayMenu({
-      toggleVisible,
-      openSettings,
-      quit: () => app.quit(),
-    })
-  );
+  refreshTrayMenu();
 });
 
 // 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。

@@ -10,7 +10,7 @@ import { launchApp, collectErrors, launchWithMenuProbe, gotoSection, PET_WINDOW_
  * §11.1 启动渲染与自发动画   → 验收①
  * §11.2 视线跟随与头/身反应 → 验收②
  * §11.3 拖拽                → test/e2e/drag.spec.js（同一断言不抄第二遍）
- * §11.4 托盘菜单（显示/隐藏 · 设置 · 退出）→ 验收④⑤、验收④（退出）
+ * §11.4 托盘菜单（显示/隐藏 · 鼠标穿透 · 设置 · 退出）→ 验收④⑤、验收④（退出）
  * §11.5 角色右键菜单        → 验收④⑤
  * §11.6 重启后位置记忆      → test/e2e/drag.spec.js（同一断言不抄第二遍）
  * §11.7 设置窗口            → 验收⑦
@@ -199,7 +199,7 @@ test('验收②：视线跟随鼠标，摸头与点击身体触发不同反应',
   }
 });
 
-test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角色右键弹出菜单', async () => {
+test('验收④⑤：托盘菜单提供 显示/隐藏 · 鼠标穿透 · 设置 · 退出，角色右键弹出菜单', async () => {
   const ctx = await launchWithMenuProbe();
   const errors = collectErrors(ctx.win);
   try {
@@ -211,7 +211,15 @@ test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角�
     expect(probe.templates.length).toBeGreaterThanOrEqual(1);
     const trayMenu = probe.templates[0];
     expect(trayMenu.stack, '第一个菜单应当由 buildTrayMenu 构建').toContain('buildTrayMenu');
-    expect(trayMenu.labels).toEqual(['显示 / 隐藏', 'separator', '设置…', 'separator', '退出']);
+    expect(trayMenu.labels).toEqual([
+      '显示 / 隐藏',
+      'separator',
+      '鼠标穿透',
+      'separator',
+      '设置…',
+      'separator',
+      '退出',
+    ]);
 
     // 右键菜单：主进程用同一份模板构建，并真的去弹它。
     await ctx.win.evaluate(async () => {
@@ -248,10 +256,12 @@ test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角�
     expect(afterRightClick.popupCount, '右键后菜单应被弹出').toBeGreaterThanOrEqual(1);
     const contextMenu = afterRightClick.templates[afterRightClick.templates.length - 1];
     expect(contextMenu.stack, '右键菜单应当由 buildContextMenu 构建').toContain('buildContextMenu');
-    // 右键菜单与托盘菜单现在是一样的三项：
+    // 右键菜单与托盘菜单现在是同一份模板（含「鼠标穿透」勾选项）：
     // 「小工具」那条路换成了插件面板（左键点桌宠 → 搜索 → 打开插件）。
     expect(contextMenu.labels).toEqual([
       '显示 / 隐藏',
+      'separator',
+      '鼠标穿透',
       'separator',
       '设置…',
       'separator',

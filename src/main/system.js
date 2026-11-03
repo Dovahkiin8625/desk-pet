@@ -324,18 +324,28 @@ export function createSystemController({
     if (settings.clickThrough) applyClickThrough(true);
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
     if (settings.hotkey) {
-      const result = registerShortcut(settings.hotkey);
-      if (result === 'ok') {
-        setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
-      } else {
-        // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
-        // 而终端里什么也没有。
-        console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText(result));
+      if (!hasModifier(settings.hotkey)) {
+        // 磁盘上的组合没有修饰键：注册它会劫持用户的字母键。
+        // 宁可先不注册，也不能把用户的键抢走。
+        console.warn('[desk-pet] 设置里的快捷键没有修饰键，已跳过注册：', settings.hotkey);
         setHotkeyStatus({
           state: 'error',
           accelerator: settings.hotkey,
-          error: shortcutErrorText(result),
+          error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
         });
+      } else {
+        const result = registerShortcut(settings.hotkey);
+        if (result === 'ok') {
+          setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
+        } else {
+          // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
+          // 而终端里什么也没有。registerShortcut 已经留过痕了，这里不再重复 warn。
+          setHotkeyStatus({
+            state: 'error',
+            accelerator: settings.hotkey,
+            error: shortcutErrorText(result),
+          });
+        }
       }
     }
   }
@@ -347,6 +357,19 @@ export function createSystemController({
     // 桌宠仍然能跟着光标转头，但点击落到桌面上。
     if (enabled) win.setIgnoreMouseEvents(true, { forward: true });
     else win.setIgnoreMouseEvents(false);
+  }
+
+  /**
+   * 切换穿透模式，返回切换后的状态。
+   *
+   * 只调 applySettings 就够了：那条链会回到 applySettingsToSystem，
+   * 由它统一施加效果（那里才有「真的变了才动作」的判断）。
+   * 这里**不要**再直接调 applyClickThrough——那会施加两次。
+   */
+  function toggleClickThrough() {
+    const next = !getSettings().clickThrough;
+    applySettings({ clickThrough: next });
+    return next;
   }
 
   /**
@@ -401,6 +424,8 @@ export function createSystemController({
     init,
     applySettings: applySettingsToSystem,
     getState,
+    // —— 鼠标穿透 ——
+    toggleClickThrough,
     // —— 全局快捷键 ——
     setHotkey,
     startRecording,

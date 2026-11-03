@@ -22,3 +22,32 @@ test('总音量传到了渲染层', async () => {
     await ctx.close();
   }
 });
+
+test('穿透模式：打开后主进程上报穿透状态，窗口不吃点击', async () => {
+  const ctx = await launchApp();
+  try {
+    const before = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(before.clickThroughActive).toBe(false);
+
+    await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: true }));
+    await ctx.win.waitForFunction(
+      async () => (await window.pet.getSystemState()).clickThroughActive === true,
+      null,
+      { timeout: 10000 },
+    );
+
+    const after = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(after.clickThrough).toBe(true);
+    expect(after.clickThroughActive).toBe(true);
+
+    // 关掉：点击要还给窗口。
+    await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: false }));
+    await ctx.win.waitForFunction(
+      async () => (await window.pet.getSystemState()).clickThroughActive === false,
+      null,
+      { timeout: 10000 },
+    );
+  } finally {
+    await ctx.close();
+  }
+});
