@@ -688,3 +688,53 @@ test('从停靠里只拽出一半就松手：落盘的位置必须还在屏幕�
     `落盘的位置不能落在屏幕外，实际是 ${posPatch.position.x}`
   );
 });
+
+test('停靠中往里拖：一次手势就把桌宠拖进可见区（跟手）', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+  // 停靠位：右边缘 − 24 = 976。
+  assert.equal(win.getPosition()[0], 1000 - 24);
+
+  // 往左拖 400：桌宠应当**跟手**走到 976 − 400 = 576，
+  // 而不是停在藏匿区的边界（1000 − 300 = 700）不动——
+  // 停在 700 的话光标还在它右边 124px，用户得再拖一次。
+  controller.dragStart();
+  controller.moveBy(-400, 0);
+  assert.equal(win.getPosition()[0], 976 - 400);
+
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, null);
+});
+
+test('吸附生效后期望位置与窗口位置一致（反向拖不多追一段）', () => {
+  const { controller, win, settings } = makeController();
+  controller.init(settings);
+  // 先把桌宠放到右边缘的磁吸区里（离右边 10px）。
+  win.setPosition(1000 - 300 - 10, 100);
+  controller.dragStart();
+  // 往右推一点：磁吸把它贴到右边缘。
+  controller.moveBy(5, 0);
+  assert.equal(win.getPosition()[0], 1000 - 300);
+
+  // 反向往左拖 100px：窗口应当正好跟回 100px。
+  // 累加器若没跟着吸附一起更新，它还停在吸附前的位置，
+  // 窗口就会比光标多追 10px（下一趟拖拽的起点也跟着偏）。
+  controller.moveBy(-100, 0);
+  assert.equal(win.getPosition()[0], 1000 - 300 - 100);
+});
+
+test('启动时「贴边隐藏」是关的：不按 settings.dock 把桌宠藏起来', () => {
+  // 磁盘被手改成 {dock:'right', dockEnabled:false} 时，
+  // 桌宠不该藏起来——不然它要一直藏到下一次设置变更才被取回。
+  const { controller, win, settings } = makeController({
+    settings: { dockEnabled: false, dock: 'right' },
+  });
+  controller.init(settings);
+  assert.equal(controller.getState().dock, null);
+  // 窗口一步都没动过。
+  assert.deepEqual(win.calls, []);
+});

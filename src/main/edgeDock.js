@@ -115,14 +115,29 @@ export function flushPosition(side, x, y, width, height, workArea) {
   return { x, y };
 }
 
-/** 停靠时沿该轴允许的位置区间（含两端）。 */
+/**
+ * 停靠时沿该轴允许的位置区间（含两端）。
+ *
+ * 区间是 **藏匿区 ∪ 普通可见区**：从「完全藏起」一路盖到「工作区另一头的
+ * 完全可见位」。只给藏匿区是不够的——那样「把停靠中的桌宠挪到屏幕中间」
+ * 根本做不到：往里拖 400px，它只走（窗宽 − 24）就停在藏匿区边界不动，
+ * 光标还在它右边 124px，用户得再拖一次。
+ *
+ * 每条边的区间都必须**包含自己的停靠位**（dockPosition 算出来的那个）：
+ * 不包含的话，停靠中的窗口一被拖动就会被夹到别处——
+ * 「停在上边缘」会立刻弹成「完全可见」，停在下边缘同理。
+ */
 export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
-  if (side === 'left') return { min: workArea.x + slip - width, max: workArea.x };
-  if (side === 'right') {
-    return { min: workArea.x + workArea.width - width, max: workArea.x + workArea.width - slip };
+  if (side === 'left') {
+    return { min: workArea.x + slip - width, max: workArea.x + workArea.width - width };
   }
-  if (side === 'top') return { min: workArea.y + slip - height, max: workArea.y };
-  return { min: workArea.y + workArea.height - height, max: workArea.y + workArea.height - slip };
+  if (side === 'right') {
+    return { min: workArea.x, max: workArea.x + workArea.width - slip };
+  }
+  if (side === 'top') {
+    return { min: workArea.y + slip - height, max: workArea.y + workArea.height - height };
+  }
+  return { min: workArea.y, max: workArea.y + workArea.height - slip };
 }
 
 /**

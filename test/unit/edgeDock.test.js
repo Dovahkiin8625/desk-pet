@@ -92,9 +92,12 @@ test('完全可见贴齐位与停靠位差 W - DOCK_SLIP', () => {
   assert.equal(dock.x - flush.x, W - DOCK_SLIP);
 });
 
-test('停靠区间：从完全贴齐到完全藏起', () => {
+test('停靠区间：藏匿区 ∪ 普通可见区（拖出来一次手势到位）', () => {
+  // 停靠中的桌宠允许被拖到「完全可见」的位置——
+  // 区间必须一路盖到工作区的另一头，否则「把桌宠挪到屏幕中间」做不到：
+  // 往里拖 400px，它只走 276px（窗宽 − 24）就停在藏匿区边界不动了。
   const r = dockedRange('right', W, H, WA);
-  assert.equal(r.min, WA.x + WA.width - W);
+  assert.equal(r.min, WA.x);
   assert.equal(r.max, WA.x + WA.width - DOCK_SLIP);
   assert.ok(r.min < r.max);
 });
@@ -161,10 +164,10 @@ test('停靠判定：两个方向都贴齐时取位移大的那个', () => {
 // ---------------------------------------------------------------------------
 
 const SIDES = [
-  { side: 'left', axis: 'x', min: -276, max: 0, dock: -276, pull: 100 },
-  { side: 'right', axis: 'x', min: 700, max: 976, dock: 976, pull: -100 },
-  { side: 'top', axis: 'y', min: -536, max: 0, dock: -536, pull: 100 },
-  { side: 'bottom', axis: 'y', min: 240, max: 776, dock: 776, pull: -100 },
+  { side: 'left', axis: 'x', min: -276, max: 700, dock: -276, pull: 100 },
+  { side: 'right', axis: 'x', min: 0, max: 976, dock: 976, pull: -100 },
+  { side: 'top', axis: 'y', min: -536, max: 240, dock: -536, pull: 100 },
+  { side: 'bottom', axis: 'y', min: 0, max: 776, dock: 776, pull: -100 },
 ];
 
 test('停靠区间：四条边的 min/max 都不写反', () => {
@@ -182,11 +185,11 @@ test('停靠区间：左右、上下互为镜像', () => {
   const top = dockedRange('top', W, H, WA);
   const bottom = dockedRange('bottom', W, H, WA);
 
-  // 跨度：从完全贴齐到完全藏起，正好是「窗口大小 - 露出的宽度」。
-  assert.equal(left.max - left.min, W - DOCK_SLIP);
-  assert.equal(right.max - right.min, W - DOCK_SLIP);
-  assert.equal(top.max - top.min, H - DOCK_SLIP);
-  assert.equal(bottom.max - bottom.min, H - DOCK_SLIP);
+  // 跨度：工作区尺寸 − 露出的宽度（藏匿的那一段只多出 24px）。
+  assert.equal(left.max - left.min, WA.width - DOCK_SLIP);
+  assert.equal(right.max - right.min, WA.width - DOCK_SLIP);
+  assert.equal(top.max - top.min, WA.height - DOCK_SLIP);
+  assert.equal(bottom.max - bottom.min, WA.height - DOCK_SLIP);
 
   // 镜像：把右边的位置沿工作区中线翻过去，应当落在左边的区间里，
   // 而且两端互换（min ↔ max）——「某条边写反了」正是从这里露馅。
@@ -196,6 +199,21 @@ test('停靠区间：左右、上下互为镜像', () => {
   assert.equal(mirrorX(right.min), left.max);
   assert.equal(mirrorY(bottom.max), top.min);
   assert.equal(mirrorY(bottom.min), top.max);
+});
+
+test('停靠位本身必须在允许区间内（否则一碰就弹出藏匿区）', () => {
+  // 这条是上下两条边写反时的照妖镜：
+  // 区间若不包含自己的停靠位，停靠中的窗口一被拖动就会被夹到别处——
+  // 「停在上边缘」会立刻弹成「完全可见」，停在下边缘同理。
+  for (const s of SIDES) {
+    const r = dockedRange(s.side, W, H, WA);
+    const d = dockPosition(s.side, 0, 0, W, H, WA);
+    const pos = s.axis === 'x' ? d.x : d.y;
+    assert.ok(
+      r.min <= pos && pos <= r.max,
+      `${s.side} 的停靠位 ${pos} 应当落在允许区间 [${r.min}, ${r.max}] 内`
+    );
+  }
 });
 
 test('停靠夹紧：四条边的停靠轴都夹到对应端', () => {

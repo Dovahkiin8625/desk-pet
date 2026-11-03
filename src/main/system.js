@@ -161,6 +161,10 @@ export function createSystemController({
 
   /** 启动时按 settings.dock 施加停靠。 */
   function applyDockAtStartup() {
+    // 没开「贴边隐藏」就不该藏起来——
+    // 磁盘被手改成这种组合时（dock 有值但 dockEnabled 是 false），
+    // 桌宠会一直藏到下一次设置变更才被取回。
+    if (!getSettings().dockEnabled) return;
     const side = getSettings().dock;
     if (!side) return;
     const win = getWindow();
@@ -216,6 +220,11 @@ export function createSystemController({
         const wa = displayForPoint(applied.x, applied.y, displays)?.workArea;
         if (wa) {
           const snapped = snapToEdge(applied.x, applied.y, w, h, wa, { dx, dy });
+          if (snapped.side) {
+            // 吸附改了窗口位置，期望位置也要跟着改——
+            // 不然窗口会比光标超前最多 24px，累加器的起点就偏了。
+            desired = { x: snapped.x, y: snapped.y };
+          }
           applied = { x: snapped.x, y: snapped.y };
         }
       }

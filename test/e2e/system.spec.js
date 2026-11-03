@@ -122,15 +122,20 @@ test('停靠后拖那条窄边能把桌宠拽回来', async () => {
     await dragToRightEdge(ctx);
     expect((await ctx.win.evaluate(() => window.pet.getSystemState())).dock).toBe('right');
 
-    // 抓住窄边往左拽。
+    // 抓住窄边往左拽 400px。
     await dragBy(ctx.win, -400, 0);
     const state = await ctx.win.evaluate(() => window.pet.getSystemState());
     expect(state.dock).toBe(null);
 
+    // 拽出来之后桌宠要**跟手**：停靠位是「工作区右边界 − 24」，
+    // 再往左拖 400 就该落在「右边界 − 24 − 400」——
+    // 而不是停在藏匿区里不动（那样光标还在它右边 124px，得再拖一次）。
     const bounds = await petBounds(ctx);
     const wa = await ctx.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
-    // 完全可见：窗口右边缘贴齐工作区右边缘。
-    expect(bounds.x + bounds.width).toBe(wa.x + wa.width);
+    expect(
+      Math.abs(wa.x + wa.width - 24 - 400 - bounds.x),
+      '桌宠应当跟手到光标处'
+    ).toBeLessThanOrEqual(4);
   } finally {
     await ctx.close();
   }
