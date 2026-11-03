@@ -20,3 +20,5 @@ assets/live2d/models/haru/*
 !assets/live2d/models/haru/pet.json
 assets/live2d/models/natori/*
 !assets/live2d/models/natori/pet.json
+minimax-api-key
+assets/live2d/models/
