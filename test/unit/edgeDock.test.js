@@ -152,3 +152,115 @@ test('停靠判定：两个方向都贴齐时取位移大的那个', () => {
   assert.equal(chooseDockSide(gaps, { dx: 10, dy: 300 }), 'bottom');
   assert.equal(chooseDockSide(gaps, { dx: 300, dy: 10 }), 'right');
 });
+
+// ---------------------------------------------------------------------------
+// 四条边的对称性。
+//
+// 这些期望值是**写死的数字**，不是照着实现再写一遍公式——
+// 照公式写等于自己验自己，写反了也发现不了。
+// ---------------------------------------------------------------------------
+
+const SIDES = [
+  { side: 'left', axis: 'x', min: -276, max: 0, dock: -276, pull: 100 },
+  { side: 'right', axis: 'x', min: 700, max: 976, dock: 976, pull: -100 },
+  { side: 'top', axis: 'y', min: -536, max: 0, dock: -536, pull: 100 },
+  { side: 'bottom', axis: 'y', min: 240, max: 776, dock: 776, pull: -100 },
+];
+
+test('停靠区间：四条边的 min/max 都不写反', () => {
+  for (const s of SIDES) {
+    const r = dockedRange(s.side, W, H, WA);
+    assert.equal(r.min, s.min, `${s.side} 的 min`);
+    assert.equal(r.max, s.max, `${s.side} 的 max`);
+    assert.ok(r.min < r.max, `${s.side} 的区间方向`);
+  }
+});
+
+test('停靠区间：左右、上下互为镜像', () => {
+  const left = dockedRange('left', W, H, WA);
+  const right = dockedRange('right', W, H, WA);
+  const top = dockedRange('top', W, H, WA);
+  const bottom = dockedRange('bottom', W, H, WA);
+
+  // 跨度：从完全贴齐到完全藏起，正好是「窗口大小 - 露出的宽度」。
+  assert.equal(left.max - left.min, W - DOCK_SLIP);
+  assert.equal(right.max - right.min, W - DOCK_SLIP);
+  assert.equal(top.max - top.min, H - DOCK_SLIP);
+  assert.equal(bottom.max - bottom.min, H - DOCK_SLIP);
+
+  // 镜像：把右边的位置沿工作区中线翻过去，应当落在左边的区间里，
+  // 而且两端互换（min ↔ max）——「某条边写反了」正是从这里露馅。
+  const mirrorX = (x) => WA.x + WA.width - (x + W);
+  const mirrorY = (y) => WA.y + WA.height - (y + H);
+  assert.equal(mirrorX(right.max), left.min);
+  assert.equal(mirrorX(right.min), left.max);
+  assert.equal(mirrorY(bottom.max), top.min);
+  assert.equal(mirrorY(bottom.min), top.max);
+});
+
+test('停靠夹紧：四条边的停靠轴都夹到对应端', () => {
+  for (const s of SIDES) {
+    const over = s.axis === 'x' ? { x: s.max + 500, y: 100 } : { x: 100, y: s.max + 500 };
+    assert.equal(clampDocked(over.x, over.y, W, H, WA, s.side)[s.axis], s.max, `${s.side} 超出上界`);
+
+    const under = s.axis === 'x' ? { x: s.min - 500, y: 100 } : { x: 100, y: s.min - 500 };
+    assert.equal(clampDocked(under.x, under.y, W, H, WA, s.side)[s.axis], s.min, `${s.side} 超出下界`);
+  }
+});
+
+test('停靠夹紧：四条边的垂直轴按普通工作区夹', () => {
+  const maxX = WA.x + WA.width - W;
+  const maxY = WA.y + WA.height - H;
+  for (const s of SIDES) {
+    const perp = s.axis === 'x' ? 'y' : 'x';
+
+    // 垂直轴推得太远 → 被工作区夹住（与停靠轴无关）。
+    const far = s.axis === 'x' ? { x: s.dock, y: WA.y + WA.height + 100 } : { x: WA.x + WA.width + 100, y: s.dock };
+    assert.equal(clampDocked(far.x, far.y, W, H, WA, s.side)[perp], s.axis === 'x' ? maxY : maxX);
+
+    // 垂直轴越出另一边 → 夹回工作区内。
+    const near = s.axis === 'x' ? { x: s.dock, y: WA.y - 100 } : { x: WA.x - 100, y: s.dock };
+    assert.equal(clampDocked(near.x, near.y, W, H, WA, s.side)[perp], s.axis === 'x' ? WA.y : WA.x);
+  }
+});
+
+test('完全藏起判定：四条边', () => {
+  for (const s of SIDES) {
+    const pos = s.axis === 'x' ? { x: s.dock, y: 200 } : { x: 200, y: s.dock };
+    assert.equal(isFullyTucked(pos.x, pos.y, W, H, WA, s.side), true, `${s.side} 停在停靠位`);
+
+    const pulled = s.axis === 'x' ? { x: s.dock + s.pull, y: 200 } : { x: 200, y: s.dock + s.pull };
+    assert.equal(isFullyTucked(pulled.x, pulled.y, W, H, WA, s.side), false, `${s.side} 拉出后`);
+  }
+});
+
+test('未知 side：夹紧退化成普通夹紧，不把窗口推出屏幕', () => {
+  const c = clampDocked(5000, 5000, W, H, WA, 'diagonal');
+  assert.equal(c.x, WA.x + WA.width - W);
+  assert.equal(c.y, WA.y + WA.height - H);
+
+  const c2 = clampDocked(-5000, -5000, W, H, WA, 'diagonal');
+  assert.equal(c2.x, WA.x);
+  assert.equal(c2.y, WA.y);
+});
+
+test('缺 workArea 时 edgeGaps 明确抛错，不返回假间隙', () => {
+  assert.throws(() => edgeGaps(0, 0, W, H, undefined), TypeError);
+  assert.throws(() => edgeGaps(0, 0, W, H, null), TypeError);
+});
+
+test('停靠夹紧：带小数的输入取整后仍落在区间内', () => {
+  // 整数边界：结果必须是区间内的整数。
+  const r = dockedRange('right', W, H, WA);
+  const c = clampDocked(r.max + 0.6, 100.4, W, H, WA, 'right');
+  assert.ok(c.x >= r.min && c.x <= r.max, `${c.x} 应当落在 [${r.min}, ${r.max}] 内`);
+  assert.equal(Number.isInteger(c.x), true);
+  assert.equal(Number.isInteger(c.y), true);
+
+  // 分数边界（自定义 slip）：取整在前、夹紧在后，结果一定在区间内。
+  // 先夹再取整的话，这里会得到 976 —— 比上界 975.5 还多露 1px。
+  const slip = 24.5;
+  const rf = dockedRange('right', W, H, WA, slip);
+  const cf = clampDocked(976.4, 100.4, W, H, WA, 'right', slip);
+  assert.ok(cf.x >= rf.min && cf.x <= rf.max, `${cf.x} 应当落在 [${rf.min}, ${rf.max}] 内`);
+});

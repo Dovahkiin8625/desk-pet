@@ -19,21 +19,32 @@ export const SNAP_THRESHOLD = 24;
 /** 停靠判定要求的最小净位移（px）。 */
 export const MIN_DOCK_PUSH = 8;
 
-/** 「贴齐」的判定容差：坐标取整后可能有 1px 的浮点误差。 */
+/**
+ * 「贴齐」的判定容差：坐标取整后最多 0.5px 的浮点误差。
+ *
+ * 实际坐标都是整数，所以它等价于「gap 必须恰好是 0」——
+ * 差 1px 就不算贴齐。
+ */
 const FLUSH_EPSILON = 0.5;
 
 /**
  * 窗口与工作区四条边之间的间隙。
  *
  * 正数 = 还差多少才贴齐；负数 = 已经越出屏幕。
+ *
+ * workArea 缺失时**抛错**，不返回假间隙：拿零尺寸工作区算出来的
+ * 间隙是一堆毫无意义的数字（left = x、right = -x - width），
+ * 调用方会拿着它们继续跑，比当场炸掉难排查得多。
  */
 export function edgeGaps(x, y, width, height, workArea) {
-  const wa = workArea || { x: 0, y: 0, width: 0, height: 0 };
+  if (!workArea) {
+    throw new TypeError('edgeGaps 需要 workArea');
+  }
   return {
-    left: x - wa.x,
-    right: wa.x + wa.width - (x + width),
-    top: y - wa.y,
-    bottom: wa.y + wa.height - (y + height),
+    left: x - workArea.x,
+    right: workArea.x + workArea.width - (x + width),
+    top: y - workArea.y,
+    bottom: workArea.y + workArea.height - (y + height),
   };
 }
 
@@ -123,21 +134,33 @@ export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
  * **停靠轴要用停靠区间直接夹，不能先按普通区间夹一遍再放宽**——
  * 普通区间是 [wa.left, wa.right - w]，落在它右边的值（比如想往屏幕外推）
  * 会先被夹回 wa.right - w，放宽就再也救不回来了。
+ *
+ * **取整在夹紧之前**：先夹再取整会让结果越出区间 1px
+ * （976.6 夹到 976 后取整成 977，比上界 976 多露 1px）。
+ *
+ * side 不是四个合法边名时退化成**普通夹紧**（两个轴都按工作区夹，
+ * 不做任何停靠放宽）——「什么都不做」比「无声地把窗口推到屏幕外」好。
  */
 export function clampDocked(x, y, width, height, workArea, side, slip = DOCK_SLIP) {
   const maxX = workArea.x + Math.max(0, workArea.width - width);
   const maxY = workArea.y + Math.max(0, workArea.height - height);
+  if (side !== 'left' && side !== 'right' && side !== 'top' && side !== 'bottom') {
+    return {
+      x: Math.min(Math.max(Math.round(x), workArea.x), maxX),
+      y: Math.min(Math.max(Math.round(y), workArea.y), maxY),
+    };
+  }
   const range = dockedRange(side, width, height, workArea, slip);
   let cx;
   let cy;
   if (side === 'left' || side === 'right') {
-    cx = Math.min(Math.max(x, range.min), range.max);
-    cy = Math.min(Math.max(y, workArea.y), maxY);
+    cx = Math.min(Math.max(Math.round(x), range.min), range.max);
+    cy = Math.min(Math.max(Math.round(y), workArea.y), maxY);
   } else {
-    cx = Math.min(Math.max(x, workArea.x), maxX);
-    cy = Math.min(Math.max(y, range.min), range.max);
+    cx = Math.min(Math.max(Math.round(x), workArea.x), maxX);
+    cy = Math.min(Math.max(Math.round(y), range.min), range.max);
   }
-  return { x: Math.round(cx), y: Math.round(cy) };
+  return { x: cx, y: cy };
 }
 
 /** 窗口是不是还完全藏在那条边后面。 */
