@@ -795,13 +795,13 @@ test('录完新快捷键后，只读框要同步成新组合', async () => {
   }
 });
 
-test('快捷键录制失败时，说明行点名保留下来的原组合', async () => {
+test('快捷键录制失败时，说明行写明当前设置的组合', async () => {
   const ctx = await launchApp();
   try {
     const settingsWin = await openSettingsWindow(ctx);
     await gotoSection(settingsWin, 'system');
 
-    // 主进程报「这个组合被别的程序占了」，accelerator 是仍然有效的那个。
+    // 主进程报「这个组合被别的程序占了」，accelerator 是设置里那个组合。
     await pushHotkeyStatus(ctx, {
       state: 'error',
       accelerator: 'Control+Shift+D',
@@ -816,11 +816,107 @@ test('快捷键录制失败时，说明行点名保留下来的原组合', async
     const hint = await settingsWin.locator('#hotkeyHint').textContent();
     // 失败要说清「是什么事」与「现在用的是哪个」。
     expect(hint).toContain('Control+Shift+D');
-    expect(hint).toContain('仍然有效');
-    // 只读框里仍然是那个还生效的组合。
+    // 文案要写「当前设置的组合」——两种情形都成立的说法。
+    expect(hint).toContain('当前设置的组合');
+    // 但**不能**断言「原来的组合仍然有效」：
+    // 主进程在**启动时**就注册失败时也会推来 state:'error' + 同一个组合，
+    // 而那个组合根本没注册上——文案断言它「仍然有效」就是在骗人。
+    // 所以文案只说「当前设置的组合是什么」，两种情形都成立。
+    expect(hint).not.toContain('仍然有效');
+    // 只读框里是设置里的那个组合。
     expect(await settingsWin.locator('#hotkeyValue').inputValue()).toBe('Control+Shift+D');
     // 失败之后按钮回到「重新录制」——不在录制态。
     expect(await settingsWin.locator('#recordHotkey').textContent()).toContain('重新录制');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('不带组合的快捷键状态推送不会让只读框永远停在占位符', async () => {
+  // 回归：「闩」是一次性的。
+  // 快捷键状态有两个来源——主进程的推送（实时）与 getState() 的快照（初始读数）——
+  // 收到过推送之后快照就不再写只读框。
+  // 而推送只要**到过**（哪怕 accelerator 是空的）就把闩置位，
+  // 首个快照于是永远写不进 hotkeyInput.value，框停在「未设置」——
+  // 而设置里明明配着组合。
+  const ctx = await launchApp();
+  try {
+    // 把快照拖慢 1.5 秒：设置页的 init 卡在 await 里，
+    // 正好把那条推送塞进「快照之前」。
+    const patched = await ctx.app.evaluate(({ ipcMain }) => {
+      const orig = ipcMain._invokeHandlers?.get('pet:getSystemState');
+      if (!orig) return false;
+      ipcMain.removeHandler('pet:getSystemState');
+      ipcMain.handle('pet:getSystemState', async (...args) => {
+        await new Promise((r) => setTimeout(r, 1500));
+        return orig(...args);
+      });
+      return true;
+    });
+    // 用的是 Electron 的内部 API（ipcMain._invokeHandlers）：
+    // 一旦 Electron 改名，这条用例就失去意义了——宁可报错，也不要静默跳过。
+    expect(patched, 'ipcMain._invokeHandlers 不可用，这条回归用例需要重写').toBe(true);
+
+    const settingsWinPromise = ctx.app.waitForEvent('window');
+    await ctx.win.evaluate(() => window.pet.openSettings());
+    const settingsWin = await settingsWinPromise;
+    // 只等文档就绪，不等初始化跑完：
+    // 模块脚本是 deferred 的，DOMContentLoaded 触发时它已经整段执行完，
+    // 推送监听也就注册好了。
+    await settingsWin.waitForLoadState('domcontentloaded');
+
+    // 一条不带 accelerator 的推送：它没有在更新快捷键状态。
+    await pushHotkeyStatus(ctx, { state: 'idle', accelerator: '', error: '' });
+
+    // 首个快照随后到达：它必须仍然能把组合写进只读框。
+    await settingsWin.waitForFunction(
+      () => document.getElementById('hotkeyValue').value === 'Control+Shift+D',
+      null,
+      { timeout: 15000 },
+    );
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('「语音」分区的音量滑块能改总音量', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'voice');
+
+    // 初始值来自主进程的状态（默认 0.8 → 80%）。
+    await settingsWin.waitForFunction(
+      () => document.getElementById('volumeVal').textContent.trim() !== '',
+      null,
+      { timeout: 10000 },
+    );
+    expect((await settingsWin.locator('#volumeVal').textContent()).trim()).toBe('80%');
+
+    await settingsWin.evaluate(() => {
+      const input = document.getElementById('volume');
+      input.value = '0.35';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    // 滑块旁边要显示百分比（设置页其它滑块都有这个 .val）。
+    expect((await settingsWin.locator('#volumeVal').textContent()).trim()).toBe('35%');
+
+    // 渲染层要立刻收到（拖滑块时音量马上变，落盘是 300ms 之后的事）。
+    await ctx.win.waitForFunction(() => window.__pet.volume === 0.35, null, { timeout: 10000 });
+
+    // 落盘：助理状态的写入是防抖的，轮询等它。
+    let saved = null;
+    for (let i = 0; i < 40; i += 1) {
+      try {
+        saved = JSON.parse(await readFile(join(ctx.userDataDir, 'assistant.json'), 'utf8'));
+      } catch {
+        saved = null;
+      }
+      if (saved?.sound?.volume === 0.35) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(saved?.sound?.volume, '总音量应当落到 assistant.json').toBe(0.35);
   } finally {
     await ctx.close();
   }

@@ -20,6 +20,8 @@ const voiceInput = document.getElementById('voiceId');
 const voiceList = document.getElementById('voiceList');
 const speedInput = document.getElementById('speed');
 const speedVal = document.getElementById('speedVal');
+const volumeInput = document.getElementById('volume');
+const volumeVal = document.getElementById('volumeVal');
 const apiKeyInput = document.getElementById('apiKey');
 const saveKeyBtn = document.getElementById('saveKey');
 const clearKeyBtn = document.getElementById('clearKey');
@@ -87,6 +89,10 @@ function formatScale(v) {
 }
 
 function formatOpacity(v) {
+  return `${Math.round(Number(v) * 100)}%`;
+}
+
+function formatVolume(v) {
   return `${Math.round(Number(v) * 100)}%`;
 }
 
@@ -264,6 +270,12 @@ function updateOpacity(v) {
   setRangeFill(opacityInput);
 }
 
+function updateVolume(v) {
+  volumeInput.value = String(v);
+  volumeVal.textContent = formatVolume(v);
+  setRangeFill(volumeInput);
+}
+
 // ---------------------------------------------------------------------------
 // 助理偏好
 // ---------------------------------------------------------------------------
@@ -283,6 +295,8 @@ function applyAssistantState(state) {
   speedInput.value = String(state.tts?.speed ?? 1);
   speedVal.textContent = Number(state.tts?.speed ?? 1).toFixed(2);
   setRangeFill(speedInput);
+  // 总音量：存在 assistant.json 的 sound.volume 里，不在 settings.json。
+  updateVolume(state.sound?.volume ?? 0.8);
 
   const llm = state.llm || {};
   llmEnabledBox.checked = Boolean(llm.enabled);
@@ -569,11 +583,14 @@ clearFactsBtn.addEventListener('click', async () => {
 let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
 
 /**
- * 有没有收到过主进程推来的快捷键状态。
+ * 有没有收到过主进程推来的**带组合**的快捷键状态。
  *
  * 快捷键状态有两个来源：主进程的推送（实时）与 getState() 的快照（初始读数）。
  * 快照是**发起拉取那一刻**的值，可能比刚到的推送旧——
  * 收到过推送之后，快照就不再覆盖它。
+ *
+ * 只有**带组合**的推送才算数：那条推送才真的在更新快捷键状态。
+ * 不带组合的推送若也置位，首个快照就再也写不进只读框了。
  */
 let hotkeyStatusFromPush = false;
 
@@ -652,8 +669,13 @@ function applyHotkeyStatus() {
     const reason = hotkeyStatus.error || '这个组合不能用了';
     // 失败时要把「现在用的是哪个」一起写出来：
     // 只说失败不说保留了什么，用户得自己往上面那个框里找。
+    //
+    // 但**不能**说它「仍然有效」：主进程在**启动时**注册失败也会推来
+    // state:'error' + 同一个组合，而那个组合根本没注册上——
+    // 那样宣称「仍然有效」就是在骗人。
+    // 「当前设置的组合」两种情形都成立（上面那个只读框显示的也是它）。
     hotkeyHint.textContent = hotkeyStatus.accelerator
-      ? `${reason}。原来的 ${hotkeyStatus.accelerator} 仍然有效。`
+      ? `${reason}。当前设置的组合：${hotkeyStatus.accelerator}`
       : `${reason}。`;
     return;
   }
@@ -728,10 +750,15 @@ async function init() {
   window.pet.onHotkeyStatus?.((status) => {
     if (!status) return;
     hotkeyStatus = status;
-    // 推送是快捷键状态的实时通道：收到过之后，
-    // getState() 的快照就不再覆盖它了（快照可能是发起拉取那一刻的旧值）。
-    hotkeyStatusFromPush = true;
     if (status.accelerator) {
+      // 闩**只在推送带着组合时**才置位：
+      // 推送是快捷键状态的实时通道，收到过之后 getState() 的快照
+      // 就不再覆盖它了（快照可能是发起拉取那一刻的旧值）。
+      //
+      // 但一条**不带组合**的推送（比如刚进录制态、还没录出组合）
+      // 并没有在更新快捷键状态——它若也把闩置位，
+      // 首个快照就永远写不进只读框，框会一直停在占位符「未设置」。
+      hotkeyStatusFromPush = true;
       // 上面那个只读框显示的是「当前生效的组合」。
       // 推送里的 accelerator 就是当前生效的那一个——
       // 录制成功时旧的此刻已经被注销了，框里还留着它就是骗人。
@@ -749,7 +776,10 @@ async function init() {
     window.pet.getLlmStatus(),
     // 系统状态拉不到不能拖垮整个初始化：拉不到就当没有系统状态，
     // 其余分区照常显示（Promise.all 一挂，设置窗口就停在半初始化状态）。
-    window.pet.getSystemState().catch(() => null),
+    //
+    // 可选调用：preload 日后少了这个 API 时也不能**同步**抛
+    // （`undefined.catch` 是 TypeError，正好抵消这里想要的容错）。
+    Promise.resolve(window.pet.getSystemState?.()).catch(() => null),
   ]);
   // 下拉框照填不误——它所在的分区是不是当前分区，与填充无关。
   // （改成「切到外观分区才填」会让 setModel 的竞态兜底失效，
@@ -836,6 +866,25 @@ opacityInput.addEventListener('input', async () => {
   setRangeFill(opacityInput);
   try {
     await window.pet.saveSettings({ opacity: v });
+  } catch (err) {
+    show(`保存失败：${err?.message || err}`, 'error');
+  }
+});
+
+/**
+ * 总音量滑块。
+ *
+ * 存在 assistant.json 的 `sound.volume` 里，不在 settings.json——
+ * 它是**助理**的偏好（提示音与桌宠说话共用一个值）。
+ * 补丁只送 `{sound:{volume}}` 一层：mergePatch 会把 sound 里的字段
+ * 深一层合并，所以 `sound.enabled` 不会被这行抹掉。
+ */
+volumeInput.addEventListener('input', async () => {
+  const v = Number(volumeInput.value);
+  volumeVal.textContent = formatVolume(v);
+  setRangeFill(volumeInput);
+  try {
+    await window.pet.saveAssistantPrefs({ sound: { volume: v } });
   } catch (err) {
     show(`保存失败：${err?.message || err}`, 'error');
   }

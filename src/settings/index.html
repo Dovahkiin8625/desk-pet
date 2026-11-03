@@ -424,6 +424,15 @@
           </div>
 
           <div class="field">
+            <label for="volume">音量</label>
+            <div class="control range">
+              <input type="range" id="volume" min="0" max="1" step="0.05">
+              <span class="val" id="volumeVal"></span>
+            </div>
+          </div>
+          <p class="hint">总音量：同时影响提示音与桌宠说话。</p>
+
+          <div class="field">
             <label for="apiKey">API Key</label>
             <div class="control inline">
               <input type="password" id="apiKey" placeholder="留空表示不修改">
