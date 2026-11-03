@@ -1,7 +1,7 @@
 import { protocol } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
-import { resolveStaticFile } from './staticFiles.js';
+import { resolveStaticFile, isDeniedResource } from './staticFiles.js';
 
 const SCHEME = 'app';
 const HOST = 'bundle';
@@ -17,6 +17,7 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
   '.moc3': 'application/octet-stream',
   '.ico': 'image/x-icon',
 };
@@ -68,6 +69,13 @@ export function registerAppProtocol(rootDir) {
     }
     const resolved = resolveStaticFile(rootDir, url.pathname);
     if (!resolved) return new Response('Not Found', { status: 404 });
+    // 密钥类文件一律不提供：app:// 的根是整个项目目录，
+    // 而根目录里可能躺着用户的 API Key（minimax-api-key）。
+    // 渲染层不是可信边界——它只要 fetch 一次就把密钥读走了。
+    if (isDeniedResource(resolved.filePath)) {
+      console.warn('[desk-pet] 拒绝提供受保护的资源：', url.pathname);
+      return new Response('Forbidden', { status: 403 });
+    }
     try {
       const data = await readFile(resolved.filePath);
       const type = MIME[extname(resolved.filePath).toLowerCase()] || 'application/octet-stream';

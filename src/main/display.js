@@ -50,6 +50,30 @@ export function clampToDisplays(x, y, width, height, displays) {
 }
 
 /**
+ * 找到包含该点的显示器；没有显示器包含它时，返回**最近**的那块。
+ *
+ * 「最近」用的是到矩形的距离而不是到中心的距离（理由同 distanceToRect）：
+ * 点在两块屏幕正下方时，中心距离会选中更远的那块。
+ */
+export function displayForPoint(x, y, displays) {
+  const list = (displays || []).filter((d) => d && d.workArea);
+  if (list.length === 0) return null;
+  for (const d of list) {
+    if (rectContains(d.workArea, x, y, 1, 1)) return d;
+  }
+  let best = list[0];
+  let bestDist = Infinity;
+  for (const d of list) {
+    const dist = distanceToRect(d.workArea, x, y);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/**
  * 启动时恢复上次保存的位置（spec §5.5）。
  * 位置完整落在某显示器可见区域内 → 原样恢复；
  * 否则（例如保存位置所在的显示器已被拔掉）→ 回落到**主显示器可见区域内的默认位置（右下角）**。

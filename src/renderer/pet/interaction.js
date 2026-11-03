@@ -21,6 +21,7 @@ export function attachInteraction({
   onDragEnd,
   onContextMenu,
   onInteract,
+  onZoom,
 }) {
   const local = (clientX, clientY) => {
     // hitTest / focus 的入参是**世界坐标**（库内部用 worldTransform.applyInverse 换算）。
@@ -68,6 +69,17 @@ export function attachInteraction({
     onContextMenu?.();
   };
 
+  const handleWheel = (e) => {
+    // 只有按住 Ctrl 才响应：普通滚轮留给桌宠自己（目前没有别的用途），
+    // 按住 Ctrl 是「调整大小」这个手势的明确标记。
+    if (!e.ctrlKey) return;
+    // 必须拦掉默认行为：在 Chromium 里 Ctrl+滚轮是**页面缩放**，
+    // 不拦的话整个桌宠窗口会被浏览器放大，而不是模型变大。
+    e.preventDefault();
+    onInteract?.();
+    onZoom?.(e.deltaY);
+  };
+
   const handleDown = (e) => {
     // 指针捕获：没有它，光标一旦移出画布，pointermove/pointerup 就不再送达——
     // 拖拽会丢失增量、onDragEnd 永不触发。
@@ -98,4 +110,7 @@ export function attachInteraction({
   canvas.addEventListener('pointerup', handleUp);
   canvas.addEventListener('pointercancel', handleCancel);
   canvas.addEventListener('contextmenu', handleContextMenu);
+  // passive: false 是显式声明：wheel 监听器默认是被动的，
+  // 被动监听器里 preventDefault() 不生效，浏览器缩放就拦不住。
+  canvas.addEventListener('wheel', handleWheel, { passive: false });
 }

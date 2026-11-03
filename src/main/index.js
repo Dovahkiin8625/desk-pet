@@ -1,15 +1,22 @@
-import { app, screen, dialog, BrowserWindow } from 'electron';
-import { join, dirname } from 'node:path';
+import { app, screen, dialog, BrowserWindow, shell } from 'electron';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
-import { createPetWindow, applySettingsToWindow } from './window.js';
+import { createPetWindow, applySettingsToWindow, applyScaleToWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
 import { clampToDisplays } from './display.js';
+import { createBubbleController } from './bubble.js';
+import { createPanelController } from './panel.js';
+import { createPluginRegistry } from './plugins/index.js';
+import { createAppIndex } from './apps.js';
+import { createAssistant } from './assistant/index.js';
+import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
+import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -29,6 +36,14 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 气泡窗口与桌面助理：第二、三部分（交互与动作系统 / 桌面助理功能）。
+let bubble = null;
+let assistant = null;
+// 插件面板与插件注册表：左键点桌宠弹出来的那个搜索框。
+let panel = null;
+let plugins = null;
+// 本机程序索引：搜索框里能搜到本机的程序，回车就启动。
+let apps = null;
 // 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
 let appliedOpacity = null;
 // 设置窗口全局只有一个：重复打开时聚焦已有的那个，而不是开一堆。
@@ -66,6 +81,35 @@ function currentDisplays() {
 /** 显示器拓扑/尺寸变化：缓存的列表不再可信，丢掉让下次重新读取。 */
 function invalidateDisplayCache() {
   displayCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// 光标跟踪：让桌宠在鼠标不在它身上时也看着鼠标
+//
+// 之前只有指针**经过桌宠窗口**时才会跟随（渲染层的 pointermove）。
+// 桌宠站在屏幕角落、鼠标在另一边时，它就「眼神空洞」地看着正前方——
+// 这是桌宠最该有的细节之一，值得单独做一个轮询。
+//
+// 10Hz 足够：Live2D 的 FocusController 自己会做平滑。
+// ---------------------------------------------------------------------------
+
+const CURSOR_POLL_MS = 100;
+let cursorTimer = null;
+
+function startCursorTracking() {
+  if (cursorTimer) return;
+  cursorTimer = setInterval(() => {
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    // 渲染进程可能已经被拆掉了（退出时就会这样）：
+    // 往一个已销毁的 frame 发送会抛 "Render frame was disposed"。
+    if (win.webContents.isDestroyed()) return;
+    // getCursorScreenPoint() 与 win.getPosition() 都是 DIP，同一套坐标系。
+    // 换算在主进程做：渲染层那边的 window.screenX 是 Chromium 的另一套 DIP，
+    // 两套是否等价从未被验证过（拖拽路径是刻意只传增量的，见 decisions.md）。
+    const point = screen.getCursorScreenPoint();
+    const [wx, wy] = win.getPosition();
+    win.webContents.send('pet:cursorPoint', { x: point.x - wx, y: point.y - wy });
+  }, CURSOR_POLL_MS);
 }
 
 /**
@@ -112,7 +156,18 @@ function persist(patch) {
   // 必须过一遍 sanitizeSettings：否则渲染层传来的越界值（例如 opacity=1.5）
   // 会留在内存里，而落盘时被夹紧——内存与磁盘不一致，
   // getSettings 会把越界值发回渲染层，Task 9 还会拿它去调 win.setOpacity()。
+  const prevScale = settings.scale;
   settings = sanitizeSettings({ ...settings, ...patch });
+  // 缩放变了：窗口尺寸必须跟着变。
+  //
+  // 桌宠窗口是无边框的——窗口有多大，模型才能画多大。
+  // 窗口不变而模型放大，模型的上半身就被窗口边界切掉了。
+  // 尺寸的事必须在这里做：落盘是 300ms 之后的事，生效是现在。
+  if (settings.scale !== prevScale) {
+    const bounds = applyScaleToWindow(win, settings.scale, currentDisplays());
+    // 窗口尺寸变了，保存的左上角也不再指向同一个锚点：跟着更新。
+    if (bounds) settings.position = { x: Math.round(bounds.x), y: Math.round(bounds.y) };
+  }
   // 透明度由主进程直接施加在**宠物窗口**上（win.setOpacity）。
   // 必须在 persist 里做：设置可能来自设置窗口的滑块、也可能来自别处，
   // 落盘只是持久化，不等于已经生效。
@@ -240,6 +295,14 @@ function onRendererReady() {
   // 启动期间到达的设置广播同样可能被丢弃（监听器那时还没注册），
   // 重新广播一次当前设置：缩放/透明度/形象 id 都以这一刻的为准。
   broadcastSettings(settings);
+  // 音效开关也要在这里发一次：渲染层的提示音**默认是开的**，
+  // 而用户可能在上一轮会话里把它关掉了。
+  // 早于这一刻发是发不到的——监听器那时还没注册（webContents.send 会被丢弃）。
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('pet:soundEnabled', {
+      enabled: assistant?.getState()?.sound?.enabled !== false,
+    });
+  }
 }
 
 /**
@@ -324,14 +387,18 @@ function flushPendingSave(event) {
   // 要覆盖两种情况：还有防抖计时器没触发；或者写入已经在进行中。
   // 只看 saveTimer 不够——计时器触发后会把 saveTimer 置空，
   // 此刻退出的话 writeFile 已经把文件截断成 0 字节却还没写完。
-  if (!saveTimer && !pendingWrite) return;
+  //
+  // 助理的待办/提醒也是防抖写的，同样要在这里一起落盘——
+  // 否则用户在 300ms 内退出，刚加的待办就没了。
+  const assistantWrite = assistant?.flush?.() || null;
+  if (!saveTimer && !pendingWrite && !assistantWrite) return;
   event.preventDefault();
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
     writeSettings();
   }
-  const wait = pendingWrite || Promise.resolve();
+  const wait = Promise.all([pendingWrite || Promise.resolve(), assistantWrite || Promise.resolve()]);
   wait.finally(() => app.quit());
 }
 
@@ -352,10 +419,16 @@ function openSettings() {
   }
   // 普通边框窗口：需要标题栏与关闭按钮，
   // 因此不是透明、不是无边框、也不置顶。
+  //
+  // 宽度 640：左边是分区目录（190），右边是内容区。
+  // 高度 720：原来的 760 加上标题栏已经超过 768 高的屏幕，
+  // 窗口本来就在屏幕外——降到 720 才装得下。
   settingsWin = new BrowserWindow({
-    width: 380,
-    height: 300,
-    resizable: false,
+    width: 640,
+    height: 720,
+    minWidth: 460,
+    minHeight: 420,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     title: '桌面宠物 · 设置',
@@ -382,6 +455,43 @@ function showContextMenu() {
     openSettings,
     quit: () => app.quit(),
   }).popup({ window: win });
+}
+
+/**
+ * 打开插件面板：左键点桌宠时走这条路。
+ *
+ * 面板**懒创建**（见 src/main/panel.js）：它就摆在桌宠旁边，
+ * 用户点一下角色就该有个搜索框；功能入口则从右键菜单搬到了这里。
+ */
+function openPanel() {
+  panel?.show();
+}
+
+/**
+ * 渲染层报告「有文件被拖到了桌宠身上」。
+ *
+ * 只报**文件名与大小**：路径本身不落盘、不外传——
+ * 用户拖进来的是他自己的文件，没必要被记录下来。
+ */
+async function reportDroppedFile(filePath) {
+  try {
+    const info = await stat(filePath);
+    const name = basename(filePath);
+    const size = info.isDirectory() ? '文件夹' : formatBytes(info.size);
+    assistant?.say?.(`收到 ${name}（${size}）`, { emotion: 'surprised', sound: 'tap' });
+  } catch (err) {
+    console.warn('[desk-pet] 拖放的文件读不到：', err?.message);
+    assistant?.say?.('这个文件我打不开', { emotion: 'sad', sound: 'error' });
+  }
+}
+
+/** 字节数说成人话。 */
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '未知大小';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 app.whenReady().then(async () => {
@@ -457,6 +567,8 @@ app.whenReady().then(async () => {
     },
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
+    // 左键点桌宠：弹出插件面板。
+    onOpenPanel: openPanel,
     // 拖拽的增量位移：累加到**期望位置**上，夹紧后才落到窗口，并持久化实际位置。
     //
     // 增量式是刻意的：渲染层把「这一段拖了多远」递过来，
@@ -492,6 +604,38 @@ app.whenReady().then(async () => {
     onModelSwitchResult,
     // 渲染层报告模型加载失败（启动阶段）。
     onModelError,
+    // —— 桌面助理 ——
+    // 助理状态：设置窗口用它显示与修改偏好。
+    getAssistantState: () => assistant?.getState() || null,
+    saveAssistantPrefs: (patch) => {
+      const next = assistant?.update(patch || {});
+      // 音效开关要立刻生效：它作用在渲染层的提示音上。
+      if (typeof patch?.sound?.enabled === 'boolean' && win && !win.isDestroyed()) {
+        win.webContents.send('pet:soundEnabled', { enabled: patch.sound.enabled });
+      }
+      return next;
+    },
+    // 语音状态：只回掩码，**绝不回明文 key**。
+    getTtsStatus: async () => {
+      const status = await apiKeyStatus(app.getPath('userData'), ROOT);
+      return { ...status, voices: SUGGESTED_VOICES };
+    },
+    setTtsApiKey: async (key) => {
+      const mask = await saveApiKey(app.getPath('userData'), key);
+      return { ok: true, mask };
+    },
+    // 对话（LLM）的 key 状态：只回掩码，**绝不回明文 key**。
+    // 留空表示沿用 MiniMax 的那个 key。
+    getLlmStatus: async () => llmKeyStatus(app.getPath('userData'), ROOT),
+    setLlmApiKey: async (key) => {
+      const mask = await saveLlmApiKey(app.getPath('userData'), key);
+      return { ok: true, mask };
+    },
+    // 渲染层报告拖放到桌宠上的文件。
+    onDroppedFile: (filePath) => {
+      if (typeof filePath !== 'string' || filePath === '') return;
+      void reportDroppedFile(filePath);
+    },
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
@@ -501,6 +645,101 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', invalidateDisplayCache);
 
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
+  startCursorTracking();
+
+  // 气泡窗口：桌宠说话的地方。**懒创建**——第一次有消息时才建窗口，
+  // 否则 E2E 里的 app.firstWindow() 会先找到气泡而不是桌宠。
+  bubble = createBubbleController({
+    rootDir: ROOT,
+    getPetWindow: () => win,
+    getDisplays: () => currentDisplays(),
+  });
+
+  // 桌面助理：提醒、番茄钟、待办、天气、报时都在这边。
+  assistant = createAssistant({
+    userDataDir: app.getPath('userData'),
+    rootDir: ROOT,
+    bubble,
+    // 情绪事件发给渲染层，由它换表情/播动作。
+    // 第二个参数是心情值的增量（渲染层拿它调整心情）。
+    onEmotion: (emotion, mood = 0) => {
+      if (win && !win.isDestroyed()) win.webContents.send('pet:emotion', { emotion, mood });
+    },
+    // 合成好的语音交给渲染层播放（口型同步也在那边）。
+    onSpeak: (audio, mime) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pet:speak', { audio, mime });
+      }
+    },
+    onSound: (name) => {
+      if (win && !win.isDestroyed()) win.webContents.send('pet:sound', { name });
+    },
+    // 桌宠可见吗：桌宠被藏起来时不该凭空浮一个气泡窗口。
+    isPetVisible: () => Boolean(win && !win.isDestroyed() && win.isVisible()),
+  });
+  await assistant.start();
+
+  // 插件注册表：待办、提醒、番茄钟……都在这儿。
+  // 它读写的都是助理的状态——助理是唯一的状态来源。
+  plugins = createPluginRegistry({
+    assistant,
+    openSettings,
+  });
+
+  // 本机程序索引：面板的搜索框要能搜到本机的程序。
+  //
+  // 扫盘要几百毫秒，所以**后台**先扫一遍（warm）：
+  // 用户点开面板时清单多半已经在那儿了，不用干等。
+  apps = createAppIndex({
+    // 启动交给系统：shell.openPath 能处理 exe、lnk、bat 与目录。
+    //
+    // 它的坑：**不抛异常**，失败时 resolve 一个**错误字符串**。
+    // 忽略返回值的话，「文件不存在」会变成一次毫无动静的失败。
+    open: async (target) => {
+      try {
+        const error = await shell.openPath(target);
+        return error || null;
+      } catch (err) {
+        return err?.message || '打开失败';
+      }
+    },
+  });
+  apps.warm();
+
+  // 插件面板：左键点桌宠弹出来的搜索框。**懒创建**——
+  // 启动时它不在，E2E 的 app.firstWindow() 才认得出桌宠。
+  panel = createPanelController({
+    rootDir: ROOT,
+    getPetWindow: () => win,
+    getDisplays: () => currentDisplays(),
+    plugins,
+    apps,
+    // 输入框里的话直接发给桌宠（不走插件动作通道）。
+    onChat: (text) => {
+      // 一定要接住：chat() 里给气泡发消息的调用万一抛错，
+      // 漏掉的拒绝会变成主进程的未处理错误。
+      void assistant?.chat?.(text)?.catch?.((err) => {
+        console.warn('[desk-pet] 聊天失败：', err?.message || err);
+      });
+    },
+  });
+
+  // 桌宠动了，气泡与面板跟着动。
+  win.on('move', () => {
+    bubble?.reposition();
+    panel?.reposition();
+  });
+  win.on('resize', () => {
+    bubble?.reposition();
+    panel?.reposition();
+  });
+  // 桌宠被藏起来时，气泡与面板不该独自留在桌面上。
+  win.on('hide', () => {
+    bubble?.onPetHidden();
+    panel?.onPetHidden();
+  });
+  // 桌宠重新出现：把藏起来期间排队的消息播出来。
+  win.on('show', () => assistant?.onPetVisible());
 
   tray = createTray({
     iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),

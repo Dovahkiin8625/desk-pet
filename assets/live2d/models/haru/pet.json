@@ -11,7 +11,8 @@
     "shy": "F07",
     "angry": "F02",
     "surprised": "F06",
-    "sad": "F03"
+    "sad": "F03",
+    "tired": "F04"
   },
   "motions": {
     "idle": { "group": "Idle", "index": 0 },

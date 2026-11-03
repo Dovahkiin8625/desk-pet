@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launchApp, collectErrors, dragBy, windowPos, moveToTopLeft } from './helpers.js';
+import { launchApp, collectErrors, dragBy, windowPos, moveToTopLeft, PET_WINDOW_URL, SYNTHETIC_POINTER_ID } from './helpers.js';
 
 /**
  * 拖拽夹具（dragBy / windowPos / moveToTopLeft）与错误收集器统一放在
@@ -18,13 +18,13 @@ import { launchApp, collectErrors, dragBy, windowPos, moveToTopLeft } from './he
  * 返回渲染层观察到的窗口屏幕位置轨迹：用来断言「窗口确实被钉在边缘上过」。
  */
 const dragAlong = async (win, offsets) => {
-  return win.evaluate(async (offsets) => {
+  return win.evaluate(async ({ offsets, pointerId }) => {
     const canvas = window.__pet.stage.app.view;
     const start = { x: window.screenX + 150, y: window.screenY + 84 };
     const opts = (sx, sy) => ({
       clientX: sx - window.screenX,
       clientY: sy - window.screenY,
-      pointerId: 1,
+      pointerId,
       button: 0,
       bubbles: true,
     });
@@ -39,7 +39,7 @@ const dragAlong = async (win, offsets) => {
     canvas.dispatchEvent(new PointerEvent('pointerup', opts(start.x + last.x, start.y + last.y)));
     await new Promise((r) => setTimeout(r, 400));
     return trace;
-  }, offsets);
+  }, { offsets, pointerId: SYNTHETIC_POINTER_ID });
 };
 
 /**
@@ -179,12 +179,15 @@ test('拖到屏幕边缘被夹住后，光标往回走时角色回到光标下�
     const before = await moveToTopLeft(ctx);
 
     // 工作区与窗口尺寸：往下拖多远才能顶到下边缘。
-    const geom = await ctx.app.evaluate(({ BrowserWindow, screen }) => {
+    const geom = await ctx.app.evaluate(({ BrowserWindow, screen }, petUrl) => {
       const wa = screen.getPrimaryDisplay().workArea;
-      const w = BrowserWindow.getAllWindows()[0];
+      const w = BrowserWindow.getAllWindows().find((x) =>
+        x.webContents.getURL().includes(petUrl)
+      );
+      if (!w) return null;
       const [ww, wh] = w.getSize();
       return { wa, ww, wh };
-    });
+    }, PET_WINDOW_URL);
     // 夹紧上界用与实现（display.js 的 clampToDisplays）**同一个公式**：
     // wa.y + Math.max(0, wa.height - width)。
     // 直接写 wa.height - wh 的话，工作区比窗口还矮时会得到低于工作区原点的上界。
@@ -225,12 +228,15 @@ test('即使 dragStart 信号丢失，拖拽结束也会清掉累加器，下一
   try {
     const before = await moveToTopLeft(ctx);
 
-    const geom = await ctx.app.evaluate(({ BrowserWindow, screen }) => {
+    const geom = await ctx.app.evaluate(({ BrowserWindow, screen }, petUrl) => {
       const wa = screen.getPrimaryDisplay().workArea;
-      const w = BrowserWindow.getAllWindows()[0];
+      const w = BrowserWindow.getAllWindows().find((x) =>
+        x.webContents.getURL().includes(petUrl)
+      );
+      if (!w) return null;
       const [ww, wh] = w.getSize();
       return { wa, ww, wh };
-    });
+    }, PET_WINDOW_URL);
     const maxY = geom.wa.y + Math.max(0, geom.wa.height - geom.wh);
 
     // 拔掉 pet:dragStart 的处理器 = 这个信号**永远送不到**主进程。
@@ -286,12 +292,15 @@ test('保存的位置所在显示器已不可用时，启动回落到主显示�
   try {
     const pos = await windowPos(ctx);
     // 期望落在主显示器可见区域的右下角（display.js 的 defaultPosition）。
-    const expected = await ctx.app.evaluate(({ BrowserWindow, screen }) => {
+    const expected = await ctx.app.evaluate(({ BrowserWindow, screen }, petUrl) => {
       const wa = screen.getPrimaryDisplay().workArea;
-      const w = BrowserWindow.getAllWindows()[0];
+      const w = BrowserWindow.getAllWindows().find((x) =>
+        x.webContents.getURL().includes(petUrl)
+      );
+      if (!w) return null;
       const [ww, wh] = w.getSize();
       return { x: wa.x + Math.max(0, wa.width - ww), y: wa.y + Math.max(0, wa.height - wh) };
-    });
+    }, PET_WINDOW_URL);
     expect(pos.x).toBe(expected.x);
     expect(pos.y).toBe(expected.y);
     expect(errors).toEqual([]);

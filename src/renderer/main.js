@@ -4,6 +4,20 @@ import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
 import { attachInteraction } from './pet/interaction.js';
 import { idleReaction } from './pet/behavior.js';
+import {
+  EVENT,
+  applyEvent,
+  boredomLevel,
+  clampMood,
+  createEmotionState,
+  decayMood,
+  eventRule,
+  expressionNameFor,
+  touch,
+} from './pet/emotion.js';
+import { playTap, playSpeech, playSuccess, playAlarm, playError, setAudioEnabled } from './pet/audio.js';
+import { attachLipSync } from './pet/lipSync.js';
+import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
 
 window.__pet = {
   ready: false,
@@ -34,12 +48,31 @@ window.__pet = {
   // setOpacity 施加——这里只是把「现在是多少」暴露出来供测试断言。
   scale: 1,
   opacity: 1,
+  // 当前的心情值与语义情绪。诊断面：测试要能断言「被摸头之后心情变好了」。
+  mood: 0,
+  emotion: 'neutral',
+  // 最近一次由**系统光标**轮询得到的窗口内坐标（与 focusPoint 分开：
+  // focusPoint 是指针事件驱动的，既有断言依赖它的语义，不能被光标覆盖）。
+  cursorPoint: null,
+  // 语音诊断：收到几段语音、最近一段多少字节。
+  speechCount: 0,
+  lastSpeechBytes: 0,
+  // 最近一次的口型幅度（0..1）：证明 beforeModelUpdate 钩子真的在驱动参数，
+  // 而不只是「播放了一个音频」。
+  mouthAmplitude: 0,
 };
 
 let stage = null;
 let currentModel = null;
 let currentManifest = null;
 let userScale = 1;
+// 滚轮缩放的待落盘值与「已排队」标记。
+//
+// 每滚一格就发一次 IPC 会让连续滚动又卡又抖：
+// 本地先改（手感立刻跟手），攒到下一帧再一次性落盘。
+let pendingScale = null;
+let scaleSaveQueued = false;
+
 // 上一次拖拽事件里光标的**屏幕**坐标。见 onDragMove 的说明：
 // 增量必须在屏幕坐标系里算，否则窗口追着光标跑会把增量吃掉一半。
 let lastPointerScreen = null;
@@ -58,6 +91,155 @@ let switchSeq = 0;
 // 胜出的模型变成「没有绑定纹理的空壳」，而 switchModel 仍然报告成功。
 // 串行化之后任何时刻只有一个模型在被加载，不存在共享纹理。
 let switchChain = Promise.resolve();
+
+// ---------------------------------------------------------------------------
+// 情绪系统
+//
+// 心情值与语义情绪都住在渲染层：表情与动作都在这边表演，
+// 主进程只负责把「发生了什么」转成事件发过来。
+// ---------------------------------------------------------------------------
+
+let emotionState = createEmotionState();
+
+// 最近几次点击的时间戳：用来判断「被连续猛点」。
+//
+// 只保留窗口内的点击：时间戳太老的直接丢掉，
+// 否则数组会随着使用一直增长。
+const tapTimes = [];
+
+// 连续猛点的判定：2 秒内 3 次。
+const SPAM_WINDOW_MS = 2000;
+const SPAM_THRESHOLD = 3;
+
+// 上一次落到的「无聊程度」（null / idle-long / timeout）。
+// 只在**等级变化**时才换表情：否则每 30 秒检查一次就会把
+// 同一张「难过脸」反复重播一遍。
+let boredomEvent = null;
+
+// 上一次做心情衰减的时间点。
+let lastDecayAt = Date.now();
+
+// 拖拽摇摆的 ticker 回调（null 表示当前没有在摇摆）。
+let dragWobble = null;
+
+// 口型驱动的句柄（null 表示当前模型没有口型参数）。
+let lipSync = null;
+
+/**
+ * 施加一个情绪事件：更新心情，必要时换上对应表情。
+ *
+ * 表情名一律走清单解析（expressionNameFor）：清单里没这个语义就返回 null，
+ * 此时**不套表情**（spec §4.4 的降级规则），只保留动作与心情变化。
+ */
+function applyEmotion(event) {
+  const rule = eventRule(event);
+  emotionState = applyEvent(emotionState, event);
+  window.__pet.mood = emotionState.mood;
+  window.__pet.emotion = emotionState.emotion;
+  if (!rule?.express) return;
+  showEmotion(emotionState.emotion);
+}
+
+/**
+ * 直接换上某个语义情绪的表情。
+ *
+ * 与 applyEmotion 分开：助理那边来的事件已经带着**语义情绪**
+ * （「惊讶」「开心」），不需要再走一遍「事件 → 情绪」的映射，
+ * 也不该改动心情值——心情反映的是用户怎么对待桌宠。
+ */
+function showEmotion(emotion) {
+  if (!emotion) return;
+  emotionState = { ...emotionState, emotion };
+  window.__pet.emotion = emotion;
+  const name = expressionNameFor(currentManifest, emotion);
+  if (!name || !currentModel?.expression) return;
+  try {
+    currentModel.expression(name)?.catch?.(() => {});
+  } catch {
+    /* 表情缺失时静默跳过 */
+  }
+}
+
+/** 记录一次用户互动：重置「多久没人理」的计时。 */
+function markInteraction() {
+  emotionState = touch(emotionState);
+}
+
+/**
+ * 记录一次点击，并判断是不是「被连续猛点」。
+ *
+ * 触发过一次就把计数清空：否则用户继续点的话每一下都会再气一次，
+ * 那不是生气，那是卡死。
+ */
+function recordTap() {
+  const now = Date.now();
+  tapTimes.push(now);
+  while (tapTimes.length > 0 && now - tapTimes[0] > SPAM_WINDOW_MS) tapTimes.shift();
+  if (tapTimes.length >= SPAM_THRESHOLD) {
+    tapTimes.length = 0;
+    applyEmotion(EVENT.SPAM);
+  }
+}
+
+/**
+ * 拖拽时的钟摆摇摆：被拎在半空的挣扎感。
+ *
+ * 绕**脚下的锚点**转（模型的 anchor 是 [0.5, 1.0]），
+ * 所以是「站着晃」而不是「整个人转圈」。
+ */
+function startDragWobble() {
+  if (dragWobble || !stage?.app?.ticker) return;
+  const tick = () => {
+    const model = currentModel;
+    if (!model || model.destroyed) return;
+    model.rotation = Math.sin((performance.now() / 1000) * 9) * 0.05;
+  };
+  stage.app.ticker.add(tick);
+  dragWobble = tick;
+}
+
+/** 停止摇摆并把模型摆正。 */
+function stopDragWobble() {
+  if (!dragWobble) return;
+  stage?.app?.ticker?.remove(dragWobble);
+  dragWobble = null;
+  if (currentModel && !currentModel.destroyed) currentModel.rotation = 0;
+}
+
+/**
+ * 设定用户缩放。
+ *
+ * 缩放**不直接作用在模型上**：主进程拿到新缩放后把窗口放大，
+ * 画布随之变大，渲染层按画布重新适配模型。
+ * 「模型永远在画布里」因此是构造上的保证——放多大都不会被切掉上半身。
+ */
+function setUserScale(next) {
+  // 对齐到设置窗口滑块的刻度（0.05）：滚轮按比例换算出来的值常常是 1.36 这种，
+  // 落盘后设置窗口的滑块会把它吸附到最近的刻度，滑块与显示的数字就对不上了。
+  const stepped = Math.round(next / SCALE_STEP) * SCALE_STEP;
+  // 再抹掉浮点误差：0.05 * 27 在 IEEE754 下是 1.3500000000000001，
+  // 这种值会原样落进 settings.json。
+  const clamped = Math.min(
+    SCALE_RANGE.max,
+    Math.max(SCALE_RANGE.min, Math.round(stepped * 1000) / 1000),
+  );
+  if (clamped === userScale) return;
+  userScale = clamped;
+  window.__pet.scale = clamped;
+  pendingScale = clamped;
+  if (scaleSaveQueued) return;
+  scaleSaveQueued = true;
+  requestAnimationFrame(() => {
+    scaleSaveQueued = false;
+    const value = pendingScale;
+    pendingScale = null;
+    // invoke 返回 promise：窗口在滚动途中被拆掉时它会拒绝，
+    // 渲染层没有全局 unhandledrejection 兜底——拒绝必须吃掉。
+    window.pet.saveSettings?.({ scale: value })?.catch?.((err) => {
+      console.warn('[desk-pet] 缩放保存失败：', err?.message || err);
+    });
+  });
+}
 
 /**
  * 排队一次形象切换。
@@ -135,13 +317,20 @@ async function doMountModel(modelId, token) {
     // 先把旧模型摘出舞台：它马上要被销毁，留在渲染列表里只会
     // 让渲染循环去访问已经释放的纹理。
     if (currentModel.parent) currentModel.parent.removeChild(currentModel);
+    // 口型驱动也要拆：它闭包引用着旧模型的 coreModel，
+    // 不拆的话旧模型销毁后仍会被每帧回调碰到。
+    lipSync?.detach();
+    lipSync = null;
     released = disposePetModel(currentModel);
     currentModel = null;
   }
   window.__pet.lastReleasedTextures = released;
 
   stage.app.stage.addChild(model);
-  const fit = stage.fitModel(model, manifest, userScale);
+  // 口型驱动挂在**新模型**上：模型没有口型参数时 attachLipSync 返回 null，
+  // 整个功能静默关闭。
+  lipSync = attachLipSync(model);
+  const fit = stage.fitModel(model, manifest);
   currentModel = model;
   currentManifest = manifest;
   // 模型上屏了：启动失败时画的那块占位提示该撤掉了。
@@ -274,16 +463,84 @@ function registerChannels() {
     if (typeof s.scale === 'number' && s.scale !== userScale) {
       // 只有缩放**真的变了**才重新适配：广播带的是完整设置对象，
       // 拖动**透明度**滑块时 scale 也在里面，不比较就会每次都白白 fit 一次。
+      //
+      // 滚轮缩放时本地已经先改过 userScale（见 setUserScale），
+      // 所以这里只在**外部**（设置窗口）改了缩放时才会走到。
       userScale = s.scale;
       window.__pet.scale = userScale;
       if (currentModel && currentManifest) {
-        stage.fitModel(currentModel, currentManifest, userScale);
+        stage.fitModel(currentModel, currentManifest);
       }
     }
     if (typeof s.opacity === 'number') {
       // 透明度实际由主进程 setOpacity 施加在宠物窗口上，
       // 这里只是把生效值记到诊断面上。
       window.__pet.opacity = s.opacity;
+    }
+  });
+
+  // —— 桌面助理的事件 ——
+  // 情绪：主进程那边发生了「提醒到了」「太热了」之类的事。
+  window.pet.onEmotion?.((emotion, moodDelta) => {
+    if (!emotion) return;
+    // 心情值可以跟着动一点（比如任务完成让桌宠也开心）。
+    if (typeof moodDelta === 'number' && moodDelta !== 0) {
+      emotionState = { ...emotionState, mood: clampMood(emotionState.mood + moodDelta) };
+      window.__pet.mood = emotionState.mood;
+    }
+    showEmotion(emotion);
+  });
+
+  // 合成好的语音：播放它，并用响度包络驱动口型。
+  window.pet.onSpeak?.((audio, mime) => {
+    if (!audio) return;
+    // IPC 传过来的是 Uint8Array；字节序由 StructuredClone 保证。
+    const bytes = audio instanceof Uint8Array ? audio : new Uint8Array(audio);
+    window.__pet.speechCount += 1;
+    window.__pet.lastSpeechBytes = bytes.length;
+    void playSpeech(bytes, (amplitude) => {
+      lipSync?.setAmplitude(amplitude);
+      window.__pet.mouthAmplitude = amplitude;
+    }).catch((err) => {
+      console.warn('[desk-pet] 语音播放失败：', err?.message || err);
+    });
+  });
+
+  // 提示音：待办完成、提醒响起之类的界面反馈。
+  window.pet.onSound?.((name) => {
+    if (name === 'success') playSuccess();
+    else if (name === 'alarm') playAlarm();
+    else if (name === 'error') playError();
+    else if (name === 'tap') playTap();
+  });
+
+  // 音效总开关（设置窗口改的）。
+  window.pet.onSoundEnabled?.((enabled) => setAudioEnabled(enabled));
+
+  // 系统光标位置：主进程以 10Hz 轮询发过来（窗口内坐标）。
+  //
+  // 只在光标**不在桌宠窗口里**时才驱动视线：
+  // 光标在窗口内时，指针事件（pointermove）已经在管这件事了，
+  // 两边同时驱动会让视线在两个目标之间来回跳。
+  window.pet.onCursorPoint?.((p) => {
+    if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return;
+    window.__pet.cursorPoint = { x: p.x, y: p.y };
+    const canvas = stage?.app?.view;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    // 主进程发的是**窗口内**坐标；画布未必铺满窗口（rect.left/top 不为 0）。
+    // 换算成画布坐标再判断「光标在不在桌宠身上」——
+    // 与指针事件那条路径（interaction.js 的 local()）保持同一套坐标。
+    const x = p.x - rect.left;
+    const y = p.y - rect.top;
+    const inside = x >= 0 && x <= rect.width && y >= 0 && y <= rect.height;
+    if (inside) return;
+    if (!currentModel?.focus) return;
+    try {
+      // model.focus 吃的是画布/世界坐标，与指针路径传的是同一个空间。
+      currentModel.focus(x, y);
+    } catch {
+      /* ignore */
     }
   });
 }
@@ -323,6 +580,27 @@ async function boot() {
 
   const canvas = stage.app.view;
 
+  /**
+   * 文件拖放：把文件拖到桌宠身上。
+   *
+   * 路径要用 `webUtils.getPathForFile` 取：Electron 32 起 `File.path` 已被移除，
+   * 而 webUtils 只能在 preload 里调，所以由 preload 代劳（window.pet.pathForFile）。
+   *
+   * dragover **必须** preventDefault：不 preventDefault 浏览器就不会触发 drop。
+   */
+  canvas.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  canvas.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    const path = window.pet.pathForFile?.(file) || '';
+    if (!path) return;
+    window.pet.reportDroppedFile?.(path);
+  });
+
   // 空闲计时：20 秒无交互则播一次 idle 动作（spec §5.1）
   const DEFAULT_IDLE_MS = 20000;
   let idleMs = DEFAULT_IDLE_MS;
@@ -345,10 +623,25 @@ async function boot() {
           /* ignore */
         }
       }
-      // 同时回到 normal 表情——idleReaction 的语义键就是 normal。
-      if (r.expressionName && currentModel?.expression) {
+      // 同时把表情换成**当前情绪**对应的那个。
+      //
+      // 以前这里固定换回 normal（idleReaction 的语义键就是 normal），
+      // 可那样一来「久没人理」的难过脸会被每 20 秒的待机动作盖掉，
+      // 而无聊程度的判定只在**等级变化**时才换脸——
+      // 于是桌宠顶多难过 20 秒，之后就一直是一张若无其事的普通脸。
+      //
+      // 现在由情绪系统决定脸：默认情绪是 neutral → normal（与原来完全一样），
+      // 犯困/难过时就会一直保持那张脸。
+      //
+      // 当前情绪在清单里没映射时**退回 normal**：
+      // 降级模型（没有 pet.json）只按名字认得 normal，
+      // 若这里什么都不套，那张脸就一直停在上一个表情上——
+      // 而 spec §4.3 的降级规则是「按名字套上 Normal」。
+      const emotionName =
+        expressionNameFor(currentManifest, emotionState.emotion) || r.expressionName;
+      if (emotionName && currentModel?.expression) {
         try {
-          currentModel.expression(r.expressionName)?.catch?.(() => {});
+          currentModel.expression(emotionName)?.catch?.(() => {});
         } catch {
           /* ignore */
         }
@@ -370,13 +663,47 @@ async function boot() {
     return idleMs;
   };
 
+  // 心情的后台维护：心情自然回落，久没人理会露出难过/困倦的脸。
+  //
+  // 30 秒一次足够：这些状态的变化本来就慢，
+  // 而「心情回落」这种每分钟才动几个点的效果没必要更频繁。
+  setInterval(() => {
+    const now = Date.now();
+    const elapsed = now - lastDecayAt;
+    lastDecayAt = now;
+    const mood = decayMood(emotionState.mood, elapsed);
+    if (mood !== emotionState.mood) {
+      emotionState = { ...emotionState, mood };
+      window.__pet.mood = mood;
+    }
+    // 只在**等级变化**时换表情：否则每 30 秒就把同一张难过脸重播一遍。
+    const level = boredomLevel(emotionState, now);
+    if (level !== boredomEvent) {
+      boredomEvent = level;
+      if (level) applyEmotion(level);
+      return;
+    }
+    // 心情淡到接近 0 时，情绪回到中性。
+    //
+    // 不然的话：摸一次头（心情 +12）之后，开心脸会一直挂着——
+    // 心情在淡，脸却不会自己回去。
+    if (!level && emotionState.mood <= 3 && emotionState.emotion !== 'neutral') {
+      showEmotion('neutral');
+    }
+  }, 30000);
+
   // 画布上唯一的指针事件入口。模型与清单都在**回调里实时读取**：
   // 切换形象后拿到的必须是当前模型，不能是上一个形象的引用。
   attachInteraction({
     canvas,
     getModel: () => currentModel,
     getManifest: () => currentManifest,
-    onInteract: resetIdleTimer,
+    onInteract: () => {
+      // 空闲计时（spec §5.1）与「多久没人理」是两件事：
+      // 前者决定什么时候播 idle 动作，后者决定什么时候露出无聊/困倦的脸。
+      resetIdleTimer();
+      markInteraction();
+    },
     onTap: ({ zone, reaction }) => {
       window.__pet.lastZone = zone;
       window.__pet.lastExpression = reaction.expressionName;
@@ -397,6 +724,22 @@ async function boot() {
           /* 动作缺失时静默跳过 */
         }
       }
+      // 触摸反馈音效：角色的台词由模型自带，这里只是「碰了一下」的界面反馈。
+      playTap();
+      // 左键点桌宠 → 弹出插件面板（搜索框）。
+      //
+      // 摸头的表情与音效**照旧**：面板是入口，不是把角色的反应抢走。
+      // invoke 返回 promise：窗口在点击后被拆掉时它会拒绝，
+      // 而渲染层没有全局 unhandledrejection 兜底——拒绝必须吃掉。
+      window.pet.openPanel?.()?.catch?.(() => {});
+      // 情绪：点击只改心情，**不换表情**——
+      // spec §5.1 已经给摸头/点击身体指定了表情（happy / smile），
+      // 情绪系统不该把它覆盖掉。
+      //
+      // 顺序要紧：先记这次点击的普通情绪，**再**判猛点——
+      // 反过来的话「生气」会被紧接着的普通情绪盖掉，生气永远显示不出来。
+      applyEmotion(zone === 'head' ? EVENT.TAP_HEAD : EVENT.TAP_BODY);
+      recordTap();
     },
     onHover: (x, y) => {
       window.__pet.focusPoint = { x, y };
@@ -424,6 +767,9 @@ async function boot() {
           /* ignore */
         }
       }
+      // 被拎起来：惊讶脸 + 钟摆摇摆（悬空挣扎的观感）。
+      applyEmotion(EVENT.DRAG_START);
+      startDragWobble();
     },
     onDragMove: ({ deltaX, deltaY, clientX, clientY }) => {
       // 增量必须换算到**屏幕**坐标再累加。
@@ -458,10 +804,20 @@ async function boot() {
       // 累加器的正确性不该依赖 pet:dragStart 这个信号一定送达。
       // （主进程已在每次 moveWindowBy 时持久化位置，这里无需额外持久化。）
       window.pet.dragEnd?.()?.catch?.(() => {});
+      // 落地：停止摇摆，把脸从惊讶换回平常。
+      stopDragWobble();
+      applyEmotion(EVENT.DRAG_END);
     },
     onContextMenu: () => {
       // 同上：invoke 的 promise 必须处理掉，不能变成未处理拒绝。
       window.pet.showContextMenu?.()?.catch?.(() => {});
+    },
+    onZoom: (deltaY) => {
+      // 滚轮向上（deltaY < 0）放大。
+      //
+      // 一个滚轮刻度记作 100：Windows 鼠标一格是 100~120，
+      // 触控板的小增量按比例换算，滚起来才跟手。
+      setUserScale(userScale - (deltaY / 100) * SCALE_STEP);
     },
   });
 

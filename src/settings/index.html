@@ -4,51 +4,535 @@
   <meta charset="utf-8">
   <title>桌面宠物 · 设置</title>
   <style>
-    :root { color-scheme: light; }
+    /* ---------------------------------------------------------------------
+       色板：与插件面板、气泡同一套暖色（#fffdf8 / #d8d2c4 / #bda87c）。
+       设置页原先是冷灰蓝，是全应用唯一的冷色页——两份配色已经漂开了。
+       下面的值全部取自 panel/index.html 与 bubble/index.html，没有新色。
+       --------------------------------------------------------------------- */
+    :root {
+      color-scheme: light;
+
+      /* 表面 */
+      --bg: #f2eee2;             /* 窗口底 */
+      --surface: #fffdf8;        /* 面板底 */
+      --surface-2: #f6f2e7;      /* 按钮底 */
+      --surface-hover: #efe9d8;  /* 悬停 */
+      --surface-active: #f1ead8; /* 选中项 */
+      --surface-sunken: #ece6d8; /* 凹陷（发丝线） */
+
+      /* 描边 */
+      --border: #d8d2c4;
+      --border-hair: #ece6d8;
+      --border-input: #c9c1b0;
+
+      /* 文字 */
+      --text: #2b2a26;
+      --text-2: #3a352c;
+      --muted: #8a8272;
+      --muted-2: #9a9384;
+      --muted-3: #a9a294;
+
+      /* 强调（黄铜） */
+      --accent: #bda87c;
+      --accent-soft: #d9c9a3;
+      --accent-ink: #7a6a4f;
+      --focus: #c8b78f;
+
+      /* 状态 */
+      --ok: #4f7a52;
+      --danger: #a8543f;
+      --danger-bg: #f7e7e1;
+      --danger-border: #d9b3a8;
+
+      /* 尺度 */
+      --radius-sm: 6px;
+      --radius: 9px;
+      --nav-w: 190px;
+      --label-w: 88px;
+      --gap: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
     body {
-      margin: 0; padding: 20px 24px;
       font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-      background: #f6f7fb; color: #232733;
-      min-width: 320px;
-      /* 内容盒含内边距：否则 320px 的最小宽度再加左右各 24px 内边距，
-         窗口宽度不够时会多出一条横向滚动条。 */
-      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--text);
     }
-    h1 { font-size: 16px; margin: 0 0 16px; }
-    .row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-    .row label { width: 76px; flex: none; }
-    select, input[type="range"] { flex: 1; }
-    select {
-      padding: 5px 8px; border: 1px solid #ccd2e0; border-radius: 6px;
-      background: #fff; font: inherit;
+
+    /* 隐藏的分区必须真的不占地方。
+       .panel 写了 display，作者样式会击穿浏览器默认的 [hidden]{display:none}，
+       那样非当前分区就仍然可见——这里显式压住。 */
+    [hidden] { display: none !important; }
+
+    /* ---------- 外壳 ---------- */
+    .app { height: 100%; display: flex; flex-direction: column; }
+    /* 高度链要通：.shell 的高度才有参照，.pane 的滚动才有意义。 */
+    .shell { flex: 1 1 auto; min-height: 0; display: flex; }
+
+    /* ---------- 左侧目录 ---------- */
+    .nav {
+      flex: none; width: var(--nav-w);
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 14px 10px;
+      border-right: 1px solid var(--border-hair);
+      background: var(--surface);
+      overflow-y: auto;
     }
-    .val { width: 46px; text-align: right; color: #5b647a; font-variant-numeric: tabular-nums; }
-    .hint { color: #6b7488; font-size: 12px; margin-top: 4px; }
-    #status { min-height: 18px; color: #2f7d4f; font-size: 12px; }
+    .nav-tab {
+      position: relative;
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+      width: 100%; padding: 8px 10px 8px 12px;
+      border: none; border-radius: var(--radius-sm);
+      background: transparent; color: var(--text);
+      font: inherit; text-align: left; cursor: pointer;
+      transition: background-color .12s ease;
+    }
+    /* 左侧那道竖条是「你在这儿」的标记。 */
+    .nav-tab::before {
+      content: ''; position: absolute; left: 2px; top: 8px; bottom: 8px;
+      width: 3px; border-radius: 2px; background: transparent;
+    }
+    .nav-tab:hover { background: var(--surface-hover); }
+    .nav-tab[aria-selected="true"] {
+      background: var(--surface-active);
+      font-weight: 600;
+    }
+    .nav-tab[aria-selected="true"]::before { background: var(--accent); }
+    .nav-label { flex: none; }
+    /* 摘要：目录右边那一列，把整个应用的状态摊开给用户看。 */
+    .nav-summary {
+      min-width: 3.5em; text-align: right; white-space: nowrap;
+      color: var(--muted); font-size: 12px; font-weight: 400;
+    }
+    .nav-tab[aria-selected="true"] .nav-summary { color: var(--accent-ink); }
+
+    /* ---------- 右侧内容 ---------- */
+    .pane {
+      flex: 1 1 auto; min-width: 0;
+      overflow-y: auto;
+      padding: 20px 24px 28px;
+    }
+    .panel { max-width: 560px; }
+    .panel h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+    .panel-sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+
+    /* ---------- 字段 ---------- */
+    .field {
+      display: grid;
+      grid-template-columns: var(--label-w) minmax(0, 1fr);
+      align-items: center; gap: 12px;
+      margin-bottom: var(--gap);
+    }
+    .field > label { color: var(--text-2); }
+    /* 标签在上、控件通栏：给文本域用。 */
+    .field.stack { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+    .control { min-width: 0; }
+    .inline { display: flex; gap: 8px; align-items: center; }
+    /* width:auto 是必须的：控件默认 width:100%，在 flex 行里会被当成
+       flex-basis 的基准，把整行撑到换行——「保存」和「清除」就分家了。 */
+    .inline input { flex: 1 1 140px; min-width: 0; width: auto; }
+    .range {
+      display: grid; grid-template-columns: minmax(0, 1fr) 58px;
+      align-items: center; gap: 10px;
+    }
+    .val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    /* ---------- 开关 ---------- */
+    .toggle { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+    .toggle.solo { margin-bottom: var(--gap); }
+    .toggle input {
+      flex: none; margin: 3px 0 0;
+      width: 15px; height: 15px; accent-color: var(--accent);
+    }
+    .toggle label { cursor: pointer; }
+    .t-label { display: block; }
+    .t-hint { display: block; color: var(--muted-2); font-size: 12px; }
+    .switch-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 12px 20px; margin-bottom: var(--gap);
+    }
+
+    /* ---------- 分组（人设 / 主动搭话） ---------- */
+    .group {
+      margin-top: 22px; padding-top: 16px;
+      border-top: 1px solid var(--border-hair);
+    }
+    .group-title { font-size: 13px; font-weight: 600; color: var(--accent-ink); margin: 0 0 12px; }
+
+    /* ---------- 控件 ---------- */
+    select, input[type="text"], input[type="password"], textarea {
+      width: 100%;
+      padding: 6px 9px; border: 1px solid var(--border-input);
+      border-radius: var(--radius-sm);
+      background: var(--surface); color: inherit; font: inherit;
+    }
+    textarea { resize: vertical; min-height: 54px; line-height: 1.55; }
+    /* 滑块自己画：浏览器默认的轨道是没走的那段深炭灰，在米色底上太扎眼；
+       而只改轨道颜色会连「已经走到哪儿」的填充一起弄丢——
+       填充是 UA 用 accent-color 画在轨道上的，所以填充改成 --pct 渐变，
+       由 JS 按当前值写进这个变量。 */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 16px; margin: 0;
+      background: transparent; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px; border-radius: 2px;
+      background: linear-gradient(
+        to right,
+        var(--accent) 0 var(--pct, 50%),
+        var(--surface-sunken) var(--pct, 50%) 100%
+      );
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; margin-top: -5px;
+      border-radius: 50%;
+      background: var(--accent); border: 2px solid var(--surface);
+    }
+    input[type="checkbox"] { accent-color: var(--accent); }
+
+    .btn {
+      padding: 6px 13px; white-space: nowrap;
+      border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface-2); color: var(--text-2);
+      font: inherit; cursor: pointer;
+      transition: background-color .12s ease;
+    }
+    .btn:hover { background: var(--surface-hover); }
+    .btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+    .btn.primary:hover { border-color: var(--accent-ink); }
+    .btn.danger { background: var(--surface); border-color: var(--danger-border); color: var(--danger); }
+    .btn.danger:hover { background: var(--danger-bg); }
+
+    /* ---------- 说明与状态 ---------- */
+    .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+    .mask { color: var(--ok); font-size: 12px; }
+    .facts {
+      list-style: none; margin: 0 0 14px; padding: 0;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .facts li {
+      padding: 8px 11px;
+      border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text-2); font-size: 13px;
+    }
+    .facts:empty::before { content: '（还没记住什么）'; color: var(--muted-2); font-size: 13px; }
+    .actions { margin-bottom: var(--gap); }
+
+    /* ---------- 底部状态栏 ---------- */
+    /* 常驻不滚：状态提示写在页面最底下的话，用户在别的分区根本看不见。 */
+    .app-foot {
+      flex: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 36px; padding: 6px 20px;
+      border-top: 1px solid var(--border-hair);
+      background: var(--surface);
+      color: var(--muted); font-size: 12px;
+    }
+    #status { color: var(--ok); text-align: right; }
+    #status[data-kind="pending"] { color: var(--accent-ink); }
+    #status[data-kind="error"] { color: var(--danger); }
+
+    /* ---------- 焦点环与滚动条 ---------- */
+    :is(select, input, textarea, button, .nav-tab):focus-visible {
+      outline: 2px solid var(--focus); outline-offset: 1px;
+    }
+    /* Windows 原生滚动条是冷灰蓝的——这里也换成暖色。 */
+    .pane, .nav { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .pane::-webkit-scrollbar, .nav::-webkit-scrollbar { width: 10px; height: 10px; }
+    .pane::-webkit-scrollbar-thumb, .nav::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 6px;
+      border: 3px solid transparent; background-clip: content-box;
+    }
+    .pane::-webkit-scrollbar-track, .nav::-webkit-scrollbar-track { background: transparent; }
+
+    /* ---------- 窄窗口：目录收成顶部标签条 ---------- */
+    @media (max-width: 560px) {
+      .shell { flex-direction: column; }
+      .nav {
+        width: auto; flex-direction: row; align-items: stretch; gap: 4px;
+        overflow-x: auto; overflow-y: hidden;
+        border-right: none; border-bottom: 1px solid var(--border-hair);
+        padding: 8px 10px;
+      }
+      .nav-tab { flex: none; width: auto; flex-direction: column; align-items: flex-start; gap: 0; }
+      .nav-tab::before { left: 10px; right: 10px; top: auto; bottom: 3px; width: auto; height: 2px; }
+      .nav-summary { text-align: left; }
+      .switch-grid { grid-template-columns: 1fr; }
+      .field { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+      .panel { max-width: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>桌面宠物设置</h1>
+  <div class="app">
+    <div class="shell">
+      <!-- role=tablist 直接落在 nav 上：中间夹一层普通 div 会切断 ARIA 父子关系。 -->
+      <nav class="nav" id="nav" role="tablist" aria-orientation="vertical" aria-label="设置分类">
+        <button type="button" class="nav-tab" id="tab-appearance" role="tab"
+                data-section="appearance" aria-controls="panel-appearance"
+                aria-selected="true" tabindex="0">
+          <span class="nav-label">外观</span>
+          <span class="nav-summary" data-summary="appearance">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-assistant" role="tab"
+                data-section="assistant" aria-controls="panel-assistant"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">助理</span>
+          <span class="nav-summary" data-summary="assistant">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-voice" role="tab"
+                data-section="voice" aria-controls="panel-voice"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">语音</span>
+          <span class="nav-summary" data-summary="voice">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-chat" role="tab"
+                data-section="chat" aria-controls="panel-chat"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">对话</span>
+          <span class="nav-summary" data-summary="chat">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-memory" role="tab"
+                data-section="memory" aria-controls="panel-memory"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">记忆</span>
+          <span class="nav-summary" data-summary="memory">—</span>
+        </button>
+      </nav>
 
-  <div class="row">
-    <label for="model">形象</label>
-    <select id="model"></select>
+      <main class="pane" id="pane">
+        <!-- 同一时刻只有一个面板可见，所以文档里正好有一个 h1。 -->
+        <section class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
+          <h1>外观</h1>
+          <p class="panel-sub">桌宠长什么样，在桌面上占多大。</p>
+
+          <div class="field">
+            <label for="model">形象</label>
+            <div class="control"><select id="model"></select></div>
+          </div>
+
+          <div class="field">
+            <label for="scale">缩放</label>
+            <div class="control range">
+              <input type="range" id="scale" min="0.5" max="2" step="0.05">
+              <span class="val" id="scaleVal"></span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="opacity">透明度</label>
+            <div class="control range">
+              <input type="range" id="opacity" min="0.2" max="1" step="0.05">
+              <span class="val" id="opacityVal"></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-assistant" role="tabpanel" aria-labelledby="tab-assistant" hidden>
+          <h1>桌面助理</h1>
+          <p class="panel-sub">它什么时候主动开口、什么时候提醒你。</p>
+
+          <div class="switch-grid">
+            <div class="toggle">
+              <input type="checkbox" id="chime">
+              <label for="chime"><span class="t-label">整点报时</span></label>
+            </div>
+            <div class="toggle">
+              <input type="checkbox" id="greeting">
+              <label for="greeting"><span class="t-label">启动时问候</span></label>
+            </div>
+            <div class="toggle">
+              <input type="checkbox" id="sound">
+              <label for="sound"><span class="t-label">提示音</span></label>
+            </div>
+            <div class="toggle">
+              <input type="checkbox" id="hotAlert">
+              <label for="hotAlert"><span class="t-label">太热时提醒</span></label>
+            </div>
+            <div class="toggle">
+              <input type="checkbox" id="clipboard">
+              <label for="clipboard">
+                <span class="t-label">剪贴板助手</span>
+                <span class="t-hint">复制内容时提示</span>
+              </label>
+            </div>
+            <div class="toggle">
+              <input type="checkbox" id="weatherEnabled">
+              <label for="weatherEnabled">
+                <span class="t-label">定时播报天气</span>
+                <span class="t-hint">按下面的城市查</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="weatherCity">天气城市</label>
+            <div class="control"><input type="text" id="weatherCity" placeholder="例如：北京"></div>
+          </div>
+
+          <p class="hint">待办、提醒、番茄钟在<b>插件面板</b>里：<b>左键点一下桌宠</b>，输入关键词就能找到。</p>
+        </section>
+
+        <section class="panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+          <h1>语音</h1>
+          <p class="panel-sub">桌宠说话时用 MiniMax 合成语音。</p>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="ttsEnabled">
+            <label for="ttsEnabled"><span class="t-label">语音播报（MiniMax）</span></label>
+          </div>
+
+          <div class="field">
+            <label for="voiceId">音色</label>
+            <div class="control">
+              <input type="text" id="voiceId" list="voiceList" placeholder="female-shaonv">
+              <datalist id="voiceList"></datalist>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="speed">语速</label>
+            <div class="control range">
+              <input type="range" id="speed" min="0.5" max="2" step="0.05">
+              <span class="val" id="speedVal"></span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="apiKey">API Key</label>
+            <div class="control inline">
+              <input type="password" id="apiKey" placeholder="留空表示不修改">
+              <button type="button" id="saveKey" class="btn primary">保存</button>
+              <button type="button" id="clearKey" class="btn">清除</button>
+            </div>
+          </div>
+          <p class="hint">Key 存在本机，不会显示在界面上：<span class="mask" id="keyStatus">未配置</span></p>
+        </section>
+
+        <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
+          <h1>对话</h1>
+          <p class="panel-sub">走 OpenAI 兼容协议，填别的服务商的地址也能用。</p>
+
+          <div class="toggle solo">
+            <input type="checkbox" id="llmEnabled">
+            <label for="llmEnabled"><span class="t-label">允许和桌宠聊天</span></label>
+          </div>
+
+          <div class="field">
+            <label for="llmBaseUrl">接口地址</label>
+            <div class="control"><input type="text" id="llmBaseUrl" placeholder="https://api.minimaxi.com/v1"></div>
+          </div>
+
+          <div class="field">
+            <label for="llmModel">模型</label>
+            <div class="control"><input type="text" id="llmModel" placeholder="MiniMax-Text-01"></div>
+          </div>
+
+          <div class="field">
+            <label for="llmTemperature">温度</label>
+            <div class="control range">
+              <input type="range" id="llmTemperature" min="0" max="2" step="0.1">
+              <span class="val" id="llmTemperatureVal"></span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="llmMaxTokens">回复长度</label>
+            <div class="control">
+              <select id="llmMaxTokens">
+                <option value="200">简短</option>
+                <option value="500">适中</option>
+                <option value="800">默认</option>
+                <option value="1500">较长</option>
+                <option value="3000">很长</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="llmTokensField">长度字段</label>
+            <div class="control">
+              <select id="llmTokensField">
+                <option value="max_tokens">max_tokens</option>
+                <option value="max_completion_tokens">max_completion_tokens</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="llmApiKey">对话 Key</label>
+            <div class="control inline">
+              <input type="password" id="llmApiKey" placeholder="留空表示沿用上面的 Key">
+              <button type="button" id="saveLlmKey" class="btn primary">保存</button>
+              <button type="button" id="clearLlmKey" class="btn">清除</button>
+            </div>
+          </div>
+          <p class="hint">对话：<span class="mask" id="llmKeyStatus">未配置</span></p>
+
+          <div class="group">
+            <h2 class="group-title">人设</h2>
+            <div class="field">
+              <label for="llmPersonaName">名字</label>
+              <div class="control"><input type="text" id="llmPersonaName" placeholder="小桌"></div>
+            </div>
+            <div class="field stack">
+              <label for="llmPersonaStyle">性格</label>
+              <textarea id="llmPersonaStyle" rows="2" placeholder="活泼、亲切，偶尔犯困"></textarea>
+            </div>
+            <div class="field stack">
+              <label for="llmPersonaBackstory">背景</label>
+              <textarea id="llmPersonaBackstory" rows="2" placeholder="住在你桌面上的 Live2D 桌宠"></textarea>
+            </div>
+          </div>
+
+          <div class="group">
+            <h2 class="group-title">主动搭话</h2>
+            <div class="toggle solo">
+              <input type="checkbox" id="llmProactive">
+              <label for="llmProactive"><span class="t-label">允许桌宠主动开口</span></label>
+            </div>
+            <div class="field">
+              <label for="llmProactiveInterval">最少间隔</label>
+              <div class="control">
+                <select id="llmProactiveInterval">
+                  <option value="1800000">半小时</option>
+                  <option value="3600000">一小时</option>
+                  <option value="10800000">三小时</option>
+                  <option value="21600000">六小时</option>
+                </select>
+              </div>
+            </div>
+            <p class="hint">深夜（23:00–08:00）不搭话；用户刚说过话时也不插嘴。</p>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-memory" role="tabpanel" aria-labelledby="tab-memory" hidden>
+          <h1>它记住的事</h1>
+          <p class="panel-sub">桌宠从聊天里记下的、关于你的事实。</p>
+          <ul id="llmFacts" class="facts"></ul>
+          <div class="actions">
+            <button type="button" id="clearFacts" class="btn danger">忘掉这些</button>
+          </div>
+          <p class="hint">点「忘掉这些」就全清了。</p>
+        </section>
+      </main>
+    </div>
+
+    <footer class="app-foot">
+      <span>设置即时生效并自动保存</span>
+      <span id="status" role="status"></span>
+    </footer>
   </div>
-
-  <div class="row">
-    <label for="scale">缩放</label>
-    <input type="range" id="scale" min="0.5" max="2" step="0.05">
-    <span class="val" id="scaleVal"></span>
-  </div>
-
-  <div class="row">
-    <label for="opacity">透明度</label>
-    <input type="range" id="opacity" min="0.2" max="1" step="0.05">
-    <span class="val" id="opacityVal"></span>
-  </div>
-
-  <div id="status"></div>
-  <div class="hint">设置即时生效并自动保存。</div>
 
   <script type="module" src="/src/settings/main.js"></script>
 </body>
