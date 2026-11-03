@@ -26,7 +26,8 @@ export const DEFAULT_ASSISTANT = Object.freeze({
   clipboard: { enabled: false },
   chime: { enabled: true },
   greeting: { enabled: true },
-  sound: { enabled: true },
+  // sound.volume 是**总音量**：提示音与桌宠说话共用一个值。
+  sound: { enabled: true, volume: 0.8 },
   hotAlert: { enabled: true },
   tts: { ...DEFAULT_TTS },
   llm: structuredClone(DEFAULT_LLM),
@@ -103,7 +104,13 @@ export function sanitizeAssistant(raw) {
   if (isPlainObject(raw.clipboard)) out.clipboard = { enabled: Boolean(raw.clipboard.enabled) };
   if (isPlainObject(raw.chime)) out.chime = { enabled: Boolean(raw.chime.enabled) };
   if (isPlainObject(raw.greeting)) out.greeting = { enabled: Boolean(raw.greeting.enabled) };
-  if (isPlainObject(raw.sound)) out.sound = { enabled: Boolean(raw.sound.enabled) };
+  if (isPlainObject(raw.sound)) {
+    out.sound = {
+      enabled: Boolean(raw.sound.enabled),
+      // 总音量：提示音与语音共用。夹进 [0,1]，非法值回退默认。
+      volume: clampNumber(raw.sound.volume, 0, 1, DEFAULT_ASSISTANT.sound.volume),
+    };
+  }
   if (isPlainObject(raw.hotAlert)) out.hotAlert = { enabled: Boolean(raw.hotAlert.enabled) };
 
   if (isPlainObject(raw.tts)) {

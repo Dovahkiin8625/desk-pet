@@ -288,6 +288,18 @@ function onModelSwitchResult(result) {
   entry.resolve(result);
 }
 
+/**
+ * 把总音量推给宠物窗口。
+ *
+ * 音量作用在渲染层的主增益上，所以主进程只管「把值送过去」。
+ */
+function pushVolume() {
+  if (!win || win.isDestroyed()) return;
+  const volume = assistant?.getState()?.sound?.volume;
+  if (typeof volume !== 'number') return;
+  win.webContents.send('pet:volume', { volume });
+}
+
 /** 渲染层就绪：补发积压的切换请求，并重新广播一次设置。 */
 function onRendererReady() {
   rendererReady = true;
@@ -303,6 +315,9 @@ function onRendererReady() {
       enabled: assistant?.getState()?.sound?.enabled !== false,
     });
   }
+  // 音量也一样要在这一刻补发一次：渲染层的监听器在那之前还没注册，
+  // 发过去的推送会被丢弃（decisions.md #23 记过这个坑）。
+  pushVolume();
 }
 
 /**
@@ -613,6 +628,8 @@ app.whenReady().then(async () => {
       if (typeof patch?.sound?.enabled === 'boolean' && win && !win.isDestroyed()) {
         win.webContents.send('pet:soundEnabled', { enabled: patch.sound.enabled });
       }
+      // 总音量同理：拖滑块时音量要立刻变，落盘是 300ms 之后的事。
+      if (typeof patch?.sound?.volume === 'number') pushVolume();
       return next;
     },
     // 语音状态：只回掩码，**绝不回明文 key**。
@@ -678,6 +695,14 @@ app.whenReady().then(async () => {
     isPetVisible: () => Boolean(win && !win.isDestroyed() && win.isVisible()),
   });
   await assistant.start();
+
+  // 助理起来之后再补发一次音量。
+  //
+  // 渲染层可能**比助理更早 ready**（页面一加载就发 rendererReady，
+  // 而助理还在 start() 里读磁盘）——那一刻 assistant 还是 undefined，
+  // pushVolume 推不出东西，音量就停在渲染层的默认值 0.8 上，
+  // 用户设的 0.3 永远传不过去。
+  pushVolume();
 
   // 插件注册表：待办、提醒、番茄钟……都在这儿。
   // 它读写的都是助理的状态——助理是唯一的状态来源。

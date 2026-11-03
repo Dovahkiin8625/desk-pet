@@ -15,7 +15,17 @@ import {
   expressionNameFor,
   touch,
 } from './pet/emotion.js';
-import { playTap, playSpeech, playSuccess, playAlarm, playError, setAudioEnabled } from './pet/audio.js';
+import {
+  playTap,
+  playSpeech,
+  playSuccess,
+  playAlarm,
+  playError,
+  setAudioEnabled,
+  setMasterVolume,
+  getMasterVolume,
+  getSpeechOutput,
+} from './pet/audio.js';
 import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
 
@@ -57,6 +67,11 @@ window.__pet = {
   // 语音诊断：收到几段语音、最近一段多少字节。
   speechCount: 0,
   lastSpeechBytes: 0,
+  // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
+  volume: 0.8,
+  // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
+  // 「桌宠说话也受音量控制」只有这一个可断言的出口。
+  speechOutput: null,
   // 最近一次的口型幅度（0..1）：证明 beforeModelUpdate 钩子真的在驱动参数，
   // 而不只是「播放了一个音频」。
   mouthAmplitude: 0,
@@ -501,9 +516,14 @@ function registerChannels() {
     void playSpeech(bytes, (amplitude) => {
       lipSync?.setAmplitude(amplitude);
       window.__pet.mouthAmplitude = amplitude;
-    }).catch((err) => {
-      console.warn('[desk-pet] 语音播放失败：', err?.message || err);
-    });
+    })
+      .then(() => {
+        // 播完之后才拿得到：连接是在 decodeAudioData 之后才做的。
+        window.__pet.speechOutput = getSpeechOutput();
+      })
+      .catch((err) => {
+        console.warn('[desk-pet] 语音播放失败：', err?.message || err);
+      });
   });
 
   // 提示音：待办完成、提醒响起之类的界面反馈。
@@ -516,6 +536,12 @@ function registerChannels() {
 
   // 音效总开关（设置窗口改的）。
   window.pet.onSoundEnabled?.((enabled) => setAudioEnabled(enabled));
+
+  // 总音量：主进程把它推过来。
+  window.pet.onVolume?.((v) => {
+    if (typeof v !== 'number') return;
+    window.__pet.volume = setMasterVolume(v);
+  });
 
   // 系统光标位置：主进程以 10Hz 轮询发过来（窗口内坐标）。
   //
@@ -558,6 +584,8 @@ async function boot() {
   userScale = settings?.scale ?? 1;
   window.__pet.scale = userScale;
   window.__pet.opacity = typeof settings?.opacity === 'number' ? settings.opacity : 1;
+  // 音量：启动时先按默认值摆好，主进程随后会推真值过来。
+  window.__pet.volume = getMasterVolume();
   try {
     // 不在这里写死任何形象 id：loadManifest 对未知/缺失的 id 会回退到注册表首个形象。
     // initial: true —— 首次挂载不顶掉用户请求，但会被用户请求顶掉。

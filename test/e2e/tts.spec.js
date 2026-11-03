@@ -139,3 +139,44 @@ test('语音没开时不合成任何东西', async () => {
     await stub.close();
   }
 });
+
+test('桌宠说话接在主增益上，所以它也受总音量控制', async () => {
+  const stub = await startStubTts();
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-tts-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+  // 预置：语音开着，域名指向桩服务，音量调到 0.3。
+  await writeFile(
+    join(userDataDir, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      tts: { enabled: true, voiceId: 'female-shaonv', model: 'speech-02-hd', host: stub.url },
+      sound: { enabled: true, volume: 0.3 },
+    }),
+    'utf8'
+  );
+
+  const ctx = await launchWithMenuProbe({
+    userDataDir,
+    env: {
+      MINIMAX_API_KEY: 'sk-test-local-stub',
+      DESK_PET_TTS_HOSTS: stub.url,
+    },
+  });
+  try {
+    // 音量到了渲染层。
+    await ctx.win.waitForFunction(() => window.__pet.volume === 0.3, null, { timeout: 10000 });
+
+    // 语音**接在主增益上**，而不是直接接扬声器——
+    // 接错了的话「桌宠说话」这一路就不受音量控制。
+    await ctx.win.waitForFunction(
+      () => window.__pet.speechOutput === 'masterGain',
+      null,
+      { timeout: 20000 },
+    );
+  } finally {
+    await ctx.close();
+    await stub.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

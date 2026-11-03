@@ -414,3 +414,15 @@ test('聊天记录追加与记忆合并', async () => {
   facts = mergeFacts(facts, ['写代码']);
   assert.equal(facts.length, 2, '已有的不该重复加');
 });
+
+// 总音量（sound.volume）：提示音与桌宠说话共用一个值。
+//
+// 越界的**数字**按规格 §9「音量超出 [0,1] → sanitizeAssistant 夹紧」处理：
+// 5 夹到 1、-1 夹到 0。非数字（'x'）是**非法值**，回退默认 0.8。
+test('sound.volume 被夹进 [0,1]，非法值回退 0.8', () => {
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 0.5 } }).sound.volume, 0.5);
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 5 } }).sound.volume, 1);
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0);
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 'x' } }).sound.volume, 0.8);
+  assert.equal(sanitizeAssistant({}).sound.volume, 0.8);
+});

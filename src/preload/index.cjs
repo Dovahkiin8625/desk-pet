@@ -62,6 +62,10 @@ contextBridge.exposeInMainWorld('pet', {
   onSoundEnabled: (cb) => {
     ipcRenderer.on('pet:soundEnabled', (_e, payload) => cb(payload?.enabled !== false));
   },
+  // 总音量：提示音与桌宠说话共用一个值。
+  onVolume: (cb) => {
+    ipcRenderer.on('pet:volume', (_e, payload) => cb(payload?.volume));
+  },
   // 文件拖放：Electron 32 起 File.path 已被移除，
   // 真实的路径要用 webUtils.getPathForFile 从 File 对象里取
   // （它只能在 preload 里调，所以由 preload 代劳）。

@@ -13,6 +13,11 @@
 let ctx = null;
 let enabled = true;
 let masterGain = null;
+// 总音量：提示音与桌宠说话共用一个值（设置窗口的「音量」滑块）。
+let volume = 0.8;
+// 语音输出接到了哪个节点：'masterGain' 或 'destination'。
+// 诊断用——「桌宠说话受不受音量控制」这件事没有别的办法从外面看出来。
+let speechOutput = null;
 
 function audioContext() {
   if (ctx) return ctx;
@@ -25,7 +30,7 @@ function audioContext() {
     return null;
   }
   masterGain = ctx.createGain();
-  masterGain.gain.value = 0.8;
+  masterGain.gain.value = volume;
   masterGain.connect(ctx.destination);
   return ctx;
 }
@@ -37,6 +42,37 @@ export function setAudioEnabled(value) {
 
 export function isAudioEnabled() {
   return enabled;
+}
+
+/**
+ * 设总音量。
+ *
+ * 提示音与语音都接在 masterGain 上，所以这一个值管住两种声音。
+ * 语音原来直连 ac.destination —— 那条路绕过了主增益，
+ * 于是「提示音有音量控制、桌宠说话没有」。总音量要成立就得把它接回来。
+ */
+export function setMasterVolume(value) {
+  const n = typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0.8;
+  volume = n;
+  if (masterGain) masterGain.gain.value = n;
+  return volume;
+}
+
+/** 当前总音量。 */
+export function getMasterVolume() {
+  return volume;
+}
+
+/**
+ * 语音输出接到了哪个节点。
+ *
+ * 有了它，「桌宠说话也受音量控制」才有可断言的出口——
+ * 否则那只是一行 `source.connect(...)`，改了也没人看得出来。
+ */
+export function getSpeechOutput() {
+  return speechOutput;
 }
 
 /**
@@ -133,7 +169,9 @@ export async function playSpeech(bytes, onAmplitude) {
   const envelope = computeEnvelope(decoded);
   const source = ac.createBufferSource();
   source.buffer = decoded;
-  source.connect(ac.destination);
+  // 接主增益，不接 destination：不然语音不受总音量控制。
+  source.connect(masterGain || ac.destination);
+  speechOutput = masterGain ? 'masterGain' : 'destination';
   const startedAt = ac.currentTime;
   let stopped = false;
   source.onended = () => {
