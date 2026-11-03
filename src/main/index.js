@@ -486,29 +486,13 @@ function openSettings() {
 }
 
 /**
- * 重建托盘菜单。
+ * 托盘菜单与右键菜单共用的动作表。
  *
- * 托盘菜单**只在启动时构建一次**，所以「鼠标穿透」的勾选状态、
- * 「取回桌宠」的出现与消失都靠重建来同步——否则菜单会一直显示旧状态。
+ * 两处各写一份的后果很具体：加一个动作要改两处，
+ * 漏一处就是「托盘菜单里那个项点了没反应」。
  */
-function refreshTrayMenu() {
-  if (!tray) return;
-  tray.setContextMenu(
-    buildTrayMenu({
-      toggleVisible,
-      openSettings,
-      quit: () => app.quit(),
-      toggleClickThrough: () => system?.toggleClickThrough?.(),
-      isClickThrough: () => settings?.clickThrough === true,
-      isDocked: () => system?.getState?.().dock != null,
-      retrievePet: () => system?.retrievePet?.(),
-    })
-  );
-}
-
-function showContextMenu() {
-  if (!win) return;
-  buildContextMenu({
+function menuActions() {
+  return {
     toggleVisible,
     openSettings,
     quit: () => app.quit(),
@@ -516,7 +500,23 @@ function showContextMenu() {
     isClickThrough: () => settings?.clickThrough === true,
     isDocked: () => system?.getState?.().dock != null,
     retrievePet: () => system?.retrievePet?.(),
-  }).popup({ window: win });
+  };
+}
+
+/**
+ * 重建托盘菜单。
+ *
+ * 托盘菜单**只在启动时构建一次**，所以「鼠标穿透」的勾选状态、
+ * 「取回桌宠」的出现与消失都靠重建来同步——否则菜单会一直显示旧状态。
+ */
+function refreshTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(buildTrayMenu(menuActions()));
+}
+
+function showContextMenu() {
+  if (!win) return;
+  buildContextMenu(menuActions()).popup({ window: win });
 }
 
 /**

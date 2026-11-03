@@ -212,7 +212,7 @@ export function createSystemController({
       setHotkeyStatus({
         state: 'error',
         accelerator: current,
-        error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
+        error: '这个组合不能用：至少要带一个修饰键（Ctrl / Alt / Shift）',
       });
       return false;
     }
@@ -331,7 +331,7 @@ export function createSystemController({
         setHotkeyStatus({
           state: 'error',
           accelerator: settings.hotkey,
-          error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
+          error: '这个组合不能用：至少要带一个修饰键（Ctrl / Alt / Shift）',
         });
       } else {
         const result = registerShortcut(settings.hotkey);
