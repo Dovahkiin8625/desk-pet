@@ -80,6 +80,24 @@ function makeController(overrides = {}) {
   return { controller, win, settings, patched, loginItemCalls };
 }
 
+/**
+ * 捕获 console.warn。
+ *
+ * 失败路径**必须留痕**——那是「用户勾了开关但系统里没生效」时唯一的线索，
+ * 所以要**验证**它，而不是把它当成测试噪音留在输出里。
+ */
+function captureWarnings(fn) {
+  const original = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
 test('开机自启：打开时写入登录项', () => {
   const { controller, loginItemCalls, settings } = makeController();
   controller.init(settings);
@@ -140,8 +158,97 @@ test('开机自启：注册失败时把开关改回关闭', () => {
     },
   });
   controller.init(settings);
-  controller.applySettings({ ...settings, autoLaunch: true });
+  const warnings = captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: true });
+  });
   // 磁盘上不能写着 true 而系统里没有注册项。
   assert.deepEqual(patched, [{ autoLaunch: false }]);
   assert.equal(settings.autoLaunch, false);
+  // 失败必须留痕：终端里要有一条说得清原因的警告。
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /开机自启/);
+  assert.match(warnings[0], /注册表写不进去/);
+});
+
+test('开机自启：注册失败要通知外面，而且通知时开关已经是回退后的值', () => {
+  // holder 是因为回调要在 makeController 返回之后才拿到 settings。
+  const holder = {};
+  const seen = [];
+  const { controller, settings } = makeController({
+    options: {
+      onStateChanged: () => seen.push(holder.settings.autoLaunch),
+      loginItem: {
+        set: () => {
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: false }),
+      },
+    },
+  });
+  holder.settings = settings;
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: true });
+  });
+  // 界面不能是静默的：失败必须通知出去。
+  assert.equal(seen.length, 1);
+  // 而且通知的时候开关已经是关闭的——否则界面会停留在「已开启」。
+  assert.deepEqual(seen, [false]);
+});
+
+test('开机自启：关闭失败时保持旧值，下次同值会重试', () => {
+  const { controller, loginItemCalls, patched, settings } = makeController({
+    settings: { autoLaunch: true },
+    options: {
+      loginItem: {
+        set: (s) => {
+          loginItemCalls.push(s);
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: false }),
+      },
+    },
+  });
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: false });
+    controller.applySettings({ ...settings, autoLaunch: false });
+  });
+  // 第一次失败后 applied 仍记着 true（系统里的注册项其实还在），
+  // 所以第二次同值调用会重试，而不是「以为已经关了」。
+  assert.equal(loginItemCalls.length, 2);
+  // 关闭方向失败不改磁盘：只有「打开」方向失败才必须把磁盘改回去。
+  assert.deepEqual(patched, []);
+});
+
+test('getState 把当前状态与最后一次失败一起报出来', () => {
+  const { controller, settings } = makeController();
+  controller.init(settings);
+  const state = controller.getState();
+  assert.equal(state.autoLaunch, false);
+  assert.equal(state.clickThroughActive, false);
+  assert.equal(state.edgeSnap, true);
+  assert.equal(state.lastError, '');
+});
+
+test('getState：注册失败后 lastError 说清是什么事、为什么', () => {
+  const { controller, settings } = makeController({
+    options: {
+      loginItem: {
+        set: () => {
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: false }),
+      },
+    },
+  });
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: true });
+  });
+  const state = controller.getState();
+  // 光在终端留痕不够：界面也要有话说。
+  assert.notEqual(state.lastError, '');
+  assert.match(state.lastError, /开机自启/);
+  assert.match(state.lastError, /注册表写不进去/);
 });

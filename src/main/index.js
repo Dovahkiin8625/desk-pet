@@ -676,7 +676,12 @@ app.whenReady().then(async () => {
     getSettings: () => settings,
     applySettings: (patch) => persist(patch),
     onHotkeyAction: () => toggleVisible(),
-    onStateChanged: () => {},
+    onStateChanged: () => {
+      // 系统状态变了要广播出去：设置窗口的勾选框要跟着回退，
+      // 而且它靠 getState() 里的 lastError 把失败原因显示出来。
+      // persist() 自己不广播——落盘是防抖的，而「生效」不能等落盘。
+      broadcastSettings(settings);
+    },
     onHotkeyStatus: (status) => {
       // 设置窗口还没建时无处可发；它建好后会自己拉一次状态。
       if (settingsWin && !settingsWin.isDestroyed()) {
@@ -693,9 +698,20 @@ app.whenReady().then(async () => {
       get: () => app.getLoginItemSettings(),
     },
     shortcuts: {
-      register: (acc, cb) => globalShortcut.register(acc, cb),
-      unregister: (acc) => globalShortcut.unregister(acc),
-      unregisterAll: () => globalShortcut.unregisterAll(),
+      register: (acc, cb) => {
+        // E2E 不占用系统级快捷键：注册是真的全局生效，
+        // 跑测试的那几分钟里用户按这个组合会被应用吃掉。
+        if (IS_E2E) return true;
+        return globalShortcut.register(acc, cb);
+      },
+      unregister: (acc) => {
+        if (IS_E2E) return;
+        globalShortcut.unregister(acc);
+      },
+      unregisterAll: () => {
+        if (IS_E2E) return;
+        globalShortcut.unregisterAll();
+      },
       isRegistered: (acc) => globalShortcut.isRegistered(acc),
     },
     getAppPath: () => app.getAppPath(),
