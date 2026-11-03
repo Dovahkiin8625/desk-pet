@@ -738,3 +738,24 @@ test('启动时「贴边隐藏」是关的：不按 settings.dock 把桌宠藏�
   // 窗口一步都没动过。
   assert.deepEqual(win.calls, []);
 });
+
+test('磁吸只挪被吸附的那一轴：另一轴被边界吃掉的增量仍在累加器里', () => {
+  const { controller, win, settings } = makeController();
+  controller.init(settings);
+  // 桌宠在右边缘的磁吸区里（离右边 10px），离上边缘 30px。
+  win.setPosition(690, 30);
+  controller.dragStart();
+  // 一帧同时有横向的吸附与纵向的越界：
+  // y 被工作区上边界吃掉 30px（累加器里应当还留着 -30）。
+  controller.moveBy(3, -60);
+  // 横向被磁吸贴到右边缘，纵向被上边界钉住。
+  assert.equal(win.getPosition()[0], 1000 - 300);
+  assert.equal(win.getPosition()[1], 0);
+
+  // 纵向那 60px 的越界量必须**留在累加器里**：往回下拖 20，
+  // 窗口仍应被上边界钉住（y = 0），而不是掉到 y = 20——
+  // 掉下去就意味着磁吸把累加器整体覆盖了、越界量被扔了，
+  // 桌宠从此与光标脱开（「被边缘吃掉的增量不能永久丢失」被破坏）。
+  controller.moveBy(0, 20);
+  assert.equal(win.getPosition()[1], 0);
+});

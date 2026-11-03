@@ -221,9 +221,18 @@ export function createSystemController({
         if (wa) {
           const snapped = snapToEdge(applied.x, applied.y, w, h, wa, { dx, dy });
           if (snapped.side) {
-            // 吸附改了窗口位置，期望位置也要跟着改——
-            // 不然窗口会比光标超前最多 24px，累加器的起点就偏了。
-            desired = { x: snapped.x, y: snapped.y };
+            // 吸附只可能发生在**该轴未被夹紧**的时候（间隙在 (0, 阈值] 内，
+            // 说明窗口还在工作区内），所以：
+            //   snapped[该轴] − applied[该轴] = 磁吸挪动的那一点点，
+            //   另一轴 snapped === applied，差值是 0，累加值原样保留。
+            //
+            // 整体覆盖会把另一轴上尚未被夹紧的累加值一起扔掉——
+            // 那会让桌宠在跨轴吸附时与光标脱开，
+            // 而「被边缘吃掉的增量不能永久丢失」是拖拽的老不变量。
+            desired = {
+              x: desired.x + (snapped.x - applied.x),
+              y: desired.y + (snapped.y - applied.y),
+            };
           }
           applied = { x: snapped.x, y: snapped.y };
         }
