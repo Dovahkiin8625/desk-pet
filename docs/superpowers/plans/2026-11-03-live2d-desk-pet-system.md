@@ -2311,6 +2311,10 @@ Task 5 加的 `hasModifier` 只挡住了 `setHotkey` 的入口，`init` 里直�
 Run: `node --test test/unit/menuTemplate.test.js test/unit/system.test.js`
 Expected: PASS。
 
+> **别忘了 `test/e2e/acceptance.spec.js`**：它写死了菜单的标签数组
+> （`expect(trayMenu.labels).toEqual([...])`），菜单加一项它就必然失败。
+> 那条用例的标题与注释里也写着「鼠标穿透」，一并改成新的菜单结构。
+
 - [ ] **Step 8: 写端到端测试**
 
 `test/e2e/system.spec.js` 末尾追加：
