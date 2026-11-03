@@ -525,17 +525,23 @@ export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
  *
  * 放宽是必须的：普通的 clampToDisplays 把窗口整个按回工作区内，
  * 停靠根本出不来。
+ *
+ * **停靠轴要用停靠区间直接夹，不能先按普通区间夹一遍再放宽**——
+ * 普通区间是 [wa.left, wa.right - w]，落在它右边的值（比如想往屏幕外推）
+ * 会先被夹回 wa.right - w，放宽就再也救不回来了。
  */
 export function clampDocked(x, y, width, height, workArea, side, slip = DOCK_SLIP) {
   const maxX = workArea.x + Math.max(0, workArea.width - width);
   const maxY = workArea.y + Math.max(0, workArea.height - height);
-  let cx = Math.min(Math.max(x, workArea.x), maxX);
-  let cy = Math.min(Math.max(y, workArea.y), maxY);
   const range = dockedRange(side, width, height, workArea, slip);
+  let cx;
+  let cy;
   if (side === 'left' || side === 'right') {
-    cx = Math.min(Math.max(cx, range.min), range.max);
+    cx = Math.min(Math.max(x, range.min), range.max);
+    cy = Math.min(Math.max(y, workArea.y), maxY);
   } else {
-    cy = Math.min(Math.max(cy, range.min), range.max);
+    cx = Math.min(Math.max(x, workArea.x), maxX);
+    cy = Math.min(Math.max(y, range.min), range.max);
   }
   return { x: Math.round(cx), y: Math.round(cy) };
 }
@@ -1467,12 +1473,14 @@ test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
   assert.match(state.hotkeyStatus.error, /占用/);
 });
 
-test('快捷键注册抛异常：当成失败处理', () => {
+test('快捷键语法非法：提示与「被占用」区分开', () => {
+  // 「被占用」要用户换个组合；「这个组合不能用」是设置本身写坏了。
+  // 混成一句话等于让用户瞎猜。
   const { controller, settings } = makeController({
     options: {
       shortcuts: {
         register: () => {
-          throw new Error('非法加速键');
+          throw new Error('Invalid accelerator token');
         },
         unregister: () => {},
         unregisterAll: () => {},
@@ -1482,6 +1490,10 @@ test('快捷键注册抛异常：当成失败处理', () => {
   });
   controller.init(settings);
   assert.equal(controller.setHotkey('Control+Alt+P'), false);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /不能用/);
+  assert.doesNotMatch(state.hotkeyStatus.error, /占用/);
 });
 
 test('录制：开始 → 处理按键 → 注册', () => {
@@ -1605,14 +1617,32 @@ export function buildAccelerator(input) {
 ```js
   // —— 全局快捷键 ——
 
-  /** 注册一个组合。失败（被占用）返回 false，不抛错。 */
+  /**
+   * 注册一个组合。
+   *
+   * 返回 'ok' | 'taken' | 'invalid'：
+   * - 'ok'：注册成功。
+   * - 'taken'：**被别的程序占用**。`globalShortcut.register` 在这种情况下
+   *   返回 false 而且**不抛错**（Windows 上是静默失败，Electron 文档明说
+   *   这是操作系统的有意行为）。
+   * - 'invalid'：**加速键串语法非法**，这时 register 会抛异常。
+   *
+   * **两者必须分开**：用户看到的提示不同。
+   * 「被占用」要他去换个组合；「这个组合不能用」是设置本身写错了
+   * （比如从磁盘上读进来一个手改坏的字符串）。混成一句话等于让用户瞎猜。
+   */
   function registerShortcut(accelerator) {
     try {
-      return shortcuts.register(accelerator, onHotkeyAction);
+      return shortcuts.register(accelerator, onHotkeyAction) ? 'ok' : 'taken';
     } catch (err) {
       console.warn('[desk-pet] 快捷键注册失败：', err?.message || err);
-      return false;
+      return 'invalid';
     }
+  }
+
+  /** 注册失败时的提示语。 */
+  function shortcutErrorText(result) {
+    return result === 'invalid' ? '这个组合不能用' : '该组合已被其他程序占用';
   }
 
   function setHotkeyStatus(next) {
@@ -1634,12 +1664,13 @@ export function buildAccelerator(input) {
       setHotkeyStatus({ state: 'ok', accelerator, error: '' });
       return true;
     }
-    if (!registerShortcut(accelerator)) {
+    const result = registerShortcut(accelerator);
+    if (result !== 'ok') {
       recording = false;
       setHotkeyStatus({
         state: 'error',
         accelerator: current,
-        error: '该组合已被其他程序占用',
+        error: shortcutErrorText(result),
       });
       return false;
     }
@@ -1703,11 +1734,11 @@ export function buildAccelerator(input) {
 ```js
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
     if (settings.hotkey) {
-      const ok = registerShortcut(settings.hotkey);
+      const result = registerShortcut(settings.hotkey);
       setHotkeyStatus({
-        state: ok ? 'ok' : 'error',
+        state: result === 'ok' ? 'ok' : 'error',
         accelerator: settings.hotkey,
-        error: ok ? '' : '该组合已被其他程序占用',
+        error: result === 'ok' ? '' : shortcutErrorText(result),
       });
     }
 ```
@@ -1945,7 +1976,12 @@ export function menuTemplate(actions) {
 1. 把 Task 4 里创建控制器时的 `onStateChanged: () => {},` 改成：
 
 ```js
-    onStateChanged: () => refreshTrayMenu(),
+    onStateChanged: () => {
+      refreshTrayMenu();
+      // 设置窗口也要跟着变：用户可能是在**托盘菜单**里改的穿透，
+      // 那条路不经过设置窗口自己的 saveSettings，不会自动广播。
+      broadcastSettings(settings);
+    },
 ```
 
 2. 加托盘菜单重建函数（放在 `openSettings` 之后）：
