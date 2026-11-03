@@ -8,6 +8,19 @@ export const DEFAULT_SETTINGS = Object.freeze({
   scale: 1.0,
   opacity: 1.0,
   visible: true,
+  // —— 系统与工程化（第六部分）——
+  // 开机自启默认关：开机就跑一个桌宠是用户没要求的行为。
+  autoLaunch: false,
+  // 全局快捷键：呼出/隐藏桌宠。
+  hotkey: 'Control+Shift+D',
+  // 鼠标穿透：窗口不吃点击，桌面照常操作。
+  clickThrough: false,
+  // 边缘吸附：拖到屏幕边缘附近时自动贴齐。
+  edgeSnap: true,
+  // 贴边隐藏：贴齐后滑出屏幕只留一条边。
+  dockEnabled: false,
+  // 当前停靠在哪条边（状态，不是开关）。
+  dock: null,
 });
 
 const OPACITY_RANGE = { min: 0.2, max: 1.0 };
@@ -39,6 +52,19 @@ export function sanitizeSettings(raw) {
   out.scale = clampNumber(raw.scale, SCALE_RANGE.min, SCALE_RANGE.max, DEFAULT_SETTINGS.scale);
   out.opacity = clampNumber(raw.opacity, OPACITY_RANGE.min, OPACITY_RANGE.max, DEFAULT_SETTINGS.opacity);
   if (typeof raw.visible === 'boolean') out.visible = raw.visible;
+  // —— 系统与工程化（第六部分）——
+  if (typeof raw.autoLaunch === 'boolean') out.autoLaunch = raw.autoLaunch;
+  if (typeof raw.clickThrough === 'boolean') out.clickThrough = raw.clickThrough;
+  if (typeof raw.edgeSnap === 'boolean') out.edgeSnap = raw.edgeSnap;
+  if (typeof raw.dockEnabled === 'boolean') out.dockEnabled = raw.dockEnabled;
+  // hotkey：非空字符串且长度 ≤ 64。太长**回退默认值**而不是截断——
+  // 截断出来的加速键串是个语法错误的东西，注册必然失败。
+  if (typeof raw.hotkey === 'string') {
+    const trimmed = raw.hotkey.trim();
+    if (trimmed !== '' && trimmed.length <= 64) out.hotkey = trimmed;
+  }
+  // dock：只认四个合法边名，其余一律 null。
+  if (['left', 'right', 'top', 'bottom'].includes(raw.dock)) out.dock = raw.dock;
   if (typeof raw.version === 'number') out.version = raw.version;
 
   return out;
