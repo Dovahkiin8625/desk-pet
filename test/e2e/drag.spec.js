@@ -176,6 +176,15 @@ test('拖到屏幕边缘被夹住后，光标往回走时角色回到光标下�
   const ctx = await launchApp();
   const errors = collectErrors(ctx.win);
   try {
+    // 这个用例验的是**期望位置累加器**：被夹紧吃掉的增量不能永久丢失。
+    //
+    // 边缘磁吸（Task 7 接进来的，默认开着）会把回到磁吸区里的桌宠吸到边上——
+    // 而本用例正好把桌宠放在上边缘 20px（磁吸区是 24px）处，
+    // 于是往回拖时它被吸到 y=0，落进本用例要排除的形态（「跳到上边缘」）。
+    // 那是另一个功能，不是这个缺陷；两件事混在一起就看不出是谁在起作用。
+    // 所以这里把磁吸关掉，让本用例只盯累加器。
+    await ctx.win.evaluate(() => window.pet.saveSettings({ edgeSnap: false }));
+
     const before = await moveToTopLeft(ctx);
 
     // 工作区与窗口尺寸：往下拖多远才能顶到下边缘。

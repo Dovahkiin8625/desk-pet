@@ -585,3 +585,106 @@ test('穿透模式：关掉时把点击还给窗口', () => {
   assert.deepEqual(win.calls[win.calls.length - 1], ['setIgnoreMouseEvents', false]);
   assert.equal(settings.clickThrough, false);
 });
+
+test('停靠：拖到右边缘并松手 → 藏到边缘外，只露 24px', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  // 往右推很多：窗口被夹到右边缘，期望位置继续累加。
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  const state = controller.getState();
+  assert.equal(state.dock, 'right');
+  const last = win.calls[win.calls.length - 1];
+  assert.equal(last[0], 'setPosition');
+  assert.equal(last[1], 1000 - 24);
+});
+
+test('停靠：没开「贴边隐藏」时不藏', () => {
+  const { controller, settings } = makeController({ settings: { dockEnabled: false } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, null);
+});
+
+test('停靠：往回拖能把桌宠拽出来', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  // 抓住那条窄边往左拽：桌宠被拉出来，这一趟不再判定停靠。
+  controller.dragStart();
+  for (let i = 0; i < 4; i++) controller.moveBy(-100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, null);
+});
+
+test('停靠：位置记忆存的是「完全可见的贴齐位」，不是屏幕外的真实位置', () => {
+  const { controller, patched, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  // 拖拽的每一帧都会落一次盘，所以要看**最后一次**。
+  const posPatch = patched.filter((p) => p.position).pop();
+  assert.ok(posPatch, '应当持久化位置');
+  // 完全可见贴齐位：右边缘 - 窗口宽。
+  assert.equal(posPatch.position.x, 1000 - 300);
+});
+
+test('关掉「贴边隐藏」时，停靠中的桌宠要立刻取回', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  controller.applySettings({ ...settings, dockEnabled: false });
+  assert.equal(controller.getState().dock, null);
+  const last = win.calls[win.calls.length - 1];
+  assert.equal(last[0], 'setPosition');
+  assert.equal(last[1], 1000 - 300);
+});
+
+test('「取回桌宠」把停靠中的桌宠拉回完全可见', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  controller.retrievePet();
+  assert.equal(controller.getState().dock, null);
+  const last = win.calls[win.calls.length - 1];
+  assert.equal(last[1], 1000 - 300);
+});
+
+test('从停靠里只拽出一半就松手：落盘的位置必须还在屏幕内', () => {
+  // 不夹回来的话会存下一个在屏幕外的坐标——重启时 restorePosition
+  // 会判定它「不在任何显示器内」，悄悄回落到主显示器右下角，
+  // 用户上次把桌宠放在哪就丢了。
+  const { controller, patched, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  // 只拽出 50px 就松手：窗口还有一大半在屏幕外。
+  controller.dragStart();
+  controller.moveBy(-50, 0);
+  controller.dragEnd();
+
+  assert.equal(controller.getState().dock, null);
+  const posPatch = patched.filter((p) => p.position).pop();
+  assert.ok(posPatch, '应当持久化位置');
+  assert.ok(
+    posPatch.position.x >= 0 && posPatch.position.x + 300 <= 1000,
+    `落盘的位置不能落在屏幕外，实际是 ${posPatch.position.x}`
+  );
+});

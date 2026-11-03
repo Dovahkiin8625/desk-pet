@@ -156,6 +156,58 @@ export const windowPos = (ctx) =>
   }, PET_WINDOW_URL);
 
 /**
+ * 桌宠窗口当前的边界。
+ *
+ * 停靠的断言要用它：停靠后窗口**大部分在屏幕外**，
+ * 只剩一条边落在工作区里。
+ */
+export const petBounds = (ctx) =>
+  ctx.app.evaluate(({ BrowserWindow }, petUrl) => {
+    const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().includes(petUrl));
+    if (!w) return null;
+    return w.getBounds();
+  }, PET_WINDOW_URL);
+
+/**
+ * 把桌宠往右拖到工作区右边缘（拖到头为止）。
+ *
+ * 拖拽距离必须**按屏幕宽度算**：写死一个像素数在 1920 宽的屏幕上够用，
+ * 在 2560 宽的屏幕上就还差一截——窗口停在半路，既没贴齐也没停靠，
+ * 断言会失败得莫名其妙（而且换台机器就挂）。
+ *
+ * 多推 40px 是为了确保**顶到边**：夹紧是「至少到边」才生效的，
+ * 差一像素就还是「没贴齐」。
+ */
+export const dragToRightEdge = async (ctx) => {
+  const wa = await ctx.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+  const b = await petBounds(ctx);
+  if (!b) return 0;
+  // 窗口右边缘到工作区右边缘还差多少，再多推一点让它顶到边。
+  const dx = wa.x + wa.width - (b.x + b.width) + 40;
+  await dragBy(ctx.win, dx, 0);
+  return dx;
+};
+
+/**
+ * 轮询主进程上报的系统状态，直到满足条件（或超时）。返回最后一次的状态。
+ *
+ * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
+ * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
+ * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
+ * 那条坑会让「等状态变成 true」这种断言变成恒真。
+ */
+export async function waitForSystemState(ctx, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let state = null;
+  for (;;) {
+    state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    if (predicate(state)) return state;
+    if (Date.now() >= deadline) return state;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
  * 把窗口挪到主显示器工作区的左上角，给「向右下拖」腾出空间。
  *
  * 必须挪：桌宠的默认位置就是主显示器右下角，而右下角**正好压在夹紧边界上**

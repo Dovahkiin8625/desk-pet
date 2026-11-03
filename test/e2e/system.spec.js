@@ -1,24 +1,17 @@
 import { test, expect } from '@playwright/test';
-import { launchApp, launchWithMenuProbe, collectErrors } from './helpers.js';
-
-/**
- * 轮询主进程上报的系统状态，直到满足条件（或超时）。
- *
- * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
- * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
- * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
- * 那条坑会让「等状态变成 true」这种断言变成恒真。
- */
-async function waitForSystemState(ctx, predicate, timeout = 10000) {
-  const deadline = Date.now() + timeout;
-  let state = null;
-  for (;;) {
-    state = await ctx.win.evaluate(() => window.pet.getSystemState());
-    if (predicate(state)) return state;
-    if (Date.now() >= deadline) return state;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-}
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  launchApp,
+  launchWithMenuProbe,
+  collectErrors,
+  dragBy,
+  dragToRightEdge,
+  moveToTopLeft,
+  petBounds,
+  waitForSystemState,
+} from './helpers.js';
 
 /**
  * 系统级功能（第六部分）的端到端用例。
@@ -95,6 +88,100 @@ test('托盘点「鼠标穿透」能真的切换，并让菜单勾选态跟着�
     const item = last.items.find((i) => i.label === '鼠标穿透');
     expect(item, '菜单里应当还有「鼠标穿透」这一项').toBeTruthy();
     expect(item.checked, '菜单里的「鼠标穿透」应当是勾上的').toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('拖到屏幕边缘会贴齐；开了「贴边隐藏」会滑出去只留一条边', async () => {
+  const ctx = await launchApp();
+  try {
+    await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
+    await moveToTopLeft(ctx);
+
+    // 往右推到底：窗口被夹到右边缘。
+    await dragToRightEdge(ctx);
+
+    const bounds = await petBounds(ctx);
+    const wa = await ctx.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    // 停靠后窗口大部分在屏幕外，只剩 24px 落在工作区里。
+    expect(wa.x + wa.width - bounds.x).toBe(24);
+
+    const state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(state.dock).toBe('right');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('停靠后拖那条窄边能把桌宠拽回来', async () => {
+  const ctx = await launchApp();
+  try {
+    await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
+    await moveToTopLeft(ctx);
+    await dragToRightEdge(ctx);
+    expect((await ctx.win.evaluate(() => window.pet.getSystemState())).dock).toBe('right');
+
+    // 抓住窄边往左拽。
+    await dragBy(ctx.win, -400, 0);
+    const state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(state.dock).toBe(null);
+
+    const bounds = await petBounds(ctx);
+    const wa = await ctx.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    // 完全可见：窗口右边缘贴齐工作区右边缘。
+    expect(bounds.x + bounds.width).toBe(wa.x + wa.width);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('停靠状态重启后仍然停靠', async () => {
+  // **必须自己指定 userData 目录**：launchApp() 不带参数时用的是临时目录，
+  // close() 会把它删掉——那样第二次启动读到的就是别人的（干净的）目录。
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-dock-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+
+  const ctx = await launchApp({ userDataDir });
+  try {
+    await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
+    await moveToTopLeft(ctx);
+    await dragToRightEdge(ctx);
+    expect((await ctx.win.evaluate(() => window.pet.getSystemState())).dock).toBe('right');
+  } finally {
+    await ctx.close();
+  }
+
+  // 用同一个 userData 目录再启动一次。
+  const again = await launchApp({ userDataDir });
+  try {
+    const state = await again.win.evaluate(() => window.pet.getSystemState());
+    expect(state.dock).toBe('right');
+    const bounds = await petBounds(again);
+    const wa = await again.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    expect(wa.x + wa.width - bounds.x).toBe(24);
+  } finally {
+    await again.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('关掉「贴边隐藏」时，停靠中的桌宠立刻取回', async () => {
+  const ctx = await launchApp();
+  try {
+    await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
+    await moveToTopLeft(ctx);
+    await dragToRightEdge(ctx);
+    expect((await ctx.win.evaluate(() => window.pet.getSystemState())).dock).toBe('right');
+
+    await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: false }));
+    const state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(state.dock).toBe(null);
+
+    const bounds = await petBounds(ctx);
+    const wa = await ctx.app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    expect(bounds.x + bounds.width).toBe(wa.x + wa.width);
   } finally {
     await ctx.close();
   }

@@ -121,6 +121,185 @@ export function createSystemController({
   // 它是「界面上说得出来」那半的载体：光在终端留痕，用户看不见。
   let lastError = '';
 
+  // —— 停靠 ——
+  //
+  // dock 是「当前藏在哪条边」；它是状态，不是开关——
+  // 用户的意图是 dockEnabled（贴边隐藏那个勾选框）。
+
+  /** 停靠所在显示器的工作区。找不到就返回 null（退化成普通夹紧）。 */
+  function dockWorkArea() {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return null;
+    const [x, y] = win.getPosition();
+    return displayForPoint(x, y, getDisplays())?.workArea || null;
+  }
+
+  /** 取消停靠：把桌宠放回完全可见的贴齐位。 */
+  function undock() {
+    if (!dock) return;
+    const win = getWindow();
+    const side = dock;
+    dock = null;
+    if (win && !win.isDestroyed()) {
+      const [x, y] = win.getPosition();
+      const [w, h] = win.getSize();
+      const wa = dockWorkArea();
+      if (wa) {
+        const target = flushPosition(side, x, y, w, h, wa);
+        win.setPosition(target.x, target.y);
+        applySettings({ position: { x: Math.round(target.x), y: Math.round(target.y) } });
+      }
+    }
+    applySettings({ dock: null });
+    onStateChanged?.();
+  }
+
+  /** 「取回桌宠」：停靠中的桌宠回到完全可见。 */
+  function retrievePet() {
+    undock();
+  }
+
+  /** 启动时按 settings.dock 施加停靠。 */
+  function applyDockAtStartup() {
+    const side = getSettings().dock;
+    if (!side) return;
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return;
+    const [x, y] = win.getPosition();
+    const [w, h] = win.getSize();
+    const wa = dockWorkArea();
+    if (!wa) return;
+    dock = side;
+    const target = dockPosition(side, x, y, w, h, wa);
+    win.setPosition(target.x, target.y);
+  }
+
+  /** 新一次拖拽开始：期望位置重置为当前真实位置。 */
+  function dragStart() {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return;
+    const [x, y] = win.getPosition();
+    desired = { x, y };
+    netDelta = { dx: 0, dy: 0 };
+  }
+
+  /**
+   * 拖拽中：累加增量 → 夹紧 → 吸附 → 落盘。
+   *
+   * 停靠时沿停靠轴放宽（否则藏不到屏幕外）；
+   * free 时在夹紧之后做吸附（推近了磁过去）。
+   */
+  function moveBy(dx, dy) {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return null;
+    const [w, h] = win.getSize();
+    if (!desired) {
+      const [x, y] = win.getPosition();
+      desired = { x, y };
+      netDelta = { dx: 0, dy: 0 };
+    }
+    desired.x += dx;
+    desired.y += dy;
+    netDelta.dx += dx;
+    netDelta.dy += dy;
+
+    const displays = getDisplays();
+    let applied;
+    if (dock) {
+      const wa = dockWorkArea();
+      applied = wa
+        ? clampDocked(desired.x, desired.y, w, h, wa, dock)
+        : clampToDisplays(desired.x, desired.y, w, h, displays);
+    } else {
+      applied = clampToDisplays(desired.x, desired.y, w, h, displays);
+      if (getSettings().edgeSnap !== false) {
+        const wa = displayForPoint(applied.x, applied.y, displays)?.workArea;
+        if (wa) {
+          const snapped = snapToEdge(applied.x, applied.y, w, h, wa, { dx, dy });
+          applied = { x: snapped.x, y: snapped.y };
+        }
+      }
+    }
+    win.setPosition(applied.x, applied.y);
+    persistPosition(applied, w, h);
+    return applied;
+  }
+
+  /**
+   * 落盘位置。
+   *
+   * 停靠时存的是「完全可见的贴齐位」——真实位置在屏幕外，
+   * 重启时会被 restorePosition 判定为「不在任何显示器内」而回落到主显示器右下角。
+   */
+  function persistPosition(applied, w, h) {
+    if (!dock) {
+      applySettings({ position: { x: Math.round(applied.x), y: Math.round(applied.y) } });
+      return;
+    }
+    const wa = dockWorkArea();
+    if (!wa) {
+      applySettings({ position: { x: Math.round(applied.x), y: Math.round(applied.y) } });
+      return;
+    }
+    const flush = flushPosition(dock, applied.x, applied.y, w, h, wa);
+    applySettings({ position: { x: Math.round(flush.x), y: Math.round(flush.y) } });
+  }
+
+  /**
+   * 拖拽结束：判定要不要停靠。
+   */
+  function dragEnd() {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return;
+    const [x, y] = win.getPosition();
+    const [w, h] = win.getSize();
+    const displays = getDisplays();
+    const wasDocked = dock;
+    const net = { ...netDelta };
+    desired = null;
+    netDelta = { dx: 0, dy: 0 };
+
+    if (wasDocked) {
+      // 从停靠里出来的这一趟**不再判定停靠**：「拽出来」是明确的意思，
+      // 不该在同一趟拖拽的末尾又塞回去。
+      const wa = dockWorkArea();
+      const stillTucked = wa ? isFullyTucked(x, y, w, h, wa, wasDocked) : true;
+      if (stillTucked) {
+        applySettings({ dock: wasDocked });
+        return;
+      }
+      // 被拽出来了：取消停靠，**并把位置夹回工作区内**。
+      //
+      // 不夹的话会存下一个在屏幕外的坐标——窗口还有一大半在屏幕外，
+      // 而重启时 restorePosition 会判定它「不在任何显示器内」，
+      // 悄悄回落到主显示器右下角。用户上次把桌宠放在哪就丢了。
+      //
+      // 夹回去之后桌宠是「完整可见、贴着那条边」的状态——
+      // 也就是「完整滑回」，与预览里那条一致。
+      const pulled = clampToDisplays(x, y, w, h, getDisplays());
+      win.setPosition(pulled.x, pulled.y);
+      dock = null;
+      applySettings({ dock: null });
+      applySettings({ position: { x: Math.round(pulled.x), y: Math.round(pulled.y) } });
+      onStateChanged?.();
+      return;
+    }
+
+    if (!getSettings().dockEnabled) return;
+    const wa = displayForPoint(x, y, displays)?.workArea;
+    if (!wa) return;
+    const gaps = edgeGaps(x, y, w, h, wa);
+    // 净位移用**期望位置**的：窗口贴边后就被夹住不动了，
+    // 实际位移恒为 0，表达不了「我往右推」这个意图。
+    const side = chooseDockSide(gaps, net);
+    if (!side) return;
+    dock = side;
+    const target = dockPosition(side, x, y, w, h, wa);
+    win.setPosition(target.x, target.y);
+    applySettings({ dock: side });
+    onStateChanged?.();
+  }
+
   // —— 开机自启 ——
 
   /**
@@ -322,6 +501,8 @@ export function createSystemController({
     // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
     if (settings.clickThrough) applyClickThrough(true);
+    // 停靠：把窗口挪到藏起来的位置（settings.dock 记着上次藏在哪条边）。
+    applyDockAtStartup();
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
     if (settings.hotkey) {
       if (!hasModifier(settings.hotkey)) {
@@ -414,6 +595,12 @@ export function createSystemController({
       onStateChanged?.();
     }
 
+    // 「贴边隐藏」被关掉时，正在停靠的桌宠要立刻取回来：
+    // 不然用户关了开关、桌宠还赖在屏幕外，开关看起来没生效。
+    if (settings.dockEnabled === false && dock) {
+      undock();
+    }
+
     // 先把回退落盘，再通知外面：通知时 settings 必须已经是回退后的值，
     // 否则界面会停留在「已开启」而磁盘上已经是「关闭」。
     if (Object.keys(patch).length > 0) applySettings(patch);
@@ -424,6 +611,12 @@ export function createSystemController({
     init,
     applySettings: applySettingsToSystem,
     getState,
+    // —— 边缘吸附与贴边停靠 ——
+    dragStart,
+    moveBy,
+    dragEnd,
+    retrievePet,
+    undock,
     // —— 鼠标穿透 ——
     toggleClickThrough,
     // —— 全局快捷键 ——

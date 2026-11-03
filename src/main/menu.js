@@ -7,6 +7,7 @@ import { menuTemplate } from './menuTemplate.js';
  * 它们以前不一样：右键菜单里还有个「小工具」子菜单。
  * 那条路换成了插件面板（左键点桌宠 → 搜索 → 打开插件界面），
  * 菜单里就只剩「显示/隐藏 · 鼠标穿透 · 设置 · 退出」这几项了。
+ * （停靠中的桌宠还会多出「取回桌宠」一项。）
  */
 export function buildContextMenu(actions) {
   return Menu.buildFromTemplate(menuTemplate(actions));

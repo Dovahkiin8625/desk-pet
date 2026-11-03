@@ -9,7 +9,6 @@ import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
 import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
-import { clampToDisplays } from './display.js';
 import { createBubbleController } from './bubble.js';
 import { createPanelController } from './panel.js';
 import { createPluginRegistry } from './plugins/index.js';
@@ -49,13 +48,6 @@ let apps = null;
 let appliedOpacity = null;
 // 设置窗口全局只有一个：重复打开时聚焦已有的那个，而不是开一堆。
 let settingsWin = null;
-// 当前拖拽的**期望**位置（未夹紧）：拖拽起点 + Σ增量。
-//
-// 为什么不能把增量直接累加到「已夹紧」的位置上：顶到屏幕边缘时，
-// 被夹紧吃掉的那部分增量会永久丢失；光标往回走时，返回的增量从被钉住
-// 的位置全额施加，角色于是越过光标、跳到相反的边缘并停在那里。
-// 期望位置不夹紧，只在「实际落到窗口上」时才夹紧。
-let desiredPosition = null;
 // 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
 // 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
 let pendingWrite = null;
@@ -636,29 +628,18 @@ app.whenReady().then(async () => {
     // 增量式是刻意的：渲染层把「这一段拖了多远」递过来，
     // 累加结果正好等于光标相对按下点的总位移，窗口不会与光标脱节。
     onMoveBy: (dx, dy) => {
-      if (!win || win.isDestroyed()) return;
-      const [w, h] = win.getSize();
-      // 期望位置 = 拖拽起点 + Σdelta，不夹紧。
-      if (!desiredPosition) {
-        const [x, y] = win.getPosition();
-        desiredPosition = { x, y };
-      }
-      desiredPosition.x += dx;
-      desiredPosition.y += dy;
-      const applied = clampToDisplays(desiredPosition.x, desiredPosition.y, w, h, currentDisplays());
-      win.setPosition(applied.x, applied.y);
-      // 持久化的是**实际可见**的位置，不是可能跑到屏幕外的期望位置。
-      persist({ position: applied });
+      system?.moveBy?.(dx, dy);
     },
     // 新一次拖拽开始：期望位置重新对齐当前窗口位置。
     onDragStart: () => {
-      desiredPosition = null;
+      system?.dragStart?.();
     },
-    // 拖拽结束也清掉累加器。
-    // 这样即使 pet:dragStart 信号在某次丢失（preload 方法被删、onDragStart 没接上），
-    // 下一次拖拽也不会累加到上一次拖拽的未夹紧位置上——那正是 Important #1 描述的缺陷类型。
+    // 拖拽结束：判定要不要停靠。
+    //
+    // 期望位置的累加器由控制器自己清——清不掉也不会串台，
+    // 因为下一次 dragStart 会重新对齐。
     onDragEnd: () => {
-      desiredPosition = null;
+      system?.dragEnd?.();
     },
     // 渲染层注册好推送频道的监听器了。
     onRendererReady,
