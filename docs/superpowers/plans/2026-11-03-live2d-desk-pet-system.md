@@ -2524,6 +2524,9 @@ export const petBounds = (ctx) =>
 
 ```js
 import { test, expect } from '@playwright/test';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { launchApp, collectErrors, dragBy, moveToTopLeft, petBounds, PET_WINDOW_URL } from './helpers.js';
 ```
 
@@ -2574,7 +2577,13 @@ test('停靠后拖那条窄边能把桌宠拽回来', async () => {
 });
 
 test('停靠状态重启后仍然停靠', async () => {
-  const ctx = await launchApp();
+  // **必须自己指定 userData 目录**：launchApp() 不带参数时用的是临时目录，
+  // close() 会把它删掉——那样第二次启动读到的就是别人的（干净的）目录。
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-dock-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+
+  const ctx = await launchApp({ userDataDir });
   try {
     await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
     await moveToTopLeft(ctx);
@@ -2585,7 +2594,7 @@ test('停靠状态重启后仍然停靠', async () => {
   }
 
   // 用同一个 userData 目录再启动一次。
-  const again = await launchApp({ userDataDir: ctx.userDataDir });
+  const again = await launchApp({ userDataDir });
   try {
     const state = await again.win.evaluate(() => window.pet.getSystemState());
     expect(state.dock).toBe('right');
@@ -2594,6 +2603,7 @@ test('停靠状态重启后仍然停靠', async () => {
     expect(wa.x + wa.width - bounds.x).toBe(24);
   } finally {
     await again.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
