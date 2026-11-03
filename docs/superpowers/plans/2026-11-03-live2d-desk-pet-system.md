@@ -559,7 +559,7 @@ export function isFullyTucked(x, y, width, height, workArea, side, slip = DOCK_S
  *
  * @param {object} gaps 四个间隙
  * @param {object} delta 本次拖拽的**净位移**（期望位置的净变化）
- * @returns {string|null} 停靠边；不���靠返回 null
+ * @returns {string|null} 停靠边；不停靠返回 null
  */
 export function chooseDockSide(gaps, delta, { minPush = MIN_DOCK_PUSH } = {}) {
   const d = delta || { dx: 0, dy: 0 };
@@ -2243,6 +2243,31 @@ test('「取回桌宠」把停靠中的桌宠拉回完全可见', () => {
   const last = win.calls[win.calls.length - 1];
   assert.equal(last[1], 1000 - 300);
 });
+
+test('从停靠里只拽出一半就松手：落盘的位置必须还在屏幕内', () => {
+  // 不夹回来的话会存下一个在屏幕外的坐标——重启时 restorePosition
+  // 会判定它「不在任何显示器内」，悄悄回落到主显示器右下角，
+  // 用户上次把桌宠放在哪就丢了。
+  const { controller, patched, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  // 只拽出 50px 就松手：窗口还有一大半在屏幕外。
+  controller.dragStart();
+  controller.moveBy(-50, 0);
+  controller.dragEnd();
+
+  assert.equal(controller.getState().dock, null);
+  const posPatch = patched.filter((p) => p.position).pop();
+  assert.ok(posPatch, '应当持久化位置');
+  assert.ok(
+    posPatch.position.x >= 0 && posPatch.position.x + 300 <= 1000,
+    `落盘的位置不能落在屏幕外，实际是 ${posPatch.position.x}`
+  );
+});
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -2404,9 +2429,19 @@ Expected: FAIL —— `controller.dragStart` 不是函数。
         applySettings({ dock: wasDocked });
         return;
       }
+      // 被拽出来了：取消停靠，**并把位置夹回工作区内**。
+      //
+      // 不夹的话会存下一个在屏幕外的坐标——窗口还有一大半在屏幕外，
+      // 而重启时 restorePosition 会判定它「不在任何显示器内」，
+      // 悄悄回落到主显示器右下角。用户上次把桌宠放在哪就丢了。
+      //
+      // 夹回去之后桌宠是「完整可见、贴着那条边」的状态——
+      // 也就是「完整滑回」，与预览里那条一致。
+      const pulled = clampToDisplays(x, y, w, h, getDisplays());
+      win.setPosition(pulled.x, pulled.y);
       dock = null;
       applySettings({ dock: null });
-      applySettings({ position: { x: Math.round(x), y: Math.round(y) } });
+      applySettings({ position: { x: Math.round(pulled.x), y: Math.round(pulled.y) } });
       onStateChanged?.();
       return;
     }
