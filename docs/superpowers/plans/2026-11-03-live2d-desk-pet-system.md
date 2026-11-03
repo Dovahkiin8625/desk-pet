@@ -2967,8 +2967,8 @@ git commit -m "feat(edge-dock): 边缘吸附与贴边停靠接进拖拽"
 
 - [ ] **Step 1: 写端到端测试**
 
-`test/e2e/settings.spec.js` 的 import 行加上 `waitForSystemState`（Task 6 加在
-`test/e2e/helpers.js` 里的那个轮询助手）：
+`test/e2e/settings.spec.js` 的 import 行加上 `waitForSystemState`（Task 7 搬进
+`test/e2e/helpers.js` 的那个轮询助手）：
 
 ```js
 import { launchApp, collectErrors, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
