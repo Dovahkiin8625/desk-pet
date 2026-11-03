@@ -460,6 +460,17 @@ function openSettings() {
       sandbox: true,
     },
   });
+  // 快捷键录制：主进程接管按键捕获。
+  //
+  // 用 before-input-event 而不是渲染层的 keydown：它给的是
+  // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
+  // 而且能 preventDefault——不然那一次按键会漏进页面的输入框
+  // （规格 §4.3②）。
+  settingsWin.webContents.on('before-input-event', (event, input) => {
+    if (!system?.isRecording?.()) return;
+    event.preventDefault();
+    system.handleInput(input);
+  });
   settingsWin.loadURL(appUrl('/src/settings/index.html'));
   // 关掉设置窗口不退出应用：宠物窗口还在（顶多是被隐藏），
   // window-all-closed 不会因为它而触发。
@@ -843,6 +854,10 @@ app.whenReady().then(async () => {
 // 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
 // 退出前把待写入的设置落盘，否则用户在 300ms 防抖窗口内退出就会丢掉改动。
 app.on('before-quit', flushPendingSave);
+
+// 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
+// 下次启动注册不上。
+app.on('will-quit', () => system?.dispose?.());
 
 // 第二次启动：单实例锁挡住了它，但原来的那个应用**什么也不做**——
 // 用户看到的是「双击了图标却没反应」。这里把已有的桌宠叫到前面来。

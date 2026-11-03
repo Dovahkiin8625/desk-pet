@@ -69,7 +69,9 @@ function makeController(overrides = {}) {
       register: () => true,
       unregister: () => {},
       unregisterAll: () => {},
-      isRegistered: () => true,
+      // 默认 false：进程刚起来时快捷键并没有注册着，
+      // 「已注册」不是默认状态。
+      isRegistered: () => false,
     },
     getAppPath: () => 'E:/project/desk-pet',
     isPackaged: false,
@@ -302,7 +304,9 @@ test('快捷键注册成功：落盘新组合并注销旧的', () => {
   });
   controller.init(settings);
   controller.setHotkey('Control+Alt+P');
-  assert.deepEqual(registered, ['Control+Alt+P']);
+  // init 已经按规格注册了 settings.hotkey，这里再注册新组合——
+  // 两次都在列表里，顺序也反映了真实发生的事。
+  assert.deepEqual(registered, ['Control+Shift+D', 'Control+Alt+P']);
   assert.deepEqual(unregistered, ['Control+Shift+D']);
   assert.equal(settings.hotkey, 'Control+Alt+P');
 });
@@ -320,9 +324,17 @@ test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
       },
     },
   });
-  controller.init(settings);
-  const ok = controller.setHotkey('Control+Alt+P');
-  assert.equal(ok, false);
+  // init 也会注册一次（同样失败）：失败必须留痕，警告要被捕获并断言，
+  // 而不是留在测试输出里当噪音。
+  const initWarnings = captureWarnings(() => controller.init(settings));
+  assert.ok(initWarnings.length >= 1);
+  assert.match(initWarnings.join('\n'), /快捷键注册失败/);
+  const warnings = captureWarnings(() => {
+    const ok = controller.setHotkey('Control+Alt+P');
+    assert.equal(ok, false);
+  });
+  assert.ok(warnings.length >= 1);
+  assert.match(warnings.join('\n'), /快捷键注册失败/);
   // 磁盘上的组合没变：用户不至于连原来的快捷键也丢掉。
   assert.deepEqual(patched, []);
   assert.equal(settings.hotkey, 'Control+Shift+D');
@@ -346,13 +358,17 @@ test('快捷键语法非法：提示与「被占用」区分开', () => {
       },
     },
   });
-  controller.init(settings);
+  // init 也会尝试注册（同样抛）：失败必须留痕，警告要被捕获并断言，
+  // 而不是留在测试输出里当噪音。
+  const initWarnings = captureWarnings(() => controller.init(settings));
+  assert.ok(initWarnings.length >= 1);
+  assert.match(initWarnings.join('\n'), /快捷键注册失败/);
   // 失败必须留痕：警告要被捕获并**断言**，而不是留在测试输出里当噪音。
   const warnings = captureWarnings(() => {
     assert.equal(controller.setHotkey('Control+Alt+P'), false);
   });
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /快捷键注册失败/);
+  assert.ok(warnings.length >= 1);
+  assert.match(warnings.join('\n'), /快捷键注册失败/);
   const state = controller.getState();
   assert.equal(state.hotkeyStatus.state, 'error');
   assert.match(state.hotkeyStatus.error, /不能用/);
@@ -379,7 +395,8 @@ test('录制：开始 → 处理按键 → 注册', () => {
   assert.equal(controller.isRecording(), true);
   const acc = controller.handleInput({ key: 'k', control: true, alt: true });
   assert.equal(acc, 'Control+Alt+K');
-  assert.deepEqual(registered, ['Control+Alt+K']);
+  // init 已经注册了 settings.hotkey，这里是第二次注册。
+  assert.deepEqual(registered, ['Control+Shift+D', 'Control+Alt+K']);
   assert.equal(controller.isRecording(), false);
 });
 
@@ -397,4 +414,120 @@ test('录制：纯修饰键不算数，继续等', () => {
   controller.startRecording();
   assert.equal(controller.handleInput({ key: 'Control', control: true }), null);
   assert.equal(controller.isRecording(), true);
+});
+
+test('启动时按 settings.hotkey 注册一次', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  assert.deepEqual(registered, ['Control+Shift+D']);
+});
+
+test('启动时注册失败：只留痕 + 状态为 error，不抛', () => {
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: () => false,
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  // 启动就失败不能抛：抛出去会中断启动，桌宠都开不起来。
+  const warnings = captureWarnings(() => controller.init(settings));
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /占用/);
+  // 留痕也要被验证：终端里要有一条说得清原因的警告。
+  assert.ok(warnings.length >= 1);
+  assert.match(warnings.join('\n'), /快捷键注册失败/);
+});
+
+test('setHotkey 拒绝没有修饰键的裸键（会全局劫持字母键）', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  const before = registered.length;
+  assert.equal(controller.setHotkey('D'), false);
+  // 一次都不能注册：裸键注册是全局的，「按 D 一下」会被桌宠吃掉。
+  assert.equal(registered.length, before);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /不能用/);
+});
+
+test('与当前相同且确实注册着：直接算成功，不重复注册', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => true,
+      },
+    },
+  });
+  controller.init(settings);
+  assert.deepEqual(registered, ['Control+Shift+D']);
+  // 已经注册着：重复 register 会返回 false（会被误报成「被占用」），
+  // 所以直接算成功。
+  assert.equal(controller.setHotkey('Control+Shift+D'), true);
+  assert.deepEqual(registered, ['Control+Shift+D']);
+});
+
+test('与当前相同但没注册着：不能算成功，要走一次真实注册', () => {
+  const registered = [];
+  const unregistered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: (acc) => unregistered.push(acc),
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  // 启动时注册失败（被别的程序占用）的情况下，用户再录一次同一个组合，
+  // 直接算成功的话界面显示正常、快捷键却根本没生效。
+  assert.equal(controller.setHotkey('Control+Shift+D'), true);
+  assert.deepEqual(registered, ['Control+Shift+D', 'Control+Shift+D']);
+  // 同一个组合不能被注销：刚注册上的就是它自己，
+  // 注销等于把新组合也一起搭进去。
+  assert.deepEqual(unregistered, []);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'ok');
 });

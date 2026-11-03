@@ -169,7 +169,11 @@ export function createSystemController({
    */
   function registerShortcut(accelerator) {
     try {
-      return shortcuts.register(accelerator, onHotkeyAction) ? 'ok' : 'taken';
+      if (shortcuts.register(accelerator, onHotkeyAction)) return 'ok';
+      // taken 也要留痕：被别的程序占用时 register **不抛错**，
+      // 不留痕的话终端里什么都没有，用户只看到界面上一句提示。
+      console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText('taken'));
+      return 'taken';
     } catch (err) {
       console.warn('[desk-pet] 快捷键注册失败：', err?.message || err);
       return 'invalid';
@@ -186,6 +190,11 @@ export function createSystemController({
     notifyHotkeyStatus();
   }
 
+  /** 加速键串里至少要有一个修饰键。 */
+  function hasModifier(accelerator) {
+    return /(^|\+)(Control|Ctrl|Alt|Shift|Super|Command|Meta)(\+|$)/i.test(accelerator);
+  }
+
   /**
    * 换一组快捷键。
    *
@@ -195,7 +204,23 @@ export function createSystemController({
   function setHotkey(accelerator) {
     if (typeof accelerator !== 'string' || accelerator === '') return false;
     const current = getSettings().hotkey;
-    if (accelerator === current) {
+    // 必须至少一个修饰键：裸键注册是全局的，会劫持用户的字母键
+    // （规格 §4.3①）。buildAccelerator 已经保证过，这里再挡一道——
+    // 因为 setHotkey 可能被别的通道直接调用。
+    if (!hasModifier(accelerator)) {
+      recording = false;
+      setHotkeyStatus({
+        state: 'error',
+        accelerator: current,
+        error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
+      });
+      return false;
+    }
+    // 与当前相同：真的注册着才直接算成功。
+    // 重复 register 同一个加速键会返回 false（那会被误报成「被占用」），
+    // 但**没注册着**时不能就这么算成功——启动时注册失败（被别的程序占用）
+    // 的情况下，用户再录一次同一个组合会被当成成功，而快捷键根本没生效。
+    if (accelerator === current && shortcuts.isRegistered?.(current)) {
       recording = false;
       setHotkeyStatus({ state: 'ok', accelerator, error: '' });
       return true;
@@ -210,7 +235,17 @@ export function createSystemController({
       });
       return false;
     }
-    if (current) shortcuts.unregister(current);
+    // 注销旧的。**同一个组合不注销**——刚注册上的就是它自己，
+    // 注销等于把新组合也一起搭进去。
+    if (current && current !== accelerator) {
+      try {
+        shortcuts.unregister(current);
+      } catch (err) {
+        // 注销失败不该把新组合也搭进去：新组合已经注册成功了，
+        // 仍然要落盘——否则用户按新键有用、重启后失效。
+        console.warn('[desk-pet] 旧快捷键注销失败：', err?.message || err);
+      }
+    }
     applySettings({ hotkey: accelerator });
     recording = false;
     setHotkeyStatus({ state: 'ok', accelerator, error: '' });
@@ -233,7 +268,11 @@ export function createSystemController({
     return recording;
   }
 
-  /** 录制中的一次按键。返回拼好的组合；不是组合时返回 null。 */
+  /**
+   * 录制中的一次按键，返回拼好的组合；不是组合时返回 null。
+   *
+   * **返回值不代表成功**：注册成功与否看 `hotkeyStatus`。
+   */
   function handleInput(input) {
     if (!recording) return null;
     if (input?.key === 'Escape') {
@@ -284,18 +323,18 @@ export function createSystemController({
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
     if (settings.clickThrough) applyClickThrough(true);
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
-    //
-    // 已经注册过就不再注册一次：globalShortcut.register 对同一个加速键
-    // 重复注册会返回 false，而那会被误报成「被别的程序占用」。
     if (settings.hotkey) {
-      if (shortcuts.isRegistered?.(settings.hotkey)) {
+      const result = registerShortcut(settings.hotkey);
+      if (result === 'ok') {
         setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
       } else {
-        const result = registerShortcut(settings.hotkey);
+        // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
+        // 而终端里什么也没有。
+        console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText(result));
         setHotkeyStatus({
-          state: result === 'ok' ? 'ok' : 'error',
+          state: 'error',
           accelerator: settings.hotkey,
-          error: result === 'ok' ? '' : shortcutErrorText(result),
+          error: shortcutErrorText(result),
         });
       }
     }
