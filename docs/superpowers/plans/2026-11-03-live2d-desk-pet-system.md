@@ -1207,14 +1207,14 @@ export function createSystemController({
   /**
    * 写登录项。
    *
-   * 成功返回空串（falsy），失败返回**错误原因**（非空串）。
+   * 成功返回 `null`（falsy），失败返回**错误原因**（非空串）。
    * 返回原因而不是布尔：失败原因要一路带到 `lastError` 里，
    * 用户在设置窗口看到的是「为什么没成功」，不是干巴巴一个「失败」。
    */
   function applyAutoLaunch(enabled) {
     try {
       writeLoginItem(enabled);
-      return '';
+      return null;
     } catch (err) {
       // 失败必须留痕：否则用户勾了「开机自启」而系统里根本没有注册项，
       // 而且没有任何线索可查。
