@@ -2267,12 +2267,51 @@ function showContextMenu() {
 > 退出时注销快捷键的 `will-quit` 钩子**在 Task 5 就接好了**（规格 §4.6），
 > 本任务不用再加一遍。
 
-- [ ] **Step 6: 跑单元测试确认通过**
+- [ ] **Step 6: 顺带修掉 Task 5 复审留下的三条 Minor**
+
+这三条都在 `src/main/system.js` / `test/unit/system.test.js` 里，Task 5 已经关闭，
+而本任务是下一个动 `system.js` 的任务——放在这里一起收掉，免得再开一轮。
+
+**① `init` 的注册路径也要校验修饰键。**
+Task 5 加的 `hasModifier` 只挡住了 `setHotkey` 的入口，`init` 里直接
+`registerShortcut(settings.hotkey)` 绕过了它。
+而 `sanitizeSettings` 对 `hotkey` 只校验「非空字符串且长度 ≤ 64」——
+磁盘上手改成 `hotkey: "D"` 的设置文件会在启动时注册一个**全局裸键**，
+劫持用户的 D 键。
+
+```js
+    if (settings.hotkey) {
+      if (!hasModifier(settings.hotkey)) {
+        // 磁盘上的组合没有修饰键：注册它会劫持用户的字母键。
+        // 宁可先不注册，也不能把用户的键抢走。
+        console.warn('[desk-pet] 设置里的快捷键没有修饰键，已跳过注册：', settings.hotkey);
+        setHotkeyStatus({
+          state: 'error',
+          accelerator: settings.hotkey,
+          error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
+        });
+      } else {
+        const result = registerShortcut(settings.hotkey);
+        ...
+      }
+    }
+```
+
+**② `taken` 在启动时 warn 两次（两行内容完全相同）。**
+一处来自 `registerShortcut`，一处来自 `init`。删掉 `init` 里那行——
+`registerShortcut` 已经覆盖了 `taken` / `invalid` 两个分支。
+
+**③ 警告条数断言被放松了。**
+上一轮为了让双 warn 通过，把 `assert.equal(warnings.length, 1)` 改成了
+`assert.ok(warnings.length >= 1)`。去掉重复 warn 之后，把**能**改回 `=== 1` 的改回去；
+改不回去的说明它本来就该是 `>= 1`，在报告里写明理由。
+
+- [ ] **Step 7: 跑单元测试确认通过**
 
 Run: `node --test test/unit/menuTemplate.test.js test/unit/system.test.js`
 Expected: PASS。
 
-- [ ] **Step 7: 写端到端测试**
+- [ ] **Step 8: 写端到端测试**
 
 `test/e2e/system.spec.js` 末尾追加：
 
@@ -2310,12 +2349,12 @@ test('穿透模式：打开后主进程上报穿透状态，窗口不吃点击',
 > `window.pet.saveSettings` 走的是 `pet:saveSettings` → 主进程 `persist()` → `system.applySettings()`，
 > 穿透状态因此会立刻生效。preload 里 `saveSettings` 已存在，不用改。
 
-- [ ] **Step 8: 跑端到端测试确认通过**
+- [ ] **Step 9: 跑端到端测试确认通过**
 
 Run: `npx playwright test test/e2e/system.spec.js`
 Expected: PASS。
 
-- [ ] **Step 9: 提交**
+- [ ] **Step 10: 提交**
 
 ```bash
 git add src/main/system.js src/main/menuTemplate.js src/main/index.js \
