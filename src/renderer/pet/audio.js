@@ -15,9 +15,8 @@ let enabled = true;
 let masterGain = null;
 // 总音量：提示音与桌宠说话共用一个值（设置窗口的「音量」滑块）。
 let volume = 0.8;
-// 语音输出接到了哪个节点：'masterGain' 或 'destination'。
-// 诊断用——「桌宠说话受不受音量控制」这件事没有别的办法从外面看出来。
-let speechOutput = null;
+// 语音实际连到了哪个节点（null = 还没播过）。
+let speechTarget = null;
 
 function audioContext() {
   if (ctx) return ctx;
@@ -66,13 +65,14 @@ export function getMasterVolume() {
 }
 
 /**
- * 语音输出接到了哪个节点。
+ * 语音输出接到了哪个节点：'masterGain' / 'destination' / null（还没播过）。
  *
  * 有了它，「桌宠说话也受音量控制」才有可断言的出口——
  * 否则那只是一行 `source.connect(...)`，改了也没人看得出来。
  */
 export function getSpeechOutput() {
-  return speechOutput;
+  if (!speechTarget) return null;
+  return speechTarget === masterGain ? 'masterGain' : 'destination';
 }
 
 /**
@@ -170,8 +170,14 @@ export async function playSpeech(bytes, onAmplitude) {
   const source = ac.createBufferSource();
   source.buffer = decoded;
   // 接主增益，不接 destination：不然语音不受总音量控制。
-  source.connect(masterGain || ac.destination);
-  speechOutput = masterGain ? 'masterGain' : 'destination';
+  //
+  // 连什么、记什么必须是同一件事——所以把赋值写在 connect 的参数里。
+  //
+  // 写成两个平行表达式（connect 一行、诊断一行）的话，将来有人只改了
+  // connect 那行，诊断位还报 'masterGain'，那条 e2e 就挡不住它本该挡的回归。
+  // 写成这样之后：connect 的参数一旦不是 masterGain，speechTarget 就不会被赋值，
+  // 诊断位停在 null，e2e 立刻红。
+  source.connect((speechTarget = masterGain || ac.destination));
   const startedAt = ac.currentTime;
   let stopped = false;
   source.onended = () => {

@@ -163,6 +163,7 @@ test('桌宠说话接在主增益上，所以它也受总音量控制', async ()
       DESK_PET_TTS_HOSTS: stub.url,
     },
   });
+  const errors = collectErrors(ctx.win);
   try {
     // 音量到了渲染层。
     await ctx.win.waitForFunction(() => window.__pet.volume === 0.3, null, { timeout: 10000 });
@@ -174,6 +175,8 @@ test('桌宠说话接在主增益上，所以它也受总音量控制', async ()
       null,
       { timeout: 20000 },
     );
+
+    expect(errors).toEqual([]);
   } finally {
     await ctx.close();
     await stub.close();

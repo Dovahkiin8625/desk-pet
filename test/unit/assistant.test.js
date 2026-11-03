@@ -425,4 +425,8 @@ test('sound.volume 被夹进 [0,1]，非法值回退 0.8', () => {
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0);
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 'x' } }).sound.volume, 0.8);
   assert.equal(sanitizeAssistant({}).sound.volume, 0.8);
+  // sound 存在但缺 volume 键 → 回退默认。
+  assert.equal(sanitizeAssistant({ sound: { enabled: true } }).sound.volume, 0.8);
+  // sound 不是对象 → 整块忽略，走默认。
+  assert.equal(sanitizeAssistant({ sound: 'x' }).sound.volume, 0.8);
 });
