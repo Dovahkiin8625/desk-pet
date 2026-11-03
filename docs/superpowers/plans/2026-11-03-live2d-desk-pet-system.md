@@ -617,8 +617,9 @@ git commit -m "feat(edge-dock): 边缘吸附与贴边停靠的纯几何计算"
 ```js
 test('sound.volume 被夹进 [0,1]，非法值回退 0.8', () => {
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 0.5 } }).sound.volume, 0.5);
-  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 5 } }).sound.volume, 0.8);
-  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0.8);
+  // 越界**夹紧**（与 scale / opacity / tts.vol 一致），非数值才回退默认。
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 5 } }).sound.volume, 1);
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0);
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 'x' } }).sound.volume, 0.8);
   assert.equal(sanitizeAssistant({}).sound.volume, 0.8);
 });
