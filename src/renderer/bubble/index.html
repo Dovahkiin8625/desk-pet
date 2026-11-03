@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>桌宠气泡</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      overflow: hidden;
+      /* 气泡靠近屏幕边缘时不要被裁掉：给阴影留出余量 */
+      padding: 6px;
+      box-sizing: border-box;
+    }
+    /* 宽度按内容走：窗口是主进程按内容尺寸摆出来的，
+       这里若被窗口宽度限制住，量出来的尺寸就是错的。 */
+    #bubble {
+      display: inline-block;
+      width: max-content;
+      max-width: 340px;
+      box-sizing: border-box;
+      position: relative;
+      padding: 12px 16px;
+      border-radius: 16px;
+      background: #fffdf8;
+      border: 1px solid #d8d2c4;
+      box-shadow: 0 6px 18px rgba(40, 34, 24, 0.28);
+      font: 14px/1.65 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      color: #2b2a26;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    #bubble.hidden { display: none; }
+
+    /* 指向桌宠的小尾巴 */
+    #tail {
+      position: absolute;
+      width: 14px; height: 14px;
+      background: #fffdf8;
+      border-right: 1px solid #d8d2c4;
+      border-bottom: 1px solid #d8d2c4;
+      transform: rotate(45deg);
+    }
+    #bubble[data-placement="top"] #tail {
+      bottom: -8px; left: 50%; margin-left: -7px;
+      border-top: none; border-left: none;
+    }
+    #bubble[data-placement="bottom"] #tail {
+      top: -8px; left: 50%; margin-left: -7px;
+      border-bottom: none; border-right: none;
+    }
+    #bubble[data-placement="left"] #tail {
+      right: -8px; top: 50%; margin-top: -7px;
+      border-bottom: none; border-left: none;
+    }
+    #bubble[data-placement="right"] #tail {
+      left: -8px; top: 50%; margin-top: -7px;
+      border-top: none; border-right: none;
+    }
+
+    #title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #7a6a4f;
+      margin-bottom: 4px;
+    }
+    #title:empty { display: none; }
+    #text { white-space: pre-wrap; word-break: break-word; }
+    #text:empty { display: none; }
+
+    /* 流式回复：末尾跟一个闪烁的光标，让用户知道「还在写」。 */
+    #bubble.streaming #text::after {
+      content: '▍';
+      color: #b9ab8e;
+      animation: bubble-blink 1s steps(2, start) infinite;
+    }
+    @keyframes bubble-blink { 50% { opacity: 0; } }
+  </style>
+</head>
+<body>
+  <div id="bubble" data-placement="top">
+    <div id="title"></div>
+    <div id="text"></div>
+    <div id="tail"></div>
+  </div>
+
+  <script type="module" src="/src/renderer/bubble/main.js"></script>
+</body>
+</html>

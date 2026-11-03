@@ -1,9 +1,8 @@
 import { test, expect, _electron as electron } from '@playwright/test';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { launchApp, collectErrors } from './helpers.js';
+import { join } from 'node:path';
+import { launchApp, collectErrors, launchWithMenuProbe, gotoSection, PET_WINDOW_URL } from './helpers.js';
 
 /**
  * 端到端验收用例：逐条对应设计规格 §11 的验收标准。
@@ -11,7 +10,7 @@ import { launchApp, collectErrors } from './helpers.js';
  * §11.1 启动渲染与自发动画   → 验收①
  * §11.2 视线跟随与头/身反应 → 验收②
  * §11.3 拖拽                → test/e2e/drag.spec.js（同一断言不抄第二遍）
- * §11.4 托盘菜单（显示/隐藏 · 设置 · 退出）→ 验收④⑤、验收④（退出）
+ * §11.4 托盘菜单（显示/隐藏 · 鼠标穿透 · 设置 · 退出）→ 验收④⑤、验收④（退出）
  * §11.5 角色右键菜单        → 验收④⑤
  * §11.6 重启后位置记忆      → test/e2e/drag.spec.js（同一断言不抄第二遍）
  * §11.7 设置窗口            → 验收⑦
@@ -21,113 +20,7 @@ import { launchApp, collectErrors } from './helpers.js';
  * test/e2e/helpers.js，本文件与 drag.spec.js 共用同一份实现——抄一份会漂移。
  */
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const APP_MAIN = join(ROOT, 'src', 'main', 'index.js');
 
-/**
- * 菜单探针的入口脚本。
- *
- * 托盘菜单与角色右键菜单都由 src/main/menu.js 的 menuTemplate() 生成，
- * 而托盘菜单只在启动时构建一次——应用起来之后就再也拿不到它的模板了。
- * 所以这里用一个**临时入口**包一层：先给 Menu.buildFromTemplate 装上探针，
- * 再 import 真正的主进程入口，于是托盘菜单的模板在它被构建的那一刻就被抓了下来。
- *
- * 探针同时把「菜单项的 click 回调」原样留着，因此测试可以**真的去点它们**：
- * 显示/隐藏、设置、退出这些动作都是主进程里的真实实现，不是替身。
- */
-function menuProbeEntrySource() {
-  const mainUrl = pathToFileURL(APP_MAIN).href;
-  return `
-import { Menu } from 'electron';
-
-globalThis.__menuProbe = { templates: [], popupCount: 0, mainErrors: [] };
-
-process.on('uncaughtException', (err) => {
-  globalThis.__menuProbe.mainErrors.push('uncaughtException: ' + (err?.stack || err));
-});
-process.on('unhandledRejection', (reason) => {
-  globalThis.__menuProbe.mainErrors.push('unhandledRejection: ' + (reason?.stack || reason));
-});
-
-const originalBuild = Menu.buildFromTemplate.bind(Menu);
-Menu.buildFromTemplate = (template) => {
-  globalThis.__menuProbe.templates.push({
-    labels: template.map((item) => item.label || item.type),
-    stack: new Error().stack || '',
-    template,
-  });
-  return originalBuild(template);
-};
-
-// 真弹窗会挡住自动化：只记次数，不真的弹。
-Menu.prototype.popup = function () {
-  globalThis.__menuProbe.popupCount += 1;
-};
-
-await import(${JSON.stringify(mainUrl)});
-`;
-}
-
-/**
- * 用菜单探针入口启动应用。
- *
- * 与 helpers.launchApp 的唯一区别是入口脚本不同；其余（E2E 标志、userData 目录、
- * 等待渲染层 ready）保持一致。
- */
-async function launchWithMenuProbe(options = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-acceptance-'));
-  const entry = join(dir, 'entry.mjs');
-  await writeFile(entry, menuProbeEntrySource(), 'utf8');
-
-  const userDataDir = options.userDataDir || join(dir, 'userData');
-  const app = await electron.launch({
-    args: [entry],
-    cwd: ROOT,
-    env: {
-      ...process.env,
-      DESK_PET_E2E: '1',
-      DESK_PET_USER_DATA: userDataDir,
-      ...(options.env || {}),
-    },
-  });
-  const win = await app.firstWindow();
-  await win.waitForFunction(() => window.__pet && window.__pet.ready === true, null, { timeout: 30000 });
-
-  return {
-    app,
-    win,
-    userDataDir,
-    /** 读探针状态（模板摘要 + 弹窗次数 + 主进程错误）。 */
-    async probe() {
-      return app.evaluate(() => ({
-        templates: globalThis.__menuProbe.templates.map((t) => ({ labels: t.labels, stack: t.stack })),
-        popupCount: globalThis.__menuProbe.popupCount,
-        mainErrors: globalThis.__menuProbe.mainErrors,
-      }));
-    },
-    /** 点菜单里的一项（按标签）。模板里保留了真实的 click 回调。 */
-    async clickMenuItem(label, index = 0) {
-      // 注意：主进程求值的第一个参数是 electron 模块，第二个才是传入的参数。
-      return app.evaluate(
-        (_electron, { label, index }) => {
-          const template = globalThis.__menuProbe.templates[index]?.template;
-          const item = (template || []).find((i) => i.label === label);
-          if (!item) throw new Error(`菜单里没有「${label}」`);
-          item.click();
-        },
-        { label, index }
-      );
-    },
-    async close() {
-      try {
-        await app.close();
-      } catch {
-        /* 应用可能已经自己退出了 */
-      }
-      await rm(dir, { recursive: true, force: true });
-    },
-  };
-}
 
 /** 形象注册表（assets/live2d/index.json）是「有哪些形象」的唯一事实来源。 */
 const readRegistry = (win) => win.evaluate(() => fetch('/assets/live2d/index.json').then((r) => r.json()));
@@ -306,7 +199,7 @@ test('验收②：视线跟随鼠标，摸头与点击身体触发不同反应',
   }
 });
 
-test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角色右键弹出菜单', async () => {
+test('验收④⑤：托盘菜单提供 显示/隐藏 · 鼠标穿透 · 设置 · 退出，角色右键弹出菜单', async () => {
   const ctx = await launchWithMenuProbe();
   const errors = collectErrors(ctx.win);
   try {
@@ -318,7 +211,15 @@ test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角�
     expect(probe.templates.length).toBeGreaterThanOrEqual(1);
     const trayMenu = probe.templates[0];
     expect(trayMenu.stack, '第一个菜单应当由 buildTrayMenu 构建').toContain('buildTrayMenu');
-    expect(trayMenu.labels).toEqual(['显示 / 隐藏', 'separator', '设置…', 'separator', '退出']);
+    expect(trayMenu.labels).toEqual([
+      '显示 / 隐藏',
+      'separator',
+      '鼠标穿透',
+      'separator',
+      '设置…',
+      'separator',
+      '退出',
+    ]);
 
     // 右键菜单：主进程用同一份模板构建，并真的去弹它。
     await ctx.win.evaluate(async () => {
@@ -355,24 +256,46 @@ test('验收④⑤：托盘菜单提供 显示/隐藏 · 设置 · 退出，角�
     expect(afterRightClick.popupCount, '右键后菜单应被弹出').toBeGreaterThanOrEqual(1);
     const contextMenu = afterRightClick.templates[afterRightClick.templates.length - 1];
     expect(contextMenu.stack, '右键菜单应当由 buildContextMenu 构建').toContain('buildContextMenu');
-    expect(contextMenu.labels).toEqual(['显示 / 隐藏', 'separator', '设置…', 'separator', '退出']);
+    // 右键菜单与托盘菜单现在是同一份模板（含「鼠标穿透」勾选项）：
+    // 「小工具」那条路换成了插件面板（左键点桌宠 → 搜索 → 打开插件）。
+    expect(contextMenu.labels).toEqual([
+      '显示 / 隐藏',
+      'separator',
+      '鼠标穿透',
+      'separator',
+      '设置…',
+      'separator',
+      '退出',
+    ]);
 
     // 「显示 / 隐藏」：真的把桌宠窗口藏起来，再放出来。
-    const visibleBefore = await ctx.app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].isVisible()
+    const visibleBefore = await ctx.app.evaluate(
+      ({ BrowserWindow }, petUrl) =>
+        BrowserWindow.getAllWindows().find((x) =>
+          x.webContents.getURL().includes(petUrl)
+        )?.isVisible(),
+      PET_WINDOW_URL
     );
     expect(visibleBefore).toBe(true);
     await ctx.clickMenuItem('显示 / 隐藏');
     await new Promise((r) => setTimeout(r, 500));
-    const visibleAfterHide = await ctx.app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].isVisible()
+    const visibleAfterHide = await ctx.app.evaluate(
+      ({ BrowserWindow }, petUrl) =>
+        BrowserWindow.getAllWindows().find((x) =>
+          x.webContents.getURL().includes(petUrl)
+        )?.isVisible(),
+      PET_WINDOW_URL
     );
     expect(visibleAfterHide, '「显示 / 隐藏」应把角色藏起来').toBe(false);
 
     await ctx.clickMenuItem('显示 / 隐藏');
     await new Promise((r) => setTimeout(r, 500));
-    const visibleAfterShow = await ctx.app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].isVisible()
+    const visibleAfterShow = await ctx.app.evaluate(
+      ({ BrowserWindow }, petUrl) =>
+        BrowserWindow.getAllWindows().find((x) =>
+          x.webContents.getURL().includes(petUrl)
+        )?.isVisible(),
+      PET_WINDOW_URL
     );
     expect(visibleAfterShow, '再点一次应把角色放回来').toBe(true);
 
@@ -432,6 +355,8 @@ test('验收⑦：设置窗口可切换形象、调整缩放与透明度，切�
     expect(labels).toEqual(registry.models.map((m) => m.name));
 
     // 切换形象：默认形象 → 另一个注册过的形象。
+    // 形象在「外观」分区——selectOption 要求元素可见。
+    await gotoSection(settingsWin, 'appearance');
     await settingsWin.locator('#model').selectOption(target.id);
     await ctx.win.waitForFunction((id) => window.__pet.modelId === id, target.id, { timeout: 12000 });
 
@@ -459,7 +384,14 @@ test('验收⑦：设置窗口可切换形象、调整缩放与透明度，切�
       input.value = '1.5';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await ctx.win.waitForFunction(() => window.__pet.scale === 1.5, null, { timeout: 8000 });
+    await ctx.win.waitForFunction(
+      // 模型大小跟着**画布**走（画布随窗口放大而放大，模型再适配进画布），
+      // 所以要等窗口尺寸落地、画布重新适配之后模型才变大——
+      // 只等 __pet.scale 变了不够：那一刻画布可能还是旧的。
+      (oldScale) => window.__pet.scale === 1.5 && window.__pet.model.scale.x > oldScale,
+      scaleBefore,
+      { timeout: 8000 },
+    );
     const scaleAfter = await ctx.win.evaluate(() => window.__pet.model.scale.x);
     expect(scaleAfter).toBeGreaterThan(scaleBefore);
 

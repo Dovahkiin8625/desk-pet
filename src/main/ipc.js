@@ -8,12 +8,23 @@ export function registerIpc({
   switchModel,
   onOpenSettings,
   onShowContextMenu,
+  onOpenPanel,
   onMoveBy,
   onDragStart,
   onDragEnd,
   onRendererReady,
   onModelSwitchResult,
   onModelError,
+  getAssistantState,
+  saveAssistantPrefs,
+  getTtsStatus,
+  setTtsApiKey,
+  getLlmStatus,
+  setLlmApiKey,
+  onDroppedFile,
+  getSystemState,
+  recordHotkey,
+  cancelHotkeyRecording,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -21,6 +32,8 @@ export function registerIpc({
   ipcMain.handle('pet:switchModel', (_e, modelId) => switchModel(modelId));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
+  // 左键点桌宠 → 弹出插件面板。
+  ipcMain.handle('pet:openPanel', () => onOpenPanel());
   // 以下三个是**单向**通道（send 而非 invoke）：
   // 渲染层只是回报结果，主进程不需要回执；单向通道也不会产生
   // 「invoke 找不到处理器」的拒绝。
@@ -42,4 +55,24 @@ export function registerIpc({
   ipcMain.handle('pet:dragEnd', () => {
     onDragEnd();
   });
+
+  // —— 桌面助理 ——
+  // 助理状态：设置窗口用它显示与修改偏好（待办/提醒在插件面板里管）。
+  ipcMain.handle('pet:getAssistantState', () => getAssistantState());
+  ipcMain.handle('pet:saveAssistantPrefs', (_e, patch) => saveAssistantPrefs(patch));
+  // 语音状态：只回掩码，**绝不回明文 key**。
+  ipcMain.handle('pet:getTtsStatus', () => getTtsStatus());
+  ipcMain.handle('pet:setTtsApiKey', (_e, key) => setTtsApiKey(key));
+  // 对话（LLM）的 key 状态：同样只回掩码。
+  ipcMain.handle('pet:getLlmStatus', () => getLlmStatus());
+  ipcMain.handle('pet:setLlmApiKey', (_e, key) => setLlmApiKey(key));
+  // 渲染层报告拖放上来的文件路径（路径本身由渲染层用 webUtils 取）。
+  ipcMain.on('pet:droppedFile', (_e, filePath) => onDroppedFile(filePath));
+
+  // —— 系统级开关（第六部分）——
+  // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
+  ipcMain.handle('pet:getSystemState', () => getSystemState());
+  // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
+  ipcMain.handle('pet:recordHotkey', () => recordHotkey());
+  ipcMain.handle('pet:cancelHotkeyRecording', () => cancelHotkeyRecording());
 }

@@ -1,0 +1,982 @@
+import { powerMonitor } from 'electron';
+import { join } from 'node:path';
+import {
+  MESSAGE_KIND,
+  POMODORO_PRESETS,
+  TTS_HOSTS,
+  LLM_BASE_URLS,
+} from '../../shared/assistant.js';
+import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
+import { loadApiKey, loadLlmApiKey } from '../credentials.js';
+import * as clock from './clock.js';
+import * as todos from './todos.js';
+import * as reminders from './reminders.js';
+import * as pomodoro from './pomodoro.js';
+import * as systemStatus from './systemStatus.js';
+import * as weather from './weather.js';
+import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
+import { synthesizeCached } from './tts/minimax.js';
+import { createBackendRegistry } from './chat/backend.js';
+import { createPlainBackend } from './chat/plain.js';
+import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
+import { appendMessage, mergeFacts } from './chat/memory.js';
+
+/**
+ * 桌面助理的总控。
+ *
+ * 主进程是**唯一的时间与状态来源**：定时器、剪贴板、屏幕 API 都在这边，
+ * 渲染层只负责「表演」（表情、动作、口型）。
+ * 这么做有个直接的好处：桌宠窗口被隐藏时，提醒照样会响。
+ *
+ * 定时器只有一个（每秒一跳），不搞一堆 setTimeout：
+ * 多定时器意味着「状态变了要重新武装每一个」，
+ * 漏掉一个就会留下一个再也不响的提醒——而那种 bug 极难发现。
+ */
+
+/** 主循环的间隔。 */
+const TICK_MS = 1000;
+
+/** 天气刷新的间隔：半小时一次够了。 */
+const WEATHER_REFRESH_MS = 30 * 60 * 1000;
+
+/** 热状态检查的间隔。 */
+const THERMAL_CHECK_MS = 60 * 1000;
+
+/** 问候语的延迟：等模型加载完再说。 */
+const GREETING_DELAY_MS = 3000;
+
+/** 桌宠被隐藏时最多排几条消息。 */
+const MAX_PENDING_MESSAGES = 5;
+
+/** 主动搭话：用户至少这么久没说话，才插嘴。 */
+const PROACTIVE_IDLE_MS = 5 * 60 * 1000;
+
+/** 主动搭话：启动后多久之内不搭话（刚开机就搭话很怪）。 */
+const PROACTIVE_STARTUP_DELAY_MS = 10 * 60 * 1000;
+
+/** 主动搭话：连续失败后的退避上限。 */
+const PROACTIVE_BACKOFF_MAX_MS = 6 * 3600 * 1000;
+
+/** 深夜不搭话：[开始小时, 结束小时)。 */
+const QUIET_HOURS = [23, 8];
+
+/**
+ * 把一份补丁合并进状态。
+ *
+ * **必须深一层**：设置窗口送来的 `tts` 只有
+ * `{enabled, voiceId, speed}` 三个字段，
+ * 浅合并会把 `model`/`vol`/`pitch`/`host` 一并抹掉——
+ * 其中 `host` 是探测出来的可用域名，抹掉就得重新探测一遍。
+ */
+export function createAssistant({  userDataDir,
+  rootDir,
+  bubble,
+  onEmotion,
+  onSpeak,
+  onSound,
+  isPetVisible,
+  fetchImpl = fetch,
+}) {
+  let state = null;
+  // 桌宠被隐藏时排队的消息（最多 5 条）。
+  const pendingMessages = [];
+  let tickTimer = null;
+  let greetingTimer = null;
+  let saveTimer = null;
+  let pendingWrite = null;
+
+  // 上一次报时的分钟键：整点那一分钟只报一次。
+  let lastChimeKey = '';
+  // 上一次检查热状态/天气的时间。
+  let lastThermalCheck = 0;
+  let lastWeatherCheck = 0;
+  // 上次说「我好热」的时间：别每分钟喊一次。
+  let lastHotAlertAt = 0;
+  // 应用启动的时刻：主动搭话要等一段时间才开口。
+  const appStartedAt = Date.now();
+  // 用户最后一次说话的时刻：刚说完话就别插嘴。
+  let lastUserMessageAt = 0;
+  // 正在进行的对话轮次序号：只有最后一次允许写进历史。
+  let chatSeq = 0;
+  // 有对话正在进行吗：主动搭话要避开。
+  let chatBusy = false;
+
+  // 对话后端注册表。
+  //
+  // **这是给将来的 agent 形态留的接缝**：现在只注册了「普通对话」一个，
+  // 将来加 agent（会调工具、会多步思考）时，实现同一个接口再注册一行就行，
+  // 气泡、历史、情绪联动、插件面板都不用改。
+  const backends = createBackendRegistry();
+  backends.register('chat', createPlainBackend({ fetchImpl }));
+
+  const clipboardWatcher = createClipboardWatcher({
+    onText: (text) => {
+      const preview = truncateClipboard(text);
+      say(`你复制了：${preview}`, { emotion: 'neutral', sound: 'tap' });
+    },
+  });
+
+  // ------------------------------------------------------------------
+  // 持久化
+  // ------------------------------------------------------------------
+
+  /** 改动状态后调用：防抖落盘。 */
+  function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      void writeNow();
+    }, 300);
+  }
+
+  /** 真正写一次盘（串行化，避免两次写入重叠时旧内容后落盘）。 */
+  function writeNow() {
+    const p = (pendingWrite || Promise.resolve())
+      .catch(() => {})
+      .then(() => saveAssistant(userDataDir, state))
+      .catch((err) => {
+        // 写失败必须留痕：用户「加了待办却没了」却既没有现象也没有日志。
+        console.warn('[desk-pet] assistant.json 保存失败：', err?.message);
+      })
+      .finally(() => {
+        if (pendingWrite === p) pendingWrite = null;
+      });
+    pendingWrite = p;
+    return p;
+  }
+
+  /**
+   * 退出前落盘。
+   *
+   * **没有待写内容时返回 null**——这一点很关键：
+   * 主进程的 before-quit 靠「有没有东西要等」来决定要不要拦住退出，
+   * 若这里总是返回一个 promise，退出就会被无限重复：
+   * 拦住 → 等 → 再退出 → 又拦住 → …
+   * 应用永远退不出去（E2E 会整个挂住）。
+   */
+  function flushSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      return writeNow();
+    }
+    return pendingWrite;
+  }
+
+  // ------------------------------------------------------------------
+  // 说话
+  // ------------------------------------------------------------------
+
+  /**
+   * 让桌宠说一句话。
+   *
+   * **桌宠被隐藏时不弹气泡**：桌面上凭空浮一个窗口很怪，
+   * 而且那个窗口里的角色不在，用户会不知道是谁在说话。
+   * 这时消息进队列，桌宠重新显示时依次播报。
+   *
+   * 合成失败（没配 key / 断网 / 音色不对）时**静默降级**成纯文字：
+   * 用户已经看到气泡里的字了，再弹一个「语音合成失败」只会更烦。
+   *
+   * `showBubble: false` 可以只要声音不要气泡——插件面板开着的时候用：
+   * 气泡横在面板上会挡住内容（面板就在桌宠旁边，气泡也在）。
+   *
+   * 注意选项名**不能**叫 `bubble`：那会把外层的「气泡控制器」变量遮住，
+   * `bubble.show()` 就变成了 `true.show()`——每句话都会炸。
+   *
+   * `interrupt: true` 表示这条消息**打断**正在进行的流式回复
+   * （提醒、闹钟比聊天重要）。
+   */
+  function say(
+    text,
+    {
+      emotion = '',
+      sound = '',
+      ttlMs,
+      speak = true,
+      mood = 0,
+      showBubble = true,
+      interrupt = false,
+    } = {}
+  ) {
+    const content = String(text ?? '').trim();
+    if (!content) return;
+    if (isPetVisible && !isPetVisible()) {
+      // 队列满了就把最旧的丢掉：与其让一条三小时前的提醒堵在队首，
+      // 不如丢掉它——用户要的是「现在发生的事」。
+      pendingMessages.push({
+        text: content,
+        emotion,
+        sound,
+        ttlMs,
+        speak,
+        mood,
+        // 这两个也要一起排队：不然「不要气泡」的消息
+        // 在桌宠回来后会变成一个气泡，横在插件面板上。
+        showBubble,
+        interrupt,
+      });
+      while (pendingMessages.length > MAX_PENDING_MESSAGES) pendingMessages.shift();
+      return;
+    }
+    if (showBubble) {
+      bubble.show({ kind: MESSAGE_KIND.SAY, text: content, emotion, ttlMs, interrupt });
+    }
+    // 情绪与心情增量一起发过去：任务完成让桌宠也开心一点。
+    if (emotion) onEmotion?.(emotion, mood);
+    if (sound) onSound?.(sound);
+    if (speak && state?.tts?.enabled) {
+      void speakNow(content);
+    }
+  }
+
+  /** 桌宠重新显示了：把排队的消息依次播报。 */
+  function flushPendingMessages() {
+    while (pendingMessages.length > 0) {
+      const message = pendingMessages.shift();
+      say(message.text, message);
+    }
+  }
+
+  /** 合成语音并交给渲染层播放。 */
+  async function speakNow(text) {
+    try {
+      const apiKey = await loadApiKey(userDataDir, rootDir);
+      if (!apiKey) return;
+      const tts = state.tts;
+      // 域名顺序：上次探测成功的那个排最前。
+      //
+      // DESK_PET_TTS_HOSTS 是**测试与开发用的覆盖口**：
+      // E2E 把它指向本地桩服务，就绝不会打到真实接口上去
+      // （桩服务答不上来时也不该去打真的——那会让测试又慢又不确定）。
+      const override = process.env.DESK_PET_TTS_HOSTS;
+      const hosts = override
+        ? override.split(',').map((h) => h.trim()).filter(Boolean)
+        : tts.host
+          ? [tts.host, ...TTS_HOSTS]
+          : TTS_HOSTS;
+      const result = await synthesizeCached(
+        {
+          text,
+          apiKey,
+          voiceId: tts.voiceId,
+          model: tts.model,
+          speed: tts.speed,
+          vol: tts.vol,
+          pitch: tts.pitch,
+        },
+        {
+          cacheDir: join(userDataDir, 'tts-cache'),
+          fetchImpl,
+          hosts,
+        }
+      );
+      // 探测到的可用域名记下来，下次先用它。
+      if (result.host && result.host !== state.tts.host) {
+        state.tts.host = result.host;
+        scheduleSave();
+      }
+      onSpeak?.(result.audio, result.mime || 'mp3');
+    } catch (err) {
+      // 留一行痕就够了：终端里能看到，用户界面里不必再打扰。
+      console.warn('[desk-pet] 语音合成失败：', err?.message || err);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 插件接口
+  //
+  // 插件面板要「读」状态（显示清单）与「改」状态（勾掉一条待办）——
+  // 这两件事以前是混在「改完顺便弹个气泡」里的。
+  // 面板开着的时候冒一只气泡横在上面，输入与反馈都该留在面板里，
+  // 所以这里只改状态、只给桌宠一个情绪反应，结果文字交给插件页面显示。
+  // ------------------------------------------------------------------
+
+  /**
+   * 一个插件动作的结果。
+   *
+   * `message` 是给用户看的一句话（插件页面底部那行提示）。
+   * `ok: false` 表示没做成（时间没看懂、路径打不开……），
+   * 那时 `message` 是解释，不是确认。
+   */
+  function act({ emotion = '', sound = '', mood = 0, message = '', ok = true } = {}) {
+    if (emotion) onEmotion?.(emotion, mood);
+    if (sound) onSound?.(sound);
+    return { ok, message };
+  }
+
+  // ------------------------------------------------------------------
+  // 待办
+  // ------------------------------------------------------------------
+
+  /** 待办清单（插件界面用）。 */
+  function todosView() {
+    const items = state.todos.map((t) => ({ id: t.id, label: t.text, done: t.done }));
+    return {
+      items,
+      pending: items.filter((t) => !t.done).length,
+      total: items.length,
+    };
+  }
+
+  /** 加一条待办。 */
+  function addTodo(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return { ok: false, message: '没写要做什么' };
+    const r = todos.addTodo(state.todos, trimmed);
+    state.todos = r.todos;
+    scheduleSave();
+    return act({ emotion: 'happy', sound: 'success', message: `加好了：${r.added.text}` });
+  }
+
+  /** 勾选 / 取消勾选一条待办。 */
+  function toggleTodo(id) {
+    const before = state.todos.find((t) => t.id === id);
+    if (!before) return { ok: false, message: '这条待办不在了' };
+    state.todos = todos.toggleTodo(state.todos, id);
+    scheduleSave();
+    if (!before.done) {
+      return act({
+        emotion: 'happy',
+        sound: 'success',
+        mood: 10,
+        message: `完成啦：${before.text}`,
+      });
+    }
+    return act({ message: `取消完成：${before.text}` });
+  }
+
+  /** 清掉已完成的待办。 */
+  function clearDoneTodos() {
+    const n = state.todos.filter((t) => t.done).length;
+    if (n === 0) return { ok: false, message: '还没有已完成的事项' };
+    state.todos = todos.clearDone(state.todos);
+    scheduleSave();
+    return act({ message: `清掉了 ${n} 条已完成的` });
+  }
+
+  // ------------------------------------------------------------------
+  // 提醒
+  // ------------------------------------------------------------------
+
+  /** 提醒清单（插件界面用；只列还没响的，按时间排）。 */
+  function remindersView() {
+    const items = state.reminders
+      .filter((r) => !r.fired)
+      .sort((a, b) => a.at - b.at)
+      .map((r) => ({ id: r.id, label: r.text, at: r.at, hint: reminders.clockLabel(r.at) }));
+    return { items, total: items.length };
+  }
+
+  /** 加一条提醒；时间解析不出来时**明确**告诉用户，不默默按默认时间提醒。 */
+  function addReminder(text) {
+    const parsed = reminders.parseReminder(text);
+    if (!parsed) {
+      return {
+        ok: false,
+        message: '没看懂时间。可以写「30分钟后」「2小时后」或者「14:30」',
+      };
+    }
+    const r = reminders.addReminder(state.reminders, parsed.text, parsed.at);
+    state.reminders = r.reminders;
+    scheduleSave();
+    return act({
+      emotion: 'happy',
+      sound: 'success',
+      message: `好的，${parsed.label}提醒你「${r.added.text}」`,
+    });
+  }
+
+  /** 删一条提醒。 */
+  function removeReminder(id) {
+    const target = state.reminders.find((r) => r.id === id);
+    if (!target) return { ok: false, message: '这条提醒不在了' };
+    state.reminders = reminders.removeReminder(state.reminders, id);
+    scheduleSave();
+    return act({ message: `删掉了提醒：${target.text}` });
+  }
+
+  // ------------------------------------------------------------------
+  // 番茄钟
+  // ------------------------------------------------------------------
+
+  function startPomodoro(phase) {
+    const isBreak = phase === pomodoro.PHASE.BREAK;
+    const ms = isBreak ? POMODORO_PRESETS.break : POMODORO_PRESETS.focus;
+    state.pomodoro = pomodoro.start(
+      state.pomodoro,
+      isBreak ? pomodoro.PHASE.BREAK : pomodoro.PHASE.FOCUS,
+      ms
+    );
+    scheduleSave();
+    return act({
+      emotion: 'happy',
+      sound: 'success',
+      message: isBreak ? '开始休息，5 分钟' : '开始专注，25 分钟',
+    });
+  }
+
+  function pausePomodoro() {
+    if (state.pomodoro.phase !== pomodoro.PHASE.FOCUS && state.pomodoro.phase !== pomodoro.PHASE.BREAK) {
+      return { ok: false, message: '番茄钟没有在跑' };
+    }
+    state.pomodoro = pomodoro.pause(state.pomodoro);
+    scheduleSave();
+    return act({ message: '暂停了' });
+  }
+
+  function resumePomodoro() {
+    // 注意是 PHASE.PAUSED：原来这里写的是 pomodoro.PAUSED（不存在，恒为 undefined），
+    // 于是这个判断恒为真，「继续」按钮从来没生效过。
+    if (state.pomodoro.phase !== pomodoro.PHASE.PAUSED) {
+      return { ok: false, message: '番茄钟没有在跑' };
+    }
+    state.pomodoro = pomodoro.resume(state.pomodoro);
+    scheduleSave();
+    return act({ emotion: 'happy', message: '继续' });
+  }
+
+  function resetPomodoro() {
+    state.pomodoro = pomodoro.reset();
+    scheduleSave();
+    return act({ message: '番茄钟重置了' });
+  }
+
+  /** 番茄钟当前状态（插件界面用）。 */
+  function pomodoroView(now = Date.now()) {
+    const p = state.pomodoro;
+    return {
+      phase: p.phase,
+      text: pomodoro.pomodoroText(p, now),
+      running: p.phase === pomodoro.PHASE.FOCUS || p.phase === pomodoro.PHASE.BREAK,
+      paused: p.phase === pomodoro.PHASE.PAUSED,
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // 天气
+  // ------------------------------------------------------------------
+
+  /** 天气：城市、开关与最近一次的结果（插件界面用）。 */
+  function weatherView() {
+    const last = state.weather.last;
+    return {
+      city: state.weather.city,
+      enabled: Boolean(state.weather.enabled),
+      text: last ? weather.weatherLine(last.city, last) : '',
+    };
+  }
+
+  /**
+   * 查一次天气并记进状态；**不说话**。
+   *
+   * 插件界面要自己显示结果，所以这里只返回文字。
+   * 定时播报走 reportWeather（那边要说话）。
+   */
+  async function fetchWeather(city) {
+    const name = city || state.weather.city;
+    if (!name) return { ok: false, message: '还没设置城市' };
+    try {
+      const place = await weather.geocode(name, fetchImpl);
+      if (!place) return { ok: false, message: `没找到「${name}」这个地方` };
+      const current = await weather.fetchWeather(place.latitude, place.longitude, fetchImpl);
+      state.weather.last = { city: name, ...current, at: Date.now() };
+      scheduleSave();
+      return { ok: true, message: weather.weatherLine(name, current) };
+    } catch (err) {
+      // 断网/接口挂了就安静降级：不重试、不刷屏。
+      console.warn('[desk-pet] 天气查询失败：', err?.message || err);
+      return { ok: false, message: '天气暂时查不到' };
+    }
+  }
+
+  /** 定时播报用的天气查询：查完顺便说一声。 */
+  async function reportWeather(city) {
+    const r = await fetchWeather(city);
+    say(r.message, { emotion: r.ok ? 'neutral' : 'sad' });
+  }
+
+  /** 设置城市。 */
+  function setWeatherCity(city) {
+    const name = String(city || '').trim();
+    if (!name) return { ok: false, message: '城市名不能空' };
+    state.weather.city = name;
+    scheduleSave();
+    return act({ message: `城市改成「${name}」了` });
+  }
+
+  /** 定时播报的开关。 */
+  function setWeatherEnabled(on) {
+    const next = Boolean(on);
+    if (next === state.weather.enabled) {
+      return act({ message: next ? '天气播报已经开着了' : '天气播报已经关着了' });
+    }
+    state.weather.enabled = next;
+    scheduleSave();
+    if (!next) return act({ message: '天气播报关掉了' });
+    if (!state.weather.city) {
+      return act({ emotion: 'happy', message: '天气开好了，先设置一个城市吧' });
+    }
+    return act({ emotion: 'happy', message: '天气播报开好了' });
+  }
+
+  // ------------------------------------------------------------------
+  // 系统状态
+  // ------------------------------------------------------------------
+
+  /** 系统状态（插件界面用）。 */
+  function statusView() {
+    const cpu = systemStatus.sampleCpuPercent();
+    const memory = systemStatus.sampleMemoryPercent();
+    return {
+      text: systemStatus.formatStatus({
+        cpu,
+        memory,
+        thermal: safeThermalState(),
+        onBattery: safeOnBattery(),
+      }),
+      hotAlert: Boolean(state.hotAlert.enabled),
+    };
+  }
+
+  function safeThermalState() {
+    try {
+      return powerMonitor.getCurrentThermalState();
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  function safeOnBattery() {
+    try {
+      return powerMonitor.isOnBatteryPower();
+    } catch {
+      return null;
+    }
+  }
+
+  /** 过热提醒的开关。 */
+  function setHotAlertEnabled(on) {
+    const next = Boolean(on);
+    state.hotAlert.enabled = next;
+    scheduleSave();
+    return act({
+      message: next ? '太热的时候我会提醒你' : '不再提醒温度了',
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // 剪贴板
+  // ------------------------------------------------------------------
+
+  /** 剪贴板助手开关。 */
+  function setClipboardEnabled(on) {
+    const next = Boolean(on);
+    state.clipboard.enabled = next;
+    scheduleSave();
+    if (next) clipboardWatcher.start();
+    else clipboardWatcher.stop();
+    return act({
+      message: next ? '剪贴板助手开好了' : '剪贴板助手关掉了',
+    });
+  }
+
+  /** 剪贴板助手开没开（插件界面用）。 */
+  function clipboardView() {
+    return { enabled: Boolean(state.clipboard.enabled) };
+  }
+
+  /** 读一次剪贴板（插件界面用）。内容**只留在内存里**。 */
+  async function readClipboard() {
+    // Electron 45 的剪贴板读取是异步的。
+    const text = await clipboardWatcher.readNow();
+    if (!text || !text.trim()) return { ok: false, text: '' };
+    return { ok: true, text: truncateClipboard(text) };
+  }
+
+  // ------------------------------------------------------------------
+  // 对话
+  //
+  // 一次调用同时拿三样：回复正文、这一轮的情绪、值得记住的事。
+  // 回复在桌宠旁边的气泡里**流式**显示；情绪直接驱动桌宠的表情。
+  // ------------------------------------------------------------------
+
+  /** 要试的接口地址：配置的优先、上次成功的其次、再是默认那批。 */
+  function llmBaseUrls() {
+    // 测试与开发用的覆盖口：指向本地桩服务就绝不会打到真实接口。
+    const override = process.env.DESK_PET_LLM_BASE_URL;
+    if (override) {
+      return override
+        .split(',')
+        .map((h) => h.trim())
+        .filter(Boolean);
+    }
+    const list = [state.llm.baseUrl, state.llm.lastWorkingBaseUrl, ...LLM_BASE_URLS].filter(Boolean);
+    return [...new Set(list)];
+  }
+
+  /**
+   * 跑一轮对话。
+   *
+   * @param {object} options
+   * @param {string} options.text 用户说的话（主动搭话时为空）
+   * @param {'user'|'proactive'} options.trigger 谁发起的
+   * @returns {Promise<{ok: boolean, message: string}>}
+   */
+  async function runChat({ text = '', trigger = 'user' }) {
+    const content = String(text || '').trim();
+    if (trigger === 'user' && !content) return { ok: false, message: '没说要什么' };
+    if (!state.llm.enabled) return { ok: false, message: '对话还没打开（去设置里启用）' };
+
+    const backend = backends.get(state.llm.backend) || backends.get('chat');
+    if (!backend) return { ok: false, message: '没有可用的对话后端' };
+
+    const token = ++chatSeq;
+    chatBusy = true;
+
+    // 上下文要用**还没加上这句话**的历史：
+    // buildChatMessages 自己会把当前这句话放到最后，
+    // 历史里再带一遍的话，模型会看到同一句话出现两次。
+    const history = state.chat.messages;
+    const system = buildSystemPrompt({
+      persona: state.llm.persona,
+      facts: state.chat.facts,
+    });
+    const messages = buildChatMessages({ history, userText: content, trigger });
+
+    // 把用户说的话记下来：说过就是说过，
+    // 哪怕模型没回（没配 key、断网），这句话也不该丢。
+    if (trigger === 'user') {
+      state.chat.messages = appendMessage(state.chat.messages, {
+        role: 'user',
+        text: content,
+        at: Date.now(),
+        proactive: false,
+      });
+      lastUserMessageAt = Date.now();
+      scheduleSave();
+    }
+
+    const apiKey = await loadLlmApiKey(userDataDir, rootDir);
+    const config = {
+      apiKey,
+      baseUrls: llmBaseUrls(),
+      model: state.llm.model,
+      temperature: state.llm.temperature,
+      maxTokens: state.llm.maxTokens,
+      maxTokensField: state.llm.maxTokensField,
+    };
+
+    // 桌宠不在屏幕上时不要凭空浮一个气泡（没有角色在说话）。
+    const petVisible = !isPetVisible || isPetVisible();
+    const streamId = petVisible ? bubble.openStream({ kind: MESSAGE_KIND.CHAT }) : 0;
+
+    let result;
+    try {
+      result = await backend.chat({
+        system,
+        messages,
+        trigger,
+        config,
+        onDelta: (delta) => {
+          if (streamId) bubble.appendStream(streamId, delta);
+        },
+      });
+    } catch (err) {
+      if (streamId) bubble.cancelStream();
+      // 只有**这一轮**还在跑的时候才清标记：
+      // 被后一轮取代时提前清掉，主动搭话会以为「没人说话」而插进来。
+      if (token === chatSeq) chatBusy = false;
+      throw err;
+    }
+    // 被后一轮对话取代了：这一轮不写进历史，也不动气泡。
+    if (token !== chatSeq) return { ok: false, message: '这一轮被新的对话取代了' };
+    chatBusy = false;
+
+    if (streamId) bubble.endStream(streamId, { text: result.text, emotion: result.emotion });
+
+    // 记下这一轮。
+    state.chat.messages = appendMessage(state.chat.messages, {
+      role: 'assistant',
+      text: result.text,
+      at: Date.now(),
+      proactive: trigger === 'proactive',
+    });
+    if (result.memories?.length) {
+      state.chat.facts = mergeFacts(state.chat.facts, result.memories);
+    }
+    // 探测出来的可用地址记下来：下次先用它（照 tts.host 的做法）。
+    if (result.baseUrl && result.baseUrl !== state.llm.lastWorkingBaseUrl) {
+      state.llm.lastWorkingBaseUrl = result.baseUrl;
+    }
+    scheduleSave();
+
+    // 情绪**立刻**生效（哪怕桌宠藏着——回复是刚刚发生的）。
+    onEmotion?.(result.emotion, result.mood);
+    // 念出来，但**不要**再弹一个气泡（回复已经流式显示在气泡里了），
+    // 也不重复施加情绪（say() 会再施加一次，那会把心情加两遍）。
+    say(result.text, { speak: true, showBubble: false });
+
+    return { ok: true, message: result.text };
+  }
+
+  /**
+   * 和桌宠聊天（用户发起的）。
+   *
+   * 失败时把原因说清楚——用户要看得懂「没配 key」「模型没开通」这类错误。
+   */
+  async function chat(text) {
+    try {
+      const result = await runChat({ text, trigger: 'user' });
+      if (!result.ok) {
+        // 没做成要说清楚：用户发了一句话却毫无反应，会以为程序坏了。
+        say(result.message, { emotion: 'sad', speak: false, interrupt: true });
+      }
+      return result;
+    } catch (err) {
+      const message = chatErrorText(err);
+      console.warn('[desk-pet] 对话失败：', err?.message || err);
+      say(message, { emotion: 'sad', speak: false, interrupt: true });
+      return { ok: false, message };
+    }
+  }
+
+  /** 把接口的错误变成用户看得懂的一句话。 */
+  function chatErrorText(err) {
+    const detail = String(err?.body || '').slice(0, 200);
+    const base = String(err?.message || err || '对话失败');
+    return detail ? `${base}（${detail}）` : base;
+  }
+
+  /** 聊天记录（插件界面用）。 */
+  function chatHistoryView() {
+    const messages = (state.chat.messages || []).map((m) => ({
+      role: m.role,
+      text: m.text,
+      at: m.at,
+      proactive: Boolean(m.proactive),
+    }));
+    return { messages, total: messages.length, facts: [...(state.chat.facts || [])] };
+  }
+
+  /** 清空聊天记录与长期记忆。 */
+  function clearChatHistory() {
+    state.chat.messages = [];
+    state.chat.facts = [];
+    scheduleSave();
+    return { ok: true, message: '记录清空了' };
+  }
+
+  /**
+   * 主动搭话：条件全过了才开口。
+   *
+   * 这是 tick 里优先级最低的一件事——提醒和报时比它重要得多。
+   */
+  function maybeProactive(now) {
+    const p = state.llm.proactive;
+    if (!state.llm.enabled || !p.enabled) return;
+    if (chatBusy) return; // 不和正在进行的对话抢气泡
+    if (isPetVisible && !isPetVisible()) return; // 桌宠不在屏幕上时不该凭空说话
+    if (now - appStartedAt < PROACTIVE_STARTUP_DELAY_MS) return;
+    if (p.nextAttemptAt && now < p.nextAttemptAt) return; // 失败退避中
+    if (now - p.lastAt < p.minIntervalMs) return; // 频率上限
+    if (lastUserMessageAt && now - lastUserMessageAt < PROACTIVE_IDLE_MS) return; // 用户刚说过话
+    const hour = new Date(now).getHours();
+    if (hour >= QUIET_HOURS[0] || hour < QUIET_HOURS[1]) return; // 深夜不搭话
+
+    // 条件都过了：先记下时间，别在同一个 tick 里重复触发。
+    p.lastAt = now;
+    scheduleSave();
+    void proactiveChat(now);
+  }
+
+  /** 真的去搭一句话。失败只写日志，不弹错误气泡（失败的搭话不该在桌面上留提示）。 */
+  async function proactiveChat(now) {
+    try {
+      await runChat({ trigger: 'proactive' });
+      state.llm.proactive.consecutiveFailures = 0;
+      state.llm.proactive.nextAttemptAt = 0;
+      scheduleSave();
+    } catch (err) {
+      const p = state.llm.proactive;
+      p.consecutiveFailures += 1;
+      // 指数退避：间隔 × 2^失败次数，封顶 6 小时。
+      const backoff = Math.min(
+        PROACTIVE_BACKOFF_MAX_MS,
+        p.minIntervalMs * 2 ** Math.min(p.consecutiveFailures, 6)
+      );
+      p.nextAttemptAt = now + backoff;
+      scheduleSave();
+      console.warn('[desk-pet] 主动搭话失败：', err?.message || err);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 主循环
+  // ------------------------------------------------------------------
+
+  function tick() {
+    const now = Date.now();
+
+    // 整点报时
+    if (state.chime.enabled) {
+      const d = new Date(now);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`;
+      if (clock.isOnTheHour(d) && key !== lastChimeKey) {
+        lastChimeKey = key;
+        say(clock.chimeText(d), { emotion: 'happy' });
+      }
+    }
+
+    // 到点的提醒
+    const due = reminders.dueReminders(state.reminders, now);
+    if (due.length > 0) {
+      state.reminders = reminders.markFired(state.reminders, due.map((r) => r.id));
+      scheduleSave();
+      for (const r of due) {
+        // 打断：提醒比正在进行的聊天重要。
+        say(`提醒你：${r.text}`, { emotion: 'surprised', sound: 'alarm', mood: 5, interrupt: true });
+      }
+    }
+
+    // 番茄钟到点
+    if (pomodoro.isFinished(state.pomodoro, now)) {
+      const wasFocus = state.pomodoro.phase === pomodoro.PHASE.FOCUS;
+      state.pomodoro = pomodoro.reset();
+      scheduleSave();
+      say(wasFocus ? '专注结束啦，休息一下吧' : '休息结束，继续加油', {
+        emotion: 'happy',
+        sound: 'alarm',
+        mood: 8,
+      });
+    }
+
+    // 热状态
+    if (now - lastThermalCheck >= THERMAL_CHECK_MS) {
+      lastThermalCheck = now;
+      if (state.hotAlert.enabled) {
+        const thermal = safeThermalState();
+        if (systemStatus.isTooHot(thermal) && now - lastHotAlertAt > 10 * 60 * 1000) {
+          lastHotAlertAt = now;
+          say('我好热…你也别让它太热哦', { emotion: 'sad', mood: -8 });
+        }
+      }
+    }
+
+    // 天气刷新
+    if (state.weather.enabled && state.weather.city && now - lastWeatherCheck >= WEATHER_REFRESH_MS) {
+      lastWeatherCheck = now;
+      void reportWeather(state.weather.city);
+    }
+
+    // 主动搭话：条件最多、优先级最低——它只是「锦上添花」，
+    // 绝不能挤掉提醒和报时。
+    maybeProactive(now);
+  }
+
+  // ------------------------------------------------------------------
+  // 对外
+  // ------------------------------------------------------------------
+
+  return {
+    /** 启动：读状态、起定时器。 */
+    async start() {
+      state = await loadAssistant(userDataDir);
+      if (state.clipboard.enabled) clipboardWatcher.start();
+      // 先取一次 CPU 采样当基准：占用率是**两次采样的差值**，
+      // 没有基准就只有一个「不知道」。启动时取一次，
+      // 用户第一次看系统状态时就已经有数字了。
+      systemStatus.sampleCpuPercent();
+      tickTimer = setInterval(tick, TICK_MS);
+      // 问候语：等模型加载完再说。
+      greetingTimer = setTimeout(() => {
+        greetingTimer = null;
+        if (state.greeting.enabled) {
+          const g = clock.greetingFor(new Date());
+          say(g.text, { emotion: g.emotion });
+        }
+      }, GREETING_DELAY_MS);
+    },
+
+    stop() {
+      if (tickTimer) clearInterval(tickTimer);
+      if (greetingTimer) clearTimeout(greetingTimer);
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = null;
+      tickTimer = null;
+      greetingTimer = null;
+      clipboardWatcher.stop();
+    },
+
+    /** 退出前落盘。 */
+    flush: flushSave,
+
+    getState: () => state,
+
+    /** 桌宠重新显示了：把排队的消息依次播报。 */
+    onPetVisible: flushPendingMessages,
+
+    /** 设置窗口改了偏好。 */
+    update(patch) {
+      // 状态还没加载完（start() 还在等磁盘）时收到偏好：
+      // 直接丢掉，别让 `state.llm.persona` 之类炸掉。
+      if (!state) return state;
+      // 合并之后**必须**过一遍 sanitizeAssistant：
+      // 否则内存里可能留着越界的值（比如语速 0），
+      // 而落盘的那份被夹紧过——内存与磁盘不一致，
+      // 越界的值还会被直接发给接口。
+      const next = mergePatch(state, patch || {});
+      // `llm` 里的 persona / proactive 要**深一层**合并：
+      // 设置窗口只会送来用户能改的那几个字段，
+      // 浅合并会把「上次搭话时间」「连续失败次数」这些内部状态抹掉。
+      if (patch?.llm && typeof patch.llm === 'object') {
+        next.llm = {
+          ...state.llm,
+          ...patch.llm,
+          persona: { ...state.llm.persona, ...(patch.llm.persona || {}) },
+          proactive: { ...state.llm.proactive, ...(patch.llm.proactive || {}) },
+        };
+      }
+      state = sanitizeAssistant(next);
+      scheduleSave();
+      if (patch?.clipboard?.enabled !== undefined) {
+        if (patch.clipboard.enabled) clipboardWatcher.start();
+        else clipboardWatcher.stop();
+      }
+      return state;
+    },
+
+    // —— 插件接口 ——
+    // 「读」是给插件界面显示的，「改」是用户动了之后要落地的；
+    // 两者都**不弹气泡**：面板开着的时候，气泡横在上面会挡住内容。
+    say,
+    // 读
+    todosView,
+    remindersView,
+    pomodoroView,
+    weatherView,
+    statusView,
+    clipboardView,
+    readClipboard,
+    // 改
+    addTodo,
+    toggleTodo,
+    clearDoneTodos,
+    addReminder,
+    removeReminder,
+    startPomodoro,
+    pausePomodoro,
+    resumePomodoro,
+    resetPomodoro,
+    setWeatherCity,
+    setWeatherEnabled,
+    setHotAlertEnabled,
+    setClipboardEnabled,
+    // —— 对话 ——
+    /** 和桌宠聊天（用户发起的）。 */
+    chat,
+    /** 聊天记录与长期记忆（插件界面用）。 */
+    chatHistoryView,
+    /** 清空聊天记录与长期记忆。 */
+    clearChatHistory,
+  };
+}

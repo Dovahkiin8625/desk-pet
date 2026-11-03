@@ -12,6 +12,16 @@ test-results/
 playwright-report/
 .playwright-mcp/
 
+# Superpowers 的 SDD 工作区（台账、任务简报、审查包）——是过程产物，不入库。
+.superpowers/
+
+# 本地密钥：MiniMax TTS 的 API Key。
+# 它是**开发期**的引导来源（正本在 userData/credentials.json），
+# 绝不能进版本库——推上去等于把密钥公开。
+minimax-api-key
+*.key
+*.pem
+
 # Live2D 官方样例模型资源（约 9MB），由 `npm run setup` 下载，不入库。
 # 仅保留各模型的手写清单 pet.json。
 # 注意：不要写成 `assets/live2d/models/*`，那样会把模型目录整体排除，

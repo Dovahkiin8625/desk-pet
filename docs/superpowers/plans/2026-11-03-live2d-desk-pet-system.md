@@ -214,6 +214,14 @@ git commit -m "feat(settings): 增加第六部分的六个系统级字段"
 
 ### Task 2: edgeDock 纯几何模块
 
+> **⚠️ 这个任务的做法后来改过一次**（Task 7 的审查暴露出来的）：
+> `dockedRange` 原来只返回「藏匿区」（`[贴齐位, 藏起位]`），
+> 而那让「把停靠中的桌宠拖到屏幕中间」变成**两次手势**。
+> 现在它返回「藏匿区 ∪ 普通可见区」——规格 §6.3 已改写，
+> 实现与测试在 Task 7 的修复轮里一并改了。
+> **下面这个任务里的测试期望值是改之前的**——它记录的是当时的做法，
+> 现在的期望值见 Task 7 的修复单。
+
 **Files:**
 - Create: `src/main/edgeDock.js`
 - Test: `test/unit/edgeDock.test.js`
@@ -525,17 +533,23 @@ export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
  *
  * 放宽是必须的：普通的 clampToDisplays 把窗口整个按回工作区内，
  * 停靠根本出不来。
+ *
+ * **停靠轴要用停靠区间直接夹，不能先按普通区间夹一遍再放宽**——
+ * 普通区间是 [wa.left, wa.right - w]，落在它右边的值（比如想往屏幕外推）
+ * 会先被夹回 wa.right - w，放宽就再也救不回来了。
  */
 export function clampDocked(x, y, width, height, workArea, side, slip = DOCK_SLIP) {
   const maxX = workArea.x + Math.max(0, workArea.width - width);
   const maxY = workArea.y + Math.max(0, workArea.height - height);
-  let cx = Math.min(Math.max(x, workArea.x), maxX);
-  let cy = Math.min(Math.max(y, workArea.y), maxY);
   const range = dockedRange(side, width, height, workArea, slip);
+  let cx;
+  let cy;
   if (side === 'left' || side === 'right') {
-    cx = Math.min(Math.max(cx, range.min), range.max);
+    cx = Math.min(Math.max(x, range.min), range.max);
+    cy = Math.min(Math.max(y, workArea.y), maxY);
   } else {
-    cy = Math.min(Math.max(cy, range.min), range.max);
+    cx = Math.min(Math.max(x, workArea.x), maxX);
+    cy = Math.min(Math.max(y, range.min), range.max);
   }
   return { x: Math.round(cx), y: Math.round(cy) };
 }
@@ -553,7 +567,7 @@ export function isFullyTucked(x, y, width, height, workArea, side, slip = DOCK_S
  *
  * @param {object} gaps 四个间隙
  * @param {object} delta 本次拖拽的**净位移**（期望位置的净变化）
- * @returns {string|null} 停靠边；不���靠返回 null
+ * @returns {string|null} 停靠边；不停靠返回 null
  */
 export function chooseDockSide(gaps, delta, { minPush = MIN_DOCK_PUSH } = {}) {
   const d = delta || { dx: 0, dy: 0 };
@@ -611,8 +625,9 @@ git commit -m "feat(edge-dock): 边缘吸附与贴边停靠的纯几何计算"
 ```js
 test('sound.volume 被夹进 [0,1]，非法值回退 0.8', () => {
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 0.5 } }).sound.volume, 0.5);
-  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 5 } }).sound.volume, 0.8);
-  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0.8);
+  // 越界**夹紧**（与 scale / opacity / tts.vol 一致），非数值才回退默认。
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 5 } }).sound.volume, 1);
+  assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: -1 } }).sound.volume, 0);
   assert.equal(sanitizeAssistant({ sound: { enabled: true, volume: 'x' } }).sound.volume, 0.8);
   assert.equal(sanitizeAssistant({}).sound.volume, 0.8);
 });
@@ -708,6 +723,39 @@ export function getMasterVolume() {
   },
 ```
 
+`src/renderer/pet/audio.js`：
+- 在模块变量区加一行，并导出一个诊断函数：
+
+```js
+// 语音实际连到了哪个节点（null = 还没播过）。
+let speechTarget = null;
+```
+
+```js
+/**
+ * 语音输出接到了哪个节点：'masterGain' / 'destination' / null（还没播过）。
+ *
+ * 有了它，「桌宠说话也受音量控制」才有可断言的出口——
+ * 否则那只是一行 `source.connect(...)`，改了也没人看得出来。
+ */
+export function getSpeechOutput() {
+  if (!speechTarget) return null;
+  return speechTarget === masterGain ? 'masterGain' : 'destination';
+}
+```
+
+- `playSpeech` 里，`source.connect(masterGain || ac.destination);` 改成：
+
+```js
+  // 连什么、记什么必须是同一件事——所以把赋值写在 connect 的参数里。
+  //
+  // 写成两个平行表达式（connect 一行、诊断一行）的话，将来有人只改了
+  // connect 那行，诊断位还报 'masterGain'，那条 e2e 就挡不住它本该挡的回归。
+  // 写成这样之后：connect 的参数一旦不是 masterGain，speechTarget 就不会被赋值，
+  // 诊断位停在 null，e2e 立刻红。
+  source.connect((speechTarget = masterGain || ac.destination));
+```
+
 `src/renderer/main.js`：
 - import 那行改成：
 
@@ -721,6 +769,7 @@ import {
   setAudioEnabled,
   setMasterVolume,
   getMasterVolume,
+  getSpeechOutput,
 } from './pet/audio.js';
 ```
 
@@ -729,6 +778,9 @@ import {
 ```js
   // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
   volume: 0.8,
+  // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
+  // 「桌宠说话也受音量控制」只有这一个可断言的出口。
+  speechOutput: null,
 ```
 
 - `registerChannels()` 里，在 `window.pet.onSoundEnabled?.(...)` 之后加：
@@ -740,6 +792,25 @@ import {
     window.__pet.volume = setMasterVolume(v);
   });
 ```
+
+- `onSpeak` 的处理里，`void playSpeech(bytes, ...)` 改成记下输出节点：
+
+```js
+    void playSpeech(bytes, (amplitude) => {
+      lipSync?.setAmplitude(amplitude);
+      window.__pet.mouthAmplitude = amplitude;
+    })
+      .then(() => {
+        // 播完之后才拿得到：连接是在 decodeAudioData 之后才做的。
+        window.__pet.speechOutput = getSpeechOutput();
+      })
+      .catch((err) => {
+        console.warn('[desk-pet] 语音播放失败：', err?.message || err);
+      });
+```
+
+> 原来的 `void playSpeech(...).catch(...)` 改成 `.then(...).catch(...)`——
+> `catch` 仍在最后，链不会断。
 
 - `boot()` 里，`window.__pet.opacity = ...` 那行之后加：
 
@@ -827,9 +898,59 @@ test('总音量传到了渲染层', async () => {
 });
 ```
 
+再在 `test/e2e/tts.spec.js` 里加一条——**「桌宠说话也受音量控制」只有这一个可断言的出口**
+（那个文件已经有桩服务与「语音送到渲染层」的完整写法，**照抄它的 setup**）：
+
+```js
+test('桌宠说话接在主增益上，所以它也受总音量控制', async () => {
+  const stub = await startStubTts();
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-tts-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+  // 预置：语音开着，域名指向桩服务，音量调到 0.3。
+  await writeFile(
+    join(userDataDir, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      tts: { enabled: true, voiceId: 'female-shaonv', model: 'speech-02-hd', host: stub.url },
+      sound: { enabled: true, volume: 0.3 },
+    }),
+    'utf8'
+  );
+
+  const ctx = await launchWithMenuProbe({
+    userDataDir,
+    env: {
+      MINIMAX_API_KEY: 'sk-test-local-stub',
+      DESK_PET_TTS_HOSTS: stub.url,
+    },
+  });
+  try {
+    // 音量到了渲染层。
+    await ctx.win.waitForFunction(() => window.__pet.volume === 0.3, null, { timeout: 10000 });
+
+    // 语音**接在主增益上**，而不是直接接扬声器——
+    // 接错了的话「桌宠说话」这一路就不受音量控制。
+    await ctx.win.waitForFunction(
+      () => window.__pet.speechOutput === 'masterGain',
+      null,
+      { timeout: 20000 },
+    );
+  } finally {
+    await ctx.close();
+    await stub.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+```
+
+> `speechOutput` 是在 `decodeAudioData` 之后才写的，所以**不能**用
+> `window.__pet.speechCount > 0` 当条件——那个计数在解码之前就加了。
+> 用 `speechOutput === 'masterGain'` 才对。
+
 - [ ] **Step 9: 跑端到端测试确认通过**
 
-Run: `npx playwright test test/e2e/system.spec.js`
+Run: `npx playwright test test/e2e/system.spec.js test/e2e/tts.spec.js`
 Expected: PASS。
 
 - [ ] **Step 10: 提交**
@@ -837,7 +958,7 @@ Expected: PASS。
 ```bash
 git add src/main/assistant/state.js src/renderer/pet/audio.js src/renderer/main.js \
         src/preload/index.cjs src/main/index.js test/unit/assistant.test.js \
-        test/e2e/system.spec.js
+        test/e2e/system.spec.js test/e2e/tts.spec.js
 git commit -m "feat(audio): 总音量同时管住提示音与桌宠说话"
 ```
 
@@ -981,6 +1102,8 @@ test('开机自启：开发态要带上应用路径，否则开机只弹空白 E
   controller.init(settings);
   controller.applySettings({ ...settings, autoLaunch: true });
   assert.deepEqual(loginItemCalls[0].args, ['E:/project/desk-pet']);
+  // path 指向当前可执行文件（Electron 的默认值，写出来是为了明确）。
+  assert.equal(loginItemCalls[0].path, process.execPath);
 });
 
 test('开机自启：打包后不带参数（process.execPath 就是应用自己）', () => {
@@ -1068,6 +1191,9 @@ export function createSystemController({
   // 快捷键录制中。
   let recording = false;
   let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+  // 最近一次失败的说明。空串 = 没有失败。
+  // 它是「界面上说得出来」那半的载体——光在终端留痕，用户看不见。
+  let lastError = '';
 
   // —— 开机自启 ——
 
@@ -1077,21 +1203,31 @@ export function createSystemController({
    * 开发态（未打包）必须带应用路径：那时 process.execPath 是 electron.exe，
    * 不带路径的话开机只会弹一个空白的 Electron 窗口。
    * 打包后 process.execPath 就是应用自己，不需要参数。
+   *
+   * `path` 写死 `process.execPath`：Electron 的默认值也是它，但写出来更清楚
+   * （`process` 是 Node 全局，不算 import Electron，单元测试里也能断言）。
    */
   function writeLoginItem(enabled) {
     const args = isPackaged ? [] : [getAppPath()];
-    loginItem.set({ openAtLogin: Boolean(enabled), args });
+    loginItem.set({ openAtLogin: Boolean(enabled), path: process.execPath, args });
   }
 
+  /**
+   * 写登录项。
+   *
+   * 成功返回 `null`（falsy），失败返回**错误原因**（非空串）。
+   * 返回原因而不是布尔：失败原因要一路带到 `lastError` 里，
+   * 用户在设置窗口看到的是「为什么没成功」，不是干巴巴一个「失败」。
+   */
   function applyAutoLaunch(enabled) {
     try {
       writeLoginItem(enabled);
-      return true;
+      return null;
     } catch (err) {
       // 失败必须留痕：否则用户勾了「开机自启」而系统里根本没有注册项，
       // 而且没有任何线索可查。
       console.warn('[desk-pet] 开机自启设置失败：', err?.message || err);
-      return false;
+      return err?.message || '未知原因';
     }
   }
 
@@ -1108,6 +1244,9 @@ export function createSystemController({
       edgeSnap: settings.edgeSnap !== false,
       dockEnabled: Boolean(settings.dockEnabled),
       dock,
+      // 最近一次失败的原因。设置窗口拿它把失败显示给用户——
+      // 「失败必须留痕 + 在界面上说得出来」那半的载体。
+      lastError,
     };
   }
 
@@ -1128,8 +1267,6 @@ export function createSystemController({
     // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
     if (settings.clickThrough) applyClickThrough(true);
-    // 停靠：把窗口挪到藏起来的位置。
-    applyDockAtStartup();
   }
 
   function applyClickThrough(enabled) {
@@ -1147,15 +1284,33 @@ export function createSystemController({
   function applySettingsToSystem(settings) {
     if (!applied) applied = { autoLaunch: false, clickThrough: false };
     const patch = {};
+    // 这次变更里有没有「做失败了」的事：有的话最后要通知外面，
+    // 让界面知道出了错——失败不能是静默的。
+    let failed = false;
 
     if (Boolean(settings.autoLaunch) !== Boolean(applied.autoLaunch)) {
       const want = Boolean(settings.autoLaunch);
-      if (!applyAutoLaunch(want) && want) {
-        // 注册失败：把开关改回去，不能让磁盘写着 true 而系统里没有。
-        patch.autoLaunch = false;
-        applied.autoLaunch = false;
+      const error = applyAutoLaunch(want);
+      if (error) {
+        failed = true;
+        // 说清是什么事、为什么：用户看到「开机自启没打开」时，
+        // 得知道是注册表写不进去还是别的。
+        lastError = `开机自启${want ? '开启' : '关闭'}失败：${error}`;
+        // 写失败：不管开关是开还是关，注册项与磁盘都可能不一致。
+        //
+        // 关闭方向：**不动 applied**——留着旧值，下一次 applySettings 会重试；
+        // 若把 applied 记成 false，控制器就以为已经关了（系统里的注册项还在，
+        // 下次开机照样自启），而且此后同值的 applySettings 永远不会再试。
+        //
+        // 打开方向：必须把磁盘改回去——磁盘上的 true 是假的，
+        // 用户重启后会以为自启开着。
+        if (want) {
+          patch.autoLaunch = false;
+          applied.autoLaunch = false;
+        }
       } else {
         applied.autoLaunch = want;
+        lastError = '';
       }
     }
 
@@ -1165,18 +1320,11 @@ export function createSystemController({
       onStateChanged?.();
     }
 
-    // 「贴边隐藏」被关掉时，正在停靠的桌宠要立刻取回来：
-    // 不然用户关了开关、桌宠还赖在屏幕外，开关看起来没生效。
-    if (settings.dockEnabled === false && dock) {
-      undock();
-    }
-
+    // 先把回退落盘，再通知外面：通知时 settings 必须已经是回退后的值，
+    // 否则界面会停留在「已开启」而磁盘上已经是「关闭」。
     if (Object.keys(patch).length > 0) applySettings(patch);
+    if (failed) onStateChanged?.();
   }
-
-  // —— 停靠（真正的实现随 Task 7 补齐；这里先留占位以便本任务自洽）——
-  function undock() {}
-  function applyDockAtStartup() {}
 
   return {
     init,
@@ -1187,20 +1335,106 @@ export function createSystemController({
 }
 ```
 
-> **注意**：本任务里 `undock` / `applyDockAtStartup` 是空壳，Task 7 会用真实实现替换掉它们。
-> 空壳存在的理由是：`init()` 会调用 `applyDockAtStartup()`，
-> 而 Task 4 的单元测试已经断言 `init()` 之后能正常跑完。
-> **Task 7 必须替换掉它们**——本任务结束时空壳留着不算完成。
+> 停靠（`undock` / `applyDockAtStartup` / 拖拽状态机）**不在本任务里**——
+> Task 7 会连同它们的调用点一起加进来。
+> 这里刻意不留空壳：空函数在代码里是「看起来实现了其实没有」的东西，
+> 审查时很难分辨它是占位还是遗漏。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 4: 把控制器接进主进程**
+
+`src/main/index.js`：
+
+1. 顶部 import 加：
+
+```js
+import { createSystemController } from './system.js';
+```
+
+2. `let pendingWrite = null;` 之后加：
+
+```js
+// 系统级开关的控制器（第六部分）。
+let system = null;
+```
+
+3. `app.whenReady()` 里，`win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });` **之后**加：
+
+```js
+  // 系统控制器：必须在窗口建好之后创建——穿透模式要作用在窗口上。
+  system = createSystemController({
+    getWindow: () => win,
+    getDisplays: () => currentDisplays(),
+    getSettings: () => settings,
+    applySettings: (patch) => persist(patch),
+    onHotkeyAction: () => toggleVisible(),
+    onStateChanged: () => {
+      // 系统状态变了要广播出去：设置窗口的勾选框要跟着回退，
+      // 而且它靠 getState().lastError 把失败原因显示出来。
+      // persist() 自己不广播——落盘是防抖的，而「生效」不能等落盘。
+      broadcastSettings(settings);
+    },
+    onHotkeyStatus: (status) => {
+      // 设置窗口还没建时无处可发；它建好后会自己拉一次状态。
+      if (settingsWin && !settingsWin.isDestroyed()) {
+        settingsWin.webContents.send('pet:hotkeyStatus', status);
+      }
+    },
+    loginItem: {
+      set: (opts) => {
+        // E2E 不碰注册表：写注册表会污染跑测试的机器，
+        // 而且注册表项可能指向临时路径，清理不掉。
+        if (IS_E2E) return;
+        app.setLoginItemSettings(opts);
+      },
+      get: () => app.getLoginItemSettings(),
+    },
+    shortcuts: {
+      register: (acc, cb) => {
+        // E2E 不占用系统级快捷键：注册是真的全局生效，
+        // 跑测试的那几分钟里用户按这个组合会被应用吃掉。
+        // 假装成功，好让「状态被正确上报」那条链路在 E2E 里仍然跑得通。
+        if (IS_E2E) return true;
+        return globalShortcut.register(acc, cb);
+      },
+      unregister: (acc) => {
+        if (IS_E2E) return;
+        globalShortcut.unregister(acc);
+      },
+      unregisterAll: () => {
+        if (IS_E2E) return;
+        globalShortcut.unregisterAll();
+      },
+      isRegistered: (acc) => globalShortcut.isRegistered(acc),
+    },
+    getAppPath: () => app.getAppPath(),
+    isPackaged: app.isPackaged,
+    isE2E: IS_E2E,
+  });
+  system.init(settings);
+```
+
+4. 顶部 import 里的 electron 依赖加 `globalShortcut`：
+
+```js
+import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
+```
+
+5. `persist()` 里，在 `if (saveTimer) clearTimeout(saveTimer);` **之前**加：
+
+```js
+  // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
+  system?.applySettings?.(settings);
+```
+
+- [ ] **Step 5: 跑测试确认通过**
 
 Run: `node --test test/unit/system.test.js`
 Expected: PASS（6 条全过）。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
-git add src/main/system.js test/unit/system.test.js
+git add src/main/system.js src/main/index.js test/unit/system.test.js
 git commit -m "feat(system): 系统级开关的控制器骨架与开机自启"
 ```
 
@@ -1273,15 +1507,58 @@ test('快捷键注册成功：落盘新组合并注销旧的', () => {
         },
         unregister: (acc) => unregistered.push(acc),
         unregisterAll: () => {},
-        isRegistered: () => true,
+        isRegistered: () => false,
       },
     },
   });
   controller.init(settings);
   controller.setHotkey('Control+Alt+P');
-  assert.deepEqual(registered, ['Control+Alt+P']);
+  // init 已经按规格注册了 settings.hotkey，这里再注册新组合——
+  // 两次都在列表里，顺序也反映了真实发生的事。
+  assert.deepEqual(registered, ['Control+Shift+D', 'Control+Alt+P']);
   assert.deepEqual(unregistered, ['Control+Shift+D']);
   assert.equal(settings.hotkey, 'Control+Alt+P');
+});
+
+test('启动时按 settings.hotkey 注册一次', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  assert.deepEqual(registered, ['Control+Shift+D']);
+});
+
+test('裸键被 setHotkey 拒绝：不会注册成全局裸键', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => false,
+      },
+    },
+  });
+  controller.init(settings);
+  registered.length = 0;
+  assert.equal(controller.setHotkey('D'), false);
+  assert.deepEqual(registered, []);
+  assert.equal(controller.getState().hotkeyStatus.state, 'error');
 });
 
 test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
@@ -1308,12 +1585,14 @@ test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
   assert.match(state.hotkeyStatus.error, /占用/);
 });
 
-test('快捷键注册抛异常：当成失败处理', () => {
+test('快捷键语法非法：提示与「被占用」区分开', () => {
+  // 「被占用」要用户换个组合；「这个组合不能用」是设置本身写坏了。
+  // 混成一句话等于让用户瞎猜。
   const { controller, settings } = makeController({
     options: {
       shortcuts: {
         register: () => {
-          throw new Error('非法加速键');
+          throw new Error('Invalid accelerator token');
         },
         unregister: () => {},
         unregisterAll: () => {},
@@ -1323,6 +1602,10 @@ test('快捷键注册抛异常：当成失败处理', () => {
   });
   controller.init(settings);
   assert.equal(controller.setHotkey('Control+Alt+P'), false);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /不能用/);
+  assert.doesNotMatch(state.hotkeyStatus.error, /占用/);
 });
 
 test('录制：开始 → 处理按键 → 注册', () => {
@@ -1446,14 +1729,32 @@ export function buildAccelerator(input) {
 ```js
   // —— 全局快捷键 ——
 
-  /** 注册一个组合。失败（被占用）返回 false，不抛错。 */
+  /**
+   * 注册一个组合。
+   *
+   * 返回 'ok' | 'taken' | 'invalid'：
+   * - 'ok'：注册成功。
+   * - 'taken'：**被别的程序占用**。`globalShortcut.register` 在这种情况下
+   *   返回 false 而且**不抛错**（Windows 上是静默失败，Electron 文档明说
+   *   这是操作系统的有意行为）。
+   * - 'invalid'：**加速键串语法非法**，这时 register 会抛异常。
+   *
+   * **两者必须分开**：用户看到的提示不同。
+   * 「被占用」要他去换个组合；「这个组合不能用」是设置本身写错了
+   * （比如从磁盘上读进来一个手改坏的字符串）。混成一句话等于让用户瞎猜。
+   */
   function registerShortcut(accelerator) {
     try {
-      return shortcuts.register(accelerator, onHotkeyAction);
+      return shortcuts.register(accelerator, onHotkeyAction) ? 'ok' : 'taken';
     } catch (err) {
       console.warn('[desk-pet] 快捷键注册失败：', err?.message || err);
-      return false;
+      return 'invalid';
     }
+  }
+
+  /** 注册失败时的提示语。 */
+  function shortcutErrorText(result) {
+    return result === 'invalid' ? '这个组合不能用' : '该组合已被其他程序占用';
   }
 
   function setHotkeyStatus(next) {
@@ -1475,12 +1776,13 @@ export function buildAccelerator(input) {
       setHotkeyStatus({ state: 'ok', accelerator, error: '' });
       return true;
     }
-    if (!registerShortcut(accelerator)) {
+    const result = registerShortcut(accelerator);
+    if (result !== 'ok') {
       recording = false;
       setHotkeyStatus({
         state: 'error',
         accelerator: current,
-        error: '该组合已被其他程序占用',
+        error: shortcutErrorText(result),
       });
       return false;
     }
@@ -1539,17 +1841,54 @@ export function buildAccelerator(input) {
   把 Task 4 里 `let hotkeyStatus = { ... };` 那一行后面补上这个函数
   （放在 `getState()` 之前即可）。
 
-- `init(settings)` 里加一行（穿透模式之后）：
+- `init(settings)` 里加一段（穿透模式之后）：
 
 ```js
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
+    //
+    // **无条件注册**：进程刚起时这个组合不可能已经被本进程注册过，
+    // 加一道「已注册就不注册」的守卫反而会让「启动时注册一次」这条规格
+    // 变得没法验证——而那条守卫唯一能到达的状态只有测试替身造得出来。
     if (settings.hotkey) {
-      const ok = registerShortcut(settings.hotkey);
+      const result = registerShortcut(settings.hotkey);
+      if (result === 'ok') {
+        setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
+      } else {
+        // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
+        // 而终端里什么也没有。
+        console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText(result));
+        setHotkeyStatus({
+          state: 'error',
+          accelerator: settings.hotkey,
+          error: shortcutErrorText(result),
+        });
+      }
+    }
+```
+
+- `setHotkey` 入口加一道修饰键校验（规格 §4.3①）：
+
+```js
+  /** 加速键串里至少要有一个修饰键。 */
+  function hasModifier(accelerator) {
+    return /(^|\+)(Control|Ctrl|Alt|Shift|Super|Command|Meta)(\+|$)/i.test(accelerator);
+  }
+```
+
+  在 `setHotkey` 里，`if (typeof accelerator !== 'string' || accelerator === '') return false;` 之后加：
+
+```js
+    // 必须至少一个修饰键：裸键注册是全局的，会劫持用户的字母键
+    // （规格 §4.3①）。buildAccelerator 已经保证过，这里再挡一道——
+    // 因为 setHotkey 可能被别的通道直接调用。
+    if (!hasModifier(accelerator)) {
+      recording = false;
       setHotkeyStatus({
-        state: ok ? 'ok' : 'error',
-        accelerator: settings.hotkey,
-        error: ok ? '' : '该组合已被其他程序占用',
+        state: 'error',
+        accelerator: current,
+        error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
       });
+      return false;
     }
 ```
 
@@ -1592,15 +1931,68 @@ export function buildAccelerator(input) {
   },
 ```
 
-- [ ] **Step 7: 跑测试确认通过**
+- [ ] **Step 7: 把三个通道的实现接进主进程**
+
+`src/main/index.js` 的 `registerIpc({...})` 里加：
+
+```js
+    // —— 系统级开关（第六部分）——
+    // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
+    getSystemState: () => system?.getState?.() || null,
+    // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
+    recordHotkey: () => system?.startRecording?.() || false,
+    cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
+```
+
+> `system` 在 `registerIpc` **之后**才创建，但这三个是箭头函数，
+> 调用时才求值——那时 `system` 已经有值了。
+>
+> 这三个实现**必须与 `ipc.js` 里的通道注册在同一个任务里**：
+> 只注册通道而不给实现，`registerIpc` 解构出来的是 `undefined`，
+> 通道一旦被调用就会抛「getSystemState is not a function」。
+
+再加两处接线（都在 `src/main/index.js`）：
+
+**退出时注销快捷键**（规格 §4.6）——`app.on('before-quit', flushPendingSave);` 之后：
+
+```js
+// 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
+// 下次启动注册不上。
+app.on('will-quit', () => system?.dispose?.());
+```
+
+**接上快捷键录制的按键捕获**——`openSettings()` 里，`settingsWin.loadURL(...)` **之前**：
+
+```js
+  // 快捷键录制：主进程接管按键捕获。
+  //
+  // 用 before-input-event 而不是渲染层的 keydown：它给的是
+  // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
+  // 而且能 preventDefault——不然那一次按键会漏进页面的输入框
+  // （规格 §4.3②）。
+  settingsWin.webContents.on('before-input-event', (event, input) => {
+    if (!system?.isRecording?.()) return;
+    event.preventDefault();
+    system.handleInput(input);
+  });
+```
+
+> 没有这一段，录制的按键就送不到控制器——设置窗口能点「录制」进入录制态，
+> 但按下的键没有通道能进去，**录制无法完成，用户也就无法真正改快捷键**。
+>
+> 设置窗口关掉再打开时 `openSettings()` 会新建一个窗口，监听器随之重建，
+> 不会重复注册。
+
+- [ ] **Step 8: 跑测试确认通过**
 
 Run: `node --test test/unit/system.test.js`
-Expected: PASS（4 + 10 = 14 条全过）。
+Expected: PASS（6 + 11 = 17 条全过）。
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/main/system.js src/main/ipc.js src/preload/index.cjs test/unit/system.test.js
+git add src/main/system.js src/main/ipc.js src/preload/index.cjs src/main/index.js \
+        test/unit/system.test.js
 git commit -m "feat(hotkey): 全局快捷键的录制、注册与冲突提示"
 ```
 
@@ -1780,61 +2172,45 @@ export function menuTemplate(actions) {
 
 `src/main/index.js`：
 
-1. 导入：
+> 控制器本体已经在 Task 4 里创建并接进 `persist()` 了。
+> 本任务只加**菜单与快捷键动作**这一层。
+
+1. 把 Task 4 里创建控制器时的 `onStateChanged` 改成：
 
 ```js
-import { createSystemController } from './system.js';
-```
-
-2. 在 `let pendingWrite = null;` 之后加：
-
-```js
-// 系统级开关的控制器（第六部分）。
-let system = null;
-```
-
-3. 在 `app.whenReady()` 里，`win = createPetWindow(...)` 之后加：
-
-```js
-  // 系统控制器：窗口建好之后才创建（穿透模式要作用在窗口上）。
-  system = createSystemController({
-    getWindow: () => win,
-    getDisplays: () => currentDisplays(),
-    getSettings: () => settings,
-    applySettings: (patch) => persist(patch),
-    onHotkeyAction: () => toggleVisible(),
-    onStateChanged: () => refreshTrayMenu(),
-    loginItem: {
-      set: (opts) => {
-        // E2E 不碰注册表：写注册表会污染跑测试的机器，
-        // 而且注册表项可能指向临时路径，清理不掉。
-        if (IS_E2E) return;
-        app.setLoginItemSettings(opts);
-      },
-      get: () => app.getLoginItemSettings(),
+    onStateChanged: () => {
+      refreshTrayMenu();
+      // 设置窗口也要跟着变：用户可能是在**托盘菜单**里改的穿透，
+      // 那条路不经过设置窗口自己的 saveSettings，不会自动广播。
+      broadcastSettings(settings);
     },
-    shortcuts: {
-      register: (acc, cb) => globalShortcut.register(acc, cb),
-      unregister: (acc) => globalShortcut.unregister(acc),
-      unregisterAll: () => globalShortcut.unregisterAll(),
-      isRegistered: (acc) => globalShortcut.isRegistered(acc),
-    },
-    getAppPath: () => app.getAppPath(),
-    isPackaged: app.isPackaged,
-    isE2E: IS_E2E,
-  });
-  system.init(settings);
 ```
 
-4. 顶部 import 里加 `globalShortcut`：
+> Task 4 已经把 `broadcastSettings(settings)` 接进去了——
+> 开机自启失败时 `lastError` 要靠这条广播送到设置窗口。
+> 本任务只是**再加**托盘菜单的重建。
+
+2. 加托盘菜单重建函数与**共用的动作表**（放在 `openSettings` 之后）：
 
 ```js
-import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
-```
+/**
+ * 托盘菜单与右键菜单共用的动作表。
+ *
+ * 两处各写一份的后果很具体：加一个动作要改两处，
+ * 漏一处就是「托盘菜单里那个项点了没反应」。
+ */
+function menuActions() {
+  return {
+    toggleVisible,
+    openSettings,
+    quit: () => app.quit(),
+    toggleClickThrough: () => system?.toggleClickThrough?.(),
+    isClickThrough: () => settings?.clickThrough === true,
+    isDocked: () => system?.getState?.().dock != null,
+    retrievePet: () => system?.retrievePet?.(),
+  };
+}
 
-5. 加托盘菜单重建函数（放在 `openSettings` 之后）：
-
-```js
 /**
  * 重建托盘菜单。
  *
@@ -1843,21 +2219,11 @@ import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'elect
  */
 function refreshTrayMenu() {
   if (!tray) return;
-  tray.setContextMenu(
-    buildTrayMenu({
-      toggleVisible,
-      openSettings,
-      quit: () => app.quit(),
-      toggleClickThrough: () => system?.toggleClickThrough?.(),
-      isClickThrough: () => settings?.clickThrough === true,
-      isDocked: () => system?.getState?.().dock != null,
-      retrievePet: () => system?.retrievePet?.(),
-    })
-  );
+  tray.setContextMenu(buildTrayMenu(menuActions()));
 }
 ```
 
-6. `toggleVisible` 改成：
+3. `toggleVisible` 改成：
 
 ```js
 function toggleVisible() {
@@ -1875,45 +2241,20 @@ function toggleVisible() {
 }
 ```
 
-7. `showContextMenu` 改成：
+4. `showContextMenu` 改成：
 
 ```js
 function showContextMenu() {
   if (!win) return;
-  buildContextMenu({
-    toggleVisible,
-    openSettings,
-    quit: () => app.quit(),
-    toggleClickThrough: () => system?.toggleClickThrough?.(),
-    isClickThrough: () => settings?.clickThrough === true,
-    isDocked: () => system?.getState?.().dock != null,
-    retrievePet: () => system?.retrievePet?.(),
-  }).popup({ window: win });
+  buildContextMenu(menuActions()).popup({ window: win });
 }
 ```
 
-8. `persist()` 里，在 `if (saveTimer) clearTimeout(saveTimer);` **之前**加：
+> 三个系统级 IPC 通道的实现（`getSystemState` / `recordHotkey` /
+> `cancelHotkeyRecording`）**在 Task 5 就接好了**——通道注册与实现必须同任务落地，
+> 否则中间那个提交里通道引用的是未定义的绑定。
 
-```js
-  // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
-  system?.applySettings?.(settings);
-```
-
-9. `registerIpc({...})` 里加三个系统级通道的实现：
-
-```js
-    // —— 系统级开关（第六部分）——
-    // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
-    getSystemState: () => system?.getState?.() || null,
-    // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
-    recordHotkey: () => system?.startRecording?.() || false,
-    cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
-```
-
-> `system` 在 `registerIpc` **之后**才创建，但这三个是箭头函数，
-> 调用时才求值——那时 `system` 已经有值了。
-
-10. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
+5. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
 
 ```js
   tray.setContextMenu(
@@ -1931,48 +2272,100 @@ function showContextMenu() {
   refreshTrayMenu();
 ```
 
-11. `app.on('before-quit', flushPendingSave);` 之后加：
+> 退出时注销快捷键的 `will-quit` 钩子**在 Task 5 就接好了**（规格 §4.6），
+> 本任务不用再加一遍。
+
+- [ ] **Step 6: 顺带修掉 Task 5 复审留下的三条 Minor**
+
+这三条都在 `src/main/system.js` / `test/unit/system.test.js` 里，Task 5 已经关闭，
+而本任务是下一个动 `system.js` 的任务——放在这里一起收掉，免得再开一轮。
+
+**① `init` 的注册路径也要校验修饰键。**
+Task 5 加的 `hasModifier` 只挡住了 `setHotkey` 的入口，`init` 里直接
+`registerShortcut(settings.hotkey)` 绕过了它。
+而 `sanitizeSettings` 对 `hotkey` 只校验「非空字符串且长度 ≤ 64」——
+磁盘上手改成 `hotkey: "D"` 的设置文件会在启动时注册一个**全局裸键**，
+劫持用户的 D 键。
 
 ```js
-// 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
-// 下次启动注册不上。
-app.on('will-quit', () => system?.dispose?.());
+    if (settings.hotkey) {
+      if (!hasModifier(settings.hotkey)) {
+        // 磁盘上的组合没有修饰键：注册它会劫持用户的字母键。
+        // 宁可先不注册，也不能把用户的键抢走。
+        console.warn('[desk-pet] 设置里的快捷键没有修饰键，已跳过注册：', settings.hotkey);
+        setHotkeyStatus({
+          state: 'error',
+          accelerator: settings.hotkey,
+          error: '这个组合不能用：至少要带 Ctrl / Alt / Shift 之一',
+        });
+      } else {
+        const result = registerShortcut(settings.hotkey);
+        ...
+      }
+    }
 ```
 
-- [ ] **Step 6: 跑单元测试确认通过**
+**② `taken` 在启动时 warn 两次（两行内容完全相同）。**
+一处来自 `registerShortcut`，一处来自 `init`。删掉 `init` 里那行——
+`registerShortcut` 已经覆盖了 `taken` / `invalid` 两个分支。
+
+**③ 警告条数断言被放松了。**
+上一轮为了让双 warn 通过，把 `assert.equal(warnings.length, 1)` 改成了
+`assert.ok(warnings.length >= 1)`。去掉重复 warn 之后，把**能**改回 `=== 1` 的改回去；
+改不回去的说明它本来就该是 `>= 1`，在报告里写明理由。
+
+- [ ] **Step 7: 跑单元测试确认通过**
 
 Run: `node --test test/unit/menuTemplate.test.js test/unit/system.test.js`
 Expected: PASS。
 
-- [ ] **Step 7: 写端到端测试**
+> **别忘了 `test/e2e/acceptance.spec.js`**：它写死了菜单的标签数组
+> （`expect(trayMenu.labels).toEqual([...])`），菜单加一项它就必然失败。
+> 那条用例的标题与注释里也写着「鼠标穿透」，一并改成新的菜单结构。
+
+- [ ] **Step 8: 写端到端测试**
+
+先在 `test/e2e/helpers.js` 里加一个轮询助手（**Task 8 的用例也要用**）：
+
+```js
+/**
+ * 轮询主进程上报的系统状态，直到满足条件（或超时）。返回最后一次的状态。
+ *
+ * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
+ * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
+ * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
+ * 那条坑会让「等状态变成 true」这种断言变成恒真。
+ */
+export async function waitForSystemState(ctx, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let state = null;
+  for (;;) {
+    state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    if (predicate(state)) return state;
+    if (Date.now() >= deadline) return state;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+```
 
 `test/e2e/system.spec.js` 末尾追加：
 
 ```js
-test('穿透模式：打开后主进程上报穿透状态，窗口不吃点击', async () => {
+test('穿透模式：打开后主进程上报穿透状态', async () => {
   const ctx = await launchApp();
   try {
     const before = await ctx.win.evaluate(() => window.pet.getSystemState());
     expect(before.clickThroughActive).toBe(false);
 
     await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: true }));
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === true,
-      null,
-      { timeout: 10000 },
-    );
-
-    const after = await ctx.win.evaluate(() => window.pet.getSystemState());
-    expect(after.clickThrough).toBe(true);
-    expect(after.clickThroughActive).toBe(true);
+    const after = await waitForSystemState(ctx, (s) => s.clickThroughActive === true);
+    expect(after.clickThrough, '穿透应当被打开').toBe(true);
+    expect(after.clickThroughActive, '穿透应当真的生效了').toBe(true);
 
     // 关掉：点击要还给窗口。
     await ctx.win.evaluate(() => window.pet.saveSettings({ clickThrough: false }));
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === false,
-      null,
-      { timeout: 10000 },
-    );
+    const off = await waitForSystemState(ctx, (s) => s.clickThroughActive === false);
+    expect(off.clickThroughActive, '穿透应当被关掉').toBe(false);
   } finally {
     await ctx.close();
   }
@@ -1982,12 +2375,12 @@ test('穿透模式：打开后主进程上报穿透状态，窗口不吃点击',
 > `window.pet.saveSettings` 走的是 `pet:saveSettings` → 主进程 `persist()` → `system.applySettings()`，
 > 穿透状态因此会立刻生效。preload 里 `saveSettings` 已存在，不用改。
 
-- [ ] **Step 8: 跑端到端测试确认通过**
+- [ ] **Step 9: 跑端到端测试确认通过**
 
 Run: `npx playwright test test/e2e/system.spec.js`
 Expected: PASS。
 
-- [ ] **Step 9: 提交**
+- [ ] **Step 10: 提交**
 
 ```bash
 git add src/main/system.js src/main/menuTemplate.js src/main/index.js \
@@ -2092,6 +2485,31 @@ test('「取回桌宠」把停靠中的桌宠拉回完全可见', () => {
   assert.equal(controller.getState().dock, null);
   const last = win.calls[win.calls.length - 1];
   assert.equal(last[1], 1000 - 300);
+});
+
+test('从停靠里只拽出一半就松手：落盘的位置必须还在屏幕内', () => {
+  // 不夹回来的话会存下一个在屏幕外的坐标——重启时 restorePosition
+  // 会判定它「不在任何显示器内」，悄悄回落到主显示器右下角，
+  // 用户上次把桌宠放在哪就丢了。
+  const { controller, patched, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  // 只拽出 50px 就松手：窗口还有一大半在屏幕外。
+  controller.dragStart();
+  controller.moveBy(-50, 0);
+  controller.dragEnd();
+
+  assert.equal(controller.getState().dock, null);
+  const posPatch = patched.filter((p) => p.position).pop();
+  assert.ok(posPatch, '应当持久化位置');
+  assert.ok(
+    posPatch.position.x >= 0 && posPatch.position.x + 300 <= 1000,
+    `落盘的位置不能落在屏幕外，实际是 ${posPatch.position.x}`
+  );
 });
 ```
 
@@ -2254,9 +2672,19 @@ Expected: FAIL —— `controller.dragStart` 不是函数。
         applySettings({ dock: wasDocked });
         return;
       }
+      // 被拽出来了：取消停靠，**并把位置夹回工作区内**。
+      //
+      // 不夹的话会存下一个在屏幕外的坐标——窗口还有一大半在屏幕外，
+      // 而重启时 restorePosition 会判定它「不在任何显示器内」，
+      // 悄悄回落到主显示器右下角。用户上次把桌宠放在哪就丢了。
+      //
+      // 夹回去之后桌宠是「完整可见、贴着那条边」的状态——
+      // 也就是「完整滑回」，与预览里那条一致。
+      const pulled = clampToDisplays(x, y, w, h, getDisplays());
+      win.setPosition(pulled.x, pulled.y);
       dock = null;
       applySettings({ dock: null });
-      applySettings({ position: { x: Math.round(x), y: Math.round(y) } });
+      applySettings({ position: { x: Math.round(pulled.x), y: Math.round(pulled.y) } });
       onStateChanged?.();
       return;
     }
@@ -2277,14 +2705,25 @@ Expected: FAIL —— `controller.dragStart` 不是函数。
   }
 ```
 
-- [ ] **Step 4: 把占位空壳删掉**
+- [ ] **Step 4: 补上两处调用点**
 
-Task 4 留下的这两行空壳删掉（真实现已在上面补上）：
+Task 4 里控制器没有停靠相关的调用点（那时还没有停靠）。本任务要补上：
+
+1. `init(settings)` 里，在 `if (settings.clickThrough) applyClickThrough(true);` 之后加：
 
 ```js
-  // —— 停靠（下面的实现随 Task 7 补齐；这里先留占位以便本任务自洽）——
-  function undock() {}
-  function applyDockAtStartup() {}
+    // 停靠：把窗口挪到藏起来的位置（settings.dock 记着上次藏在哪条边）。
+    applyDockAtStartup();
+```
+
+2. `applySettingsToSystem(settings)` 里，在 `if (Boolean(settings.clickThrough) !== ...)` 那段之后加：
+
+```js
+    // 「贴边隐藏」被关掉时，正在停靠的桌宠要立刻取回来：
+    // 不然用户关了开关、桌宠还赖在屏幕外，开关看起来没生效。
+    if (settings.dockEnabled === false && dock) {
+      undock();
+    }
 ```
 
 - [ ] **Step 5: 暴露给 index.js**
@@ -2357,12 +2796,47 @@ export const petBounds = (ctx) =>
   }, PET_WINDOW_URL);
 ```
 
+**再把 `waitForSystemState` 从 `test/e2e/system.spec.js` 搬到这里。**
+Task 6 的修复轮把它放在了 `system.spec.js` 里（模块私有），
+但 Task 8 的设置窗口用例也要用——**夹具抄成多份是本仓库反复出现过的坑**
+（`docs/decisions.md` #46 记过），所以要搬，不要抄。
+
+```js
+/**
+ * 轮询主进程上报的系统状态，直到满足条件（或超时）。返回最后一次的状态。
+ *
+ * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
+ * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
+ * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
+ * 那条坑会让「等状态变成 true」这种断言变成恒真。
+ */
+export async function waitForSystemState(ctx, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let state = null;
+  for (;;) {
+    state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    if (predicate(state)) return state;
+    if (Date.now() >= deadline) return state;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+```
+
+`test/e2e/system.spec.js` 里删掉本地的那个定义，改成从 `./helpers.js` 导入。
+
+**顺带把两处菜单注释改对**（Task 6 的复审发现它们漏了「取回桌宠」）：
+`src/main/menu.js` 与 `src/main/menuTemplate.js` 顶部都写着菜单只有
+「显示/隐藏 · 鼠标穿透 · 设置 · 退出」——停靠时还会多出「取回桌宠」。
+
 - [ ] **Step 9: 写端到端测试**
 
 `test/e2e/system.spec.js` 的 import 行改成：
 
 ```js
 import { test, expect } from '@playwright/test';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { launchApp, collectErrors, dragBy, moveToTopLeft, petBounds, PET_WINDOW_URL } from './helpers.js';
 ```
 
@@ -2413,7 +2887,13 @@ test('停靠后拖那条窄边能把桌宠拽回来', async () => {
 });
 
 test('停靠状态重启后仍然停靠', async () => {
-  const ctx = await launchApp();
+  // **必须自己指定 userData 目录**：launchApp() 不带参数时用的是临时目录，
+  // close() 会把它删掉——那样第二次启动读到的就是别人的（干净的）目录。
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-dock-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+
+  const ctx = await launchApp({ userDataDir });
   try {
     await ctx.win.evaluate(() => window.pet.saveSettings({ dockEnabled: true }));
     await moveToTopLeft(ctx);
@@ -2424,7 +2904,7 @@ test('停靠状态重启后仍然停靠', async () => {
   }
 
   // 用同一个 userData 目录再启动一次。
-  const again = await launchApp({ userDataDir: ctx.userDataDir });
+  const again = await launchApp({ userDataDir });
   try {
     const state = await again.win.evaluate(() => window.pet.getSystemState());
     expect(state.dock).toBe('right');
@@ -2433,6 +2913,7 @@ test('停靠状态重启后仍然停靠', async () => {
     expect(wa.x + wa.width - bounds.x).toBe(24);
   } finally {
     await again.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -2486,7 +2967,14 @@ git commit -m "feat(edge-dock): 边缘吸附与贴边停靠接进拖拽"
 
 - [ ] **Step 1: 写端到端测试**
 
-`test/e2e/settings.spec.js` 的 import 行加上 `gotoSection`（已有）。在文件末尾追加：
+`test/e2e/settings.spec.js` 的 import 行加上 `waitForSystemState`（Task 7 搬进
+`test/e2e/helpers.js` 的那个轮询助手）：
+
+```js
+import { launchApp, collectErrors, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
+```
+
+在文件末尾追加：
 
 ```js
 test('设置窗口有「系统」分区，开关能落到 settings.json', async () => {
@@ -2505,11 +2993,8 @@ test('设置窗口有「系统」分区，开关能落到 settings.json', async 
 
     // 鼠标穿透：勾上 → 主进程上报的状态跟着变。
     await settingsWin.locator('#clickThrough').check();
-    await ctx.win.waitForFunction(
-      async () => (await window.pet.getSystemState()).clickThroughActive === true,
-      null,
-      { timeout: 10000 },
-    );
+    const state = await waitForSystemState(ctx, (s) => s.clickThroughActive === true);
+    expect(state.clickThroughActive, '鼠标穿透应当生效').toBe(true);
 
     // 边缘吸附 / 贴边隐藏：落盘。
     await settingsWin.locator('#dockEnabled').check();
@@ -2591,6 +3076,24 @@ Expected: FAIL —— `gotoSection` 点不到 `#tab-system`。
             </label>
           </div>
 
+          <p class="hint error" id="systemError" hidden></p>
+
+（`src/settings/index.html` 的 `<style>` 里还要加一条 `.hint.error` 的样式——
+设置页已经有 `--danger` / `--danger-bg` / `--danger-border` 这几个变量了，直接用：
+
+```css
+    /* 系统级失败的提示：它要说清「是什么事、为什么」。 */
+    .hint.error {
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      border-radius: var(--radius-sm);
+      padding: 6px 9px;
+      margin: 0 0 var(--gap);
+    }
+```
+）
+
           <div class="field stack">
             <label for="hotkeyValue">全局快捷键</label>
             <div class="control inline">
@@ -2641,6 +3144,7 @@ const dockEnabledBox = document.getElementById('dockEnabled');
 const hotkeyInput = document.getElementById('hotkeyValue');
 const recordHotkeyBtn = document.getElementById('recordHotkey');
 const hotkeyHint = document.getElementById('hotkeyHint');
+const systemError = document.getElementById('systemError');
 ```
 
 2. `SECTION_KEYS` 改成：
@@ -2717,6 +3221,15 @@ function applySystemState(state) {
   }
   if (state.hotkeyStatus) hotkeyStatus = state.hotkeyStatus;
   applyHotkeyStatus();
+  // 系统级失败的原因（开机自启写注册表失败之类）。
+  // 「失败必须留痕 + 在界面上说得出来」那半的载体——只有终端日志用户看不见。
+  if (state.lastError) {
+    systemError.textContent = state.lastError;
+    systemError.hidden = false;
+  } else {
+    systemError.textContent = '';
+    systemError.hidden = true;
+  }
   refreshNavSummaries();
 }
 
@@ -2779,7 +3292,13 @@ for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox])
     if (typeof s.clickThrough === 'boolean') clickThroughBox.checked = s.clickThrough;
     if (typeof s.edgeSnap === 'boolean') edgeSnapBox.checked = s.edgeSnap;
     if (typeof s.dockEnabled === 'boolean') dockEnabledBox.checked = s.dockEnabled;
+    // 系统状态可能变了（比如开机自启写注册表失败、开关被回退）：
+    // 广播里带的是**设置**，不是系统状态——重新拉一次才能拿到 lastError。
+    void window.pet.getSystemState?.()?.then((next) => applySystemState(next))?.catch?.(() => {});
 ```
+
+> 那个 `?.then(...)?.catch(...)` 是为了吃掉拒绝：设置窗口关掉时
+> invoke 会拒绝，而渲染层没有全局 unhandledrejection 兜底。
 
 - [ ] **Step 5: 把既有的「按分区显示」用例加上新分区**
 
@@ -2796,24 +3315,11 @@ for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox])
  * @param {'appearance'|'assistant'|'voice'|'chat'|'memory'|'system'} key 分区 key
 ```
 
-- [ ] **Step 6: 主进程捕获快捷键按键**
+- [ ] **Step 6: 主进程侧的快捷键状态推送**
 
-`src/main/index.js`，在 `openSettings()` 里，`settingsWin.loadURL(...)` 之前加：
+`src/main/index.js`：
 
-```js
-  // 快捷键录制：主进程接管按键捕获。
-  //
-  // 用 before-input-event 而不是渲染层的 keydown：它给的是
-  // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
-  // 而且能 preventDefault——不然那一次按键会漏进页面的输入框。
-  settingsWin.webContents.on('before-input-event', (event, input) => {
-    if (!system?.isRecording?.()) return;
-    event.preventDefault();
-    system.handleInput(input);
-  });
-```
-
-并在 `createSystemController` 的参数里加：
+`createSystemController` 的 `onHotkeyStatus` 注入项（Task 4 留的位、Task 5 用的）在这里接上实现：
 
 ```js
     onHotkeyStatus: (status) => {
@@ -2823,8 +3329,9 @@ for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox])
     },
 ```
 
-> `onHotkeyStatus` 这个注入项在 Task 4 就已经加进 `createSystemController` 的参数解构里了
-> （Task 5 用它发状态），这里只是把实现接上。
+> **按键捕获本身（`before-input-event`）在 Task 5 就接好了**——
+> 没有它，录制的按键送不到控制器，录制无法完成。
+> 本任务只补「状态送回设置窗口」这一半。
 
 - [ ] **Step 7: 跑端到端测试确认通过**
 
@@ -2967,17 +3474,51 @@ volumeInput.addEventListener('input', async () => {
 > 里的字段**深一层**合并（`{...current.sound, ...value}`），
 > 所以 `sound.enabled` 不会被抹掉。
 
-- [ ] **Step 5: 跑端到端测试确认通过**
+- [ ] **Step 5: 顺带修掉 Task 8 复审留下的三条 Minor**
+
+这三条都在 `src/settings/main.js` 里，Task 8 已经关闭，而本任务本来就要改同一个文件——
+放在这里一起收掉，省得再开一轮。
+
+**① 失败文案无条件宣称「原来的组合仍然有效」，但那种情形里它从未注册上。**
+主进程在**启动时**注册快捷键失败，也会产出 `state:'error'` + 一个 accelerator——
+而那个 accelerator 正是**注册失败**的那个组合（`src/main/system.js` 的 `init` 分支）。
+此时界面说「原来的 Control+Shift+D 仍然有效」，而它根本就没注册上。
+这与本项目「失败不许骗人」的基调冲突。
+
+**怎么修**：把文案改成**两种情形都成立**的说法。规格 §7.3 要求
+「失败时保留原组合，并把它显示出来」——只读框已经显示了它 ✓，
+所以文案不必再断言它「仍然有效」：
+
+```js
+    hotkeyHint.textContent = `${reason}。当前设置的组合：${accelerator}`;
+```
+
+**② 闩是一次性的：首条推送若早于首个快照到达，只读框将永远拿不到 hotkey。**
+`hotkeyStatusFromPush` 在**任何**推送到达时就置位，但推送监听注册在 `init()` 的
+`Promise.all` 之前——万一有一条推送先落地（哪怕 `accelerator` 为空），闩就永久置位，
+之后所有快照都不再写 `hotkeyInput.value` → 框停在占位符「未设置」。
+
+**怎么修**：只在推送**带 accelerator** 时才置闩（那种推送才是真的在更新快捷键状态），
+或者允许快照在框为空时补写。
+
+**③ `window.pet.getSystemState()` 未用可选调用。**
+`init()` 里直接调用，而同文件别处用的是 `window.pet.getSystemState?.()`。
+今天 preload 恒有该 API，不是活缺陷；但若日后 preload 少了它，`init()` 会**同步抛**
+（`undefined.catch` → TypeError），正好抵消这条发现想要的容错。
+
+**怎么修**：改成可选调用，并给 `.catch` 留好退路（`?.().catch?.(...)` 或先取出来再判）。
+
+- [ ] **Step 6: 跑端到端测试确认通过**
 
 Run: `npx playwright test test/e2e/settings.spec.js -g "音量"`
 Expected: PASS。
 
-- [ ] **Step 6: 跑全量测试**
+- [ ] **Step 7: 跑全量测试**
 
 Run: `npm test`
 Expected: 全部通过（单元 + 端到端）。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
 git add src/settings/index.html src/settings/main.js test/e2e/settings.spec.js
@@ -3049,6 +3590,41 @@ git commit -m "feat(settings): 「语音」分区加总音量滑块"
 而且现状里语音是直连 `ac.destination` 的，**绕过了主增益**，
 所以「提示音有音量控制、桌宠说话没有」——那是要补的缺口，不是设计。
 **代价：** 无。
+
+### 93. 音量越界是「夹紧」，不是「回退默认」
+**为什么：** 计划里一度自相矛盾（测试断言 `volume=5 → 0.8`，实现片段
+`clampNumber(..., 0, 1, ...)` 给的是 1）。规格 §9 的错误表写明
+「音量超出 [0,1] → `sanitizeAssistant` 夹紧」，仓库既有的
+`scale`/`opacity`/`tts.vol` 三个同类字段也都是夹紧。以夹紧为准。
+**代价：** 无。
+
+### 94. 启动时**无条件**注册快捷键，不加「已注册就不注册」的守卫
+**为什么：** 那道守卫在生产里**不可达**（`init` 每进程只调一次，
+进程刚起时 `globalShortcut.isRegistered` 必然是 false）——
+它的唯一实际效果就是让一条测试断言成立，而规格 §4.6「启动时按
+`settings.hotkey` 注册一次」因此**零覆盖**。规格是硬规格，测试断言让位。
+**代价：** 无。
+
+### 95. 快捷键注册失败分「被占用」与「语法非法」两种提示
+**为什么：** `globalShortcut.register` 在组合**被别的程序占用**时返回 `false`
+且不抛错（Windows 上是静默失败），而加速键串**语法非法**时它**抛异常**。
+用户看到的提示必须不同：「被占用」要他去换个组合，「这个组合不能用」
+是设置本身写坏了。混成一句话等于让用户瞎猜。
+**代价：** 无。
+
+### 96. 开机自启失败要有面向用户的信号
+**为什么：** 全局约束是「失败必须留痕 **+ 在界面上说得出来**」。
+只留终端日志的话，用户看到的是「勾上了但没生效」，却没有任何解释。
+所以 `getState()` 带上 `lastError`，设置窗口显示出来；
+失败时还要**先回退落盘、再广播**——反过来的话广播出去的还是「已开启」。
+**代价：** 多了一个字段与一条广播。
+
+### 97. 停靠后把桌宠拽出来要跟手
+**为什么：** 停靠轴若只放宽到「藏匿区」（窗宽 − 24 ≈ 276px），
+把桌宠往屏幕里拖 400px 它只走 276px 就停住，「挪到屏幕中间」要拖两次。
+放宽成「藏匿区 ∪ 普通可见区」之后一次手势到位。
+另外**区间必须含它自己的停靠位**——不含的话，上下停靠一拖动就被夹出藏匿区。
+**代价：** `dockedRange` 的区间比「藏匿区」宽得多，跨轴时要留意累加器不被整体覆盖。
 ```
 
 > 编号从 86 起接着上一节的 85（`docs/decisions.md` 目前的最大编号）。

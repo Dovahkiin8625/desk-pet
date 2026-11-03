@@ -1,5 +1,6 @@
-import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readJson, writeJson } from './store.js';
+import { SCALE_RANGE } from '../shared/viewport.js';
+import { DOCK_SIDES } from './edgeDock.js';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   version: 1,
@@ -8,9 +9,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   scale: 1.0,
   opacity: 1.0,
   visible: true,
+  // —— 系统与工程化（第六部分）——
+  // 开机自启默认关：开机就跑一个桌宠是用户没要求的行为。
+  autoLaunch: false,
+  // 全局快捷键：呼出/隐藏桌宠。
+  hotkey: 'Control+Shift+D',
+  // 鼠标穿透：窗口不吃点击，桌面照常操作。
+  clickThrough: false,
+  // 边缘吸附：拖到屏幕边缘附近时自动贴齐。
+  edgeSnap: true,
+  // 贴边隐藏：贴齐后滑出屏幕只留一条边。
+  dockEnabled: false,
+  // 当前停靠在哪条边（状态，不是开关）。
+  dock: null,
 });
 
-const SCALE_RANGE = { min: 0.5, max: 2.0 };
 const OPACITY_RANGE = { min: 0.2, max: 1.0 };
 
 function clampNumber(value, min, max, fallback) {
@@ -40,42 +53,35 @@ export function sanitizeSettings(raw) {
   out.scale = clampNumber(raw.scale, SCALE_RANGE.min, SCALE_RANGE.max, DEFAULT_SETTINGS.scale);
   out.opacity = clampNumber(raw.opacity, OPACITY_RANGE.min, OPACITY_RANGE.max, DEFAULT_SETTINGS.opacity);
   if (typeof raw.visible === 'boolean') out.visible = raw.visible;
+  // —— 系统与工程化（第六部分）——
+  if (typeof raw.autoLaunch === 'boolean') out.autoLaunch = raw.autoLaunch;
+  if (typeof raw.clickThrough === 'boolean') out.clickThrough = raw.clickThrough;
+  if (typeof raw.edgeSnap === 'boolean') out.edgeSnap = raw.edgeSnap;
+  if (typeof raw.dockEnabled === 'boolean') out.dockEnabled = raw.dockEnabled;
+  // hotkey：非空字符串且长度 ≤ 64。太长**回退默认值**而不是截断——
+  // 截断出来的加速键串是个语法错误的东西，注册必然失败。
+  if (typeof raw.hotkey === 'string') {
+    const trimmed = raw.hotkey.trim();
+    if (trimmed !== '' && trimmed.length <= 64) out.hotkey = trimmed;
+  }
+  // dock：只认四个合法边名，其余一律 null。
+  // 边名清单在 edgeDock.js（DOCK_SIDES）——那是唯一的一份。
+  if (DOCK_SIDES.includes(raw.dock)) out.dock = raw.dock;
   if (typeof raw.version === 'number') out.version = raw.version;
 
   return out;
 }
 
 export async function loadSettings(userDataDir) {
-  try {
-    const text = await readFile(join(userDataDir, 'settings.json'), 'utf8');
-    return sanitizeSettings(JSON.parse(text));
-  } catch (err) {
-    // 文件不存在是正常情况（首次启动），静默回退默认值即可。
-    // 但读不了/解析失败说明配置已损坏——同样回退默认值，却必须留痕，
-    // 否则用户会遇到「改了设置没生效」且无从排查。
-    if (err?.code !== 'ENOENT') {
-      console.warn('[desk-pet] settings.json 无法读取或解析，已回退默认值：', err?.message);
-    }
-    return { ...DEFAULT_SETTINGS };
-  }
+  const raw = await readJson(userDataDir, 'settings.json', null, 'settings.json');
+  return sanitizeSettings(raw);
 }
 
 export async function saveSettings(userDataDir, settings) {
   const clean = sanitizeSettings(settings);
-  await mkdir(userDataDir, { recursive: true });
-  const target = join(userDataDir, 'settings.json');
-  const tmp = join(userDataDir, 'settings.json.tmp');
-  // 先写临时文件再改名：直接 writeFile 会先把目标文件**截断成 0 字节**，
+  // 原子写（先写临时文件再改名）：直接 writeFile 会先把目标文件**截断成 0 字节**，
   // 写到一半被强杀（任务管理器 / 断电）就留下一个 0 字节文件——
   // 下次启动读到空文件会静默重置位置、形象、缩放与透明度，用户毫无察觉。
-  // rename 在 NTFS 上是原子的：要么还是旧文件，要么已经是新文件。
-  await writeFile(tmp, JSON.stringify(clean, null, 2), 'utf8');
-  try {
-    await rename(tmp, target);
-  } catch (err) {
-    // 改名失败：临时文件留在那儿，下次启动前先清掉。
-    await unlink(tmp).catch(() => {});
-    throw err;
-  }
+  await writeJson(userDataDir, 'settings.json', clean);
   return clean;
 }

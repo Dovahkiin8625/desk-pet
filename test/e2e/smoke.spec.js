@@ -4,7 +4,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchApp } from './helpers.js';
+import { launchApp, PET_WINDOW_URL } from './helpers.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -69,8 +69,12 @@ test('渲染层经 app:// 协议加载且窗口透明置顶', async () => {
       return ok;
     });
     if (topmostSupported) {
-      const alwaysOnTop = await ctx.app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].isAlwaysOnTop()
+      const alwaysOnTop = await ctx.app.evaluate(
+        ({ BrowserWindow }, petUrl) =>
+          BrowserWindow.getAllWindows().find((x) =>
+            x.webContents.getURL().includes(petUrl)
+          )?.isAlwaysOnTop(),
+        PET_WINDOW_URL
       );
       expect(alwaysOnTop).toBe(true);
     } else {

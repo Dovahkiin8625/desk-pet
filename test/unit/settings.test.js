@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sanitizeSettings, loadSettings, saveSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('空输入返回默认设置', () => {
   assert.deepEqual(sanitizeSettings(undefined), DEFAULT_SETTINGS);
@@ -105,5 +108,85 @@ test('保存是原子的：不留临时文件，且旧内容不会先被截断',
     assert.equal(parsed.scale, 1.25);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('六个新字段有默认值', () => {
+  assert.equal(DEFAULT_SETTINGS.autoLaunch, false);
+  assert.equal(DEFAULT_SETTINGS.hotkey, 'Control+Shift+D');
+  assert.equal(DEFAULT_SETTINGS.clickThrough, false);
+  assert.equal(DEFAULT_SETTINGS.edgeSnap, true);
+  assert.equal(DEFAULT_SETTINGS.dockEnabled, false);
+  assert.equal(DEFAULT_SETTINGS.dock, null);
+});
+
+test('新字段的合法值被保留', () => {
+  const s = sanitizeSettings({
+    autoLaunch: true,
+    hotkey: 'Control+Alt+P',
+    clickThrough: true,
+    edgeSnap: false,
+    dockEnabled: true,
+    dock: 'right',
+  });
+  assert.equal(s.autoLaunch, true);
+  assert.equal(s.hotkey, 'Control+Alt+P');
+  assert.equal(s.clickThrough, true);
+  assert.equal(s.edgeSnap, false);
+  assert.equal(s.dockEnabled, true);
+  assert.equal(s.dock, 'right');
+});
+
+test('新字段的类型不对时回退默认值', () => {
+  const s = sanitizeSettings({
+    autoLaunch: 'yes',
+    clickThrough: 1,
+    edgeSnap: 'no',
+    dockEnabled: null,
+    hotkey: 42,
+  });
+  assert.equal(s.autoLaunch, false);
+  assert.equal(s.clickThrough, false);
+  assert.equal(s.edgeSnap, true);
+  assert.equal(s.dockEnabled, false);
+  assert.equal(s.hotkey, 'Control+Shift+D');
+});
+
+test('dock 只认四个合法边名', () => {
+  assert.equal(sanitizeSettings({ dock: 'up' }).dock, null);
+  assert.equal(sanitizeSettings({ dock: '' }).dock, null);
+  assert.equal(sanitizeSettings({ dock: 'top' }).dock, 'top');
+  assert.equal(sanitizeSettings({ dock: 'bottom' }).dock, 'bottom');
+  assert.equal(sanitizeSettings({ dock: 'left' }).dock, 'left');
+});
+
+test('过长的 hotkey 回退默认值而不是截断', () => {
+  // 截断出来的加速键串是个语法错误的东西，注册必然失败；
+  // 回退默认值至少是「能用的那一组」。
+  const s = sanitizeSettings({ hotkey: 'Control+Shift+'.padEnd(200, 'A') });
+  assert.equal(s.hotkey, 'Control+Shift+D');
+});
+
+test('空的 hotkey 回退默认值', () => {
+  assert.equal(sanitizeSettings({ hotkey: '' }).hotkey, 'Control+Shift+D');
+  assert.equal(sanitizeSettings({ hotkey: '   ' }).hotkey, 'Control+Shift+D');
+});
+
+test('设置页四个系统开关的 HTML 默认值与 DEFAULT_SETTINGS 一致', async () => {
+  // 设置窗口在拉到主进程状态之前，四个勾选框停在 HTML 默认值上。
+  // 默认值与 DEFAULT_SETTINGS 不一致时，用户在这段时间里动别的开关，
+  // 就会把这个偏差一起写回磁盘——「边缘吸附」曾经就是这样被静默关掉的。
+  const html = await readFile(join(ROOT, 'src', 'settings', 'index.html'), 'utf8');
+  const defaults = {
+    autoLaunch: DEFAULT_SETTINGS.autoLaunch,
+    clickThrough: DEFAULT_SETTINGS.clickThrough,
+    edgeSnap: DEFAULT_SETTINGS.edgeSnap,
+    dockEnabled: DEFAULT_SETTINGS.dockEnabled,
+  };
+  for (const [id, want] of Object.entries(defaults)) {
+    const tag = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(tag, `设置页里应当有 #${id}`);
+    const checked = /\schecked(\s|>|=)/.test(tag[0]);
+    assert.equal(checked, want, `#${id} 的 HTML 默认值应当是 ${want}`);
   }
 });
