@@ -30,3 +30,6 @@ assets/live2d/models/haru/*
 !assets/live2d/models/haru/pet.json
 assets/live2d/models/natori/*
 !assets/live2d/models/natori/pet.json
+# DSR50：Cubism 2 格式的样例（.moc，不是 .moc3），当前应用加载不了它。
+# 先把二进制挡住，免得被一次 `git add -A` 带进版本库。
+assets/live2d/models/DSR50/*
