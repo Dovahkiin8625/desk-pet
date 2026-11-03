@@ -1,4 +1,4 @@
-import { app, screen, dialog, BrowserWindow, shell } from 'electron';
+import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile, stat } from 'node:fs/promises';
@@ -15,6 +15,7 @@ import { createPanelController } from './panel.js';
 import { createPluginRegistry } from './plugins/index.js';
 import { createAppIndex } from './apps.js';
 import { createAssistant } from './assistant/index.js';
+import { createSystemController } from './system.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 
@@ -58,6 +59,8 @@ let desiredPosition = null;
 // 正在进行的写入。防抖计时器触发后 saveTimer 会被置空，
 // 但写入可能还没落盘完成——只盯 saveTimer 会漏掉这个窗口。
 let pendingWrite = null;
+// 系统级开关的控制器（第六部分）。
+let system = null;
 
 // 显示器列表缓存：拖拽时每一帧都要用它夹紧窗口（60Hz），
 // 而 getPrimaryDisplay()/getAllDisplays() 每次都是同步的跨进程查询——
@@ -178,6 +181,8 @@ function persist(patch) {
     applySettingsToWindow(win, settings);
     appliedOpacity = settings.opacity;
   }
+  // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
+  system?.applySettings?.(settings);
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -663,6 +668,41 @@ app.whenReady().then(async () => {
 
   win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });
   startCursorTracking();
+
+  // 系统控制器：必须在窗口建好之后创建——穿透模式要作用在窗口上。
+  system = createSystemController({
+    getWindow: () => win,
+    getDisplays: () => currentDisplays(),
+    getSettings: () => settings,
+    applySettings: (patch) => persist(patch),
+    onHotkeyAction: () => toggleVisible(),
+    onStateChanged: () => {},
+    onHotkeyStatus: (status) => {
+      // 设置窗口还没建时无处可发；它建好后会自己拉一次状态。
+      if (settingsWin && !settingsWin.isDestroyed()) {
+        settingsWin.webContents.send('pet:hotkeyStatus', status);
+      }
+    },
+    loginItem: {
+      set: (opts) => {
+        // E2E 不碰注册表：写注册表会污染跑测试的机器，
+        // 而且注册表项可能指向临时路径，清理不掉。
+        if (IS_E2E) return;
+        app.setLoginItemSettings(opts);
+      },
+      get: () => app.getLoginItemSettings(),
+    },
+    shortcuts: {
+      register: (acc, cb) => globalShortcut.register(acc, cb),
+      unregister: (acc) => globalShortcut.unregister(acc),
+      unregisterAll: () => globalShortcut.unregisterAll(),
+      isRegistered: (acc) => globalShortcut.isRegistered(acc),
+    },
+    getAppPath: () => app.getAppPath(),
+    isPackaged: app.isPackaged,
+    isE2E: IS_E2E,
+  });
+  system.init(settings);
 
   // 气泡窗口：桌宠说话的地方。**懒创建**——第一次有消息时才建窗口，
   // 否则 E2E 里的 app.firstWindow() 会先找到气泡而不是桌宠。

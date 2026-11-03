@@ -1,0 +1,155 @@
+import {
+  edgeGaps,
+  snapToEdge,
+  dockPosition,
+  flushPosition,
+  clampDocked,
+  isFullyTucked,
+  chooseDockSide,
+} from './edgeDock.js';
+import { clampToDisplays, displayForPoint } from './display.js';
+
+/**
+ * 系统级开关的控制器：开机自启、全局快捷键、鼠标穿透、边缘吸附与贴边停靠。
+ *
+ * **这个文件不得 import Electron**：本仓库的单元测试用 `node --test` 跑，
+ * 没有 Electron 环境。Electron 的能力（app / globalShortcut）全部靠注入。
+ *
+ * 为什么要一个控制器而不是四个小模块：这四个开关共享同一套流程
+ * ——落盘 → 启动恢复 → 变更生效。放在一起，它们能互相看见
+ * （比如「关掉贴边隐藏时要把停靠中的桌宠取回来」）。
+ */
+export function createSystemController({
+  getWindow,
+  getDisplays,
+  getSettings,
+  applySettings,
+  onHotkeyAction,
+  onStateChanged,
+  onHotkeyStatus,
+  loginItem,
+  shortcuts,
+  getAppPath,
+  isPackaged = false,
+  isE2E = false,
+}) {
+  // 上一次**真正生效出去**的值。
+  // 只有真的变了才动作：applySettings 在拖拽的每一帧都会被调用，
+  // 无变化时重复写注册表、重复注册快捷键是最热的路径上的无用功。
+  let applied = null;
+  // 当前停靠在哪条边（null = 没停靠）。
+  let dock = null;
+  // 本次拖拽的期望位置（未夹紧）与净位移。
+  let desired = null;
+  let netDelta = { dx: 0, dy: 0 };
+  // 快捷键录制中。
+  let recording = false;
+  let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+
+  // —— 开机自启 ——
+
+  /**
+   * 写登录项。
+   *
+   * 开发态（未打包）必须带应用路径：那时 process.execPath 是 electron.exe，
+   * 不带路径的话开机只会弹一个空白的 Electron 窗口。
+   * 打包后 process.execPath 就是应用自己，不需要参数。
+   *
+   * `path` 写死 `process.execPath`：Electron 的默认值也是它，但写出来更清楚
+   * （`process` 是 Node 全局，不算 import Electron，单元测试里也能断言）。
+   */
+  function writeLoginItem(enabled) {
+    const args = isPackaged ? [] : [getAppPath()];
+    loginItem.set({ openAtLogin: Boolean(enabled), path: process.execPath, args });
+  }
+
+  function applyAutoLaunch(enabled) {
+    try {
+      writeLoginItem(enabled);
+      return true;
+    } catch (err) {
+      // 失败必须留痕：否则用户勾了「开机自启」而系统里根本没有注册项，
+      // 而且没有任何线索可查。
+      console.warn('[desk-pet] 开机自启设置失败：', err?.message || err);
+      return false;
+    }
+  }
+
+  // —— 状态上报 ——
+
+  function getState() {
+    const settings = getSettings();
+    return {
+      autoLaunch: Boolean(settings.autoLaunch),
+      hotkey: settings.hotkey,
+      hotkeyStatus: { ...hotkeyStatus },
+      clickThrough: Boolean(settings.clickThrough),
+      clickThroughActive: Boolean(applied?.clickThrough),
+      edgeSnap: settings.edgeSnap !== false,
+      dockEnabled: Boolean(settings.dockEnabled),
+      dock,
+    };
+  }
+
+  // —— 对外接口 ——
+
+  /**
+   * 启动时恢复。
+   *
+   * 注意：**不重新注册登录项**——用户在系统设置里手动删掉了注册项，
+   * 应用一启动就给它加回去，那是在跟用户较劲。只在用户改动开关时才写。
+   */
+  function init(settings) {
+    applied = {
+      autoLaunch: Boolean(settings.autoLaunch),
+      clickThrough: Boolean(settings.clickThrough),
+    };
+    // 穿透模式要在窗口建好之后立刻生效。
+    // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
+    // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
+    if (settings.clickThrough) applyClickThrough(true);
+  }
+
+  function applyClickThrough(enabled) {
+    const win = getWindow();
+    if (!win || win.isDestroyed()) return;
+    // forward: true 让 mousemove 继续送到渲染层——
+    // 桌宠仍然能跟着光标转头，但点击落到桌面上。
+    if (enabled) win.setIgnoreMouseEvents(true, { forward: true });
+    else win.setIgnoreMouseEvents(false);
+  }
+
+  /**
+   * 设置变了：把真的变了的那部分落到实际效果上。
+   */
+  function applySettingsToSystem(settings) {
+    if (!applied) applied = { autoLaunch: false, clickThrough: false };
+    const patch = {};
+
+    if (Boolean(settings.autoLaunch) !== Boolean(applied.autoLaunch)) {
+      const want = Boolean(settings.autoLaunch);
+      if (!applyAutoLaunch(want) && want) {
+        // 注册失败：把开关改回去，不能让磁盘写着 true 而系统里没有。
+        patch.autoLaunch = false;
+        applied.autoLaunch = false;
+      } else {
+        applied.autoLaunch = want;
+      }
+    }
+
+    if (Boolean(settings.clickThrough) !== Boolean(applied.clickThrough)) {
+      applyClickThrough(Boolean(settings.clickThrough));
+      applied.clickThrough = Boolean(settings.clickThrough);
+      onStateChanged?.();
+    }
+
+    if (Object.keys(patch).length > 0) applySettings(patch);
+  }
+
+  return {
+    init,
+    applySettings: applySettingsToSystem,
+    getState,
+    dispose() {},
+  };
+}
