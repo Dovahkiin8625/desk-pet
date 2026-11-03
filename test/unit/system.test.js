@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSystemController } from '../../src/main/system.js';
+import { createSystemController, buildAccelerator } from '../../src/main/system.js';
 
 /**
  * 造一个替身窗口：只记录被调用的方法。
@@ -251,4 +251,150 @@ test('getState：注册失败后 lastError 说清是什么事、为什么', () =
   assert.notEqual(state.lastError, '');
   assert.match(state.lastError, /开机自启/);
   assert.match(state.lastError, /注册表写不进去/);
+});
+
+test('加速键串：修饰键 + 主键', () => {
+  assert.equal(
+    buildAccelerator({ key: 'd', control: true, alt: false, shift: true, meta: false }),
+    'Control+Shift+D',
+  );
+});
+
+test('加速键串：纯修饰键不构成组合', () => {
+  assert.equal(buildAccelerator({ key: 'Control', control: true }), '');
+  assert.equal(buildAccelerator({ key: 'Shift', shift: true }), '');
+});
+
+test('加速键串：裸键被拒绝（会全局劫持字母键）', () => {
+  assert.equal(buildAccelerator({ key: 'd' }), '');
+  assert.equal(buildAccelerator({ key: 'F5' }), '');
+});
+
+test('加速键串：Shift 过的符号要还原成基础键', () => {
+  // 用户按 Ctrl+Shift+1 时 input.key 是 '!'（美式键盘）。
+  // 直接用 '!' 会得到注册不了的 'Control+Shift+!'。
+  assert.equal(
+    buildAccelerator({ key: '!', control: true, shift: true }),
+    'Control+Shift+1',
+  );
+});
+
+test('加速键串：特殊键名要换成 Electron 的写法', () => {
+  assert.equal(buildAccelerator({ key: 'ArrowUp', control: true }), 'Control+Up');
+  assert.equal(buildAccelerator({ key: ' ', control: true }), 'Control+Space');
+});
+
+test('快捷键注册成功：落盘新组合并注销旧的', () => {
+  const registered = [];
+  const unregistered = [];
+  const { controller, patched, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: (acc) => unregistered.push(acc),
+        unregisterAll: () => {},
+        isRegistered: () => true,
+      },
+    },
+  });
+  controller.init(settings);
+  controller.setHotkey('Control+Alt+P');
+  assert.deepEqual(registered, ['Control+Alt+P']);
+  assert.deepEqual(unregistered, ['Control+Shift+D']);
+  assert.equal(settings.hotkey, 'Control+Alt+P');
+});
+
+test('快捷键注册失败：旧组合保留，且不落盘新组合', () => {
+  const { controller, patched, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: () => false,
+        unregister: () => {
+          throw new Error('不该注销旧的');
+        },
+        unregisterAll: () => {},
+        isRegistered: () => true,
+      },
+    },
+  });
+  controller.init(settings);
+  const ok = controller.setHotkey('Control+Alt+P');
+  assert.equal(ok, false);
+  // 磁盘上的组合没变：用户不至于连原来的快捷键也丢掉。
+  assert.deepEqual(patched, []);
+  assert.equal(settings.hotkey, 'Control+Shift+D');
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /占用/);
+});
+
+test('快捷键语法非法：提示与「被占用」区分开', () => {
+  // 「被占用」要用户换个组合；「这个组合不能用」是设置本身写坏了。
+  // 混成一句话等于让用户瞎猜。
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: () => {
+          throw new Error('Invalid accelerator token');
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => true,
+      },
+    },
+  });
+  controller.init(settings);
+  // 失败必须留痕：警告要被捕获并**断言**，而不是留在测试输出里当噪音。
+  const warnings = captureWarnings(() => {
+    assert.equal(controller.setHotkey('Control+Alt+P'), false);
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /快捷键注册失败/);
+  const state = controller.getState();
+  assert.equal(state.hotkeyStatus.state, 'error');
+  assert.match(state.hotkeyStatus.error, /不能用/);
+  assert.doesNotMatch(state.hotkeyStatus.error, /占用/);
+});
+
+test('录制：开始 → 处理按键 → 注册', () => {
+  const registered = [];
+  const { controller, settings } = makeController({
+    options: {
+      shortcuts: {
+        register: (acc) => {
+          registered.push(acc);
+          return true;
+        },
+        unregister: () => {},
+        unregisterAll: () => {},
+        isRegistered: () => true,
+      },
+    },
+  });
+  controller.init(settings);
+  controller.startRecording();
+  assert.equal(controller.isRecording(), true);
+  const acc = controller.handleInput({ key: 'k', control: true, alt: true });
+  assert.equal(acc, 'Control+Alt+K');
+  assert.deepEqual(registered, ['Control+Alt+K']);
+  assert.equal(controller.isRecording(), false);
+});
+
+test('录制：Esc 取消', () => {
+  const { controller, settings } = makeController();
+  controller.init(settings);
+  controller.startRecording();
+  assert.equal(controller.handleInput({ key: 'Escape' }), null);
+  assert.equal(controller.isRecording(), false);
+});
+
+test('录制：纯修饰键不算数，继续等', () => {
+  const { controller, settings } = makeController();
+  controller.init(settings);
+  controller.startRecording();
+  assert.equal(controller.handleInput({ key: 'Control', control: true }), null);
+  assert.equal(controller.isRecording(), true);
 });

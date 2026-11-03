@@ -22,6 +22,9 @@ export function registerIpc({
   getLlmStatus,
   setLlmApiKey,
   onDroppedFile,
+  getSystemState,
+  recordHotkey,
+  cancelHotkeyRecording,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -65,4 +68,11 @@ export function registerIpc({
   ipcMain.handle('pet:setLlmApiKey', (_e, key) => setLlmApiKey(key));
   // 渲染层报告拖放上来的文件路径（路径本身由渲染层用 webUtils 取）。
   ipcMain.on('pet:droppedFile', (_e, filePath) => onDroppedFile(filePath));
+
+  // —— 系统级开关（第六部分）——
+  // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
+  ipcMain.handle('pet:getSystemState', () => getSystemState());
+  // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
+  ipcMain.handle('pet:recordHotkey', () => recordHotkey());
+  ipcMain.handle('pet:cancelHotkeyRecording', () => cancelHotkeyRecording());
 }

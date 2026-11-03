@@ -62,6 +62,13 @@ contextBridge.exposeInMainWorld('pet', {
   onSoundEnabled: (cb) => {
     ipcRenderer.on('pet:soundEnabled', (_e, payload) => cb(payload?.enabled !== false));
   },
+  // —— 系统级开关（第六部分）——
+  getSystemState: () => ipcRenderer.invoke('pet:getSystemState'),
+  recordHotkey: () => ipcRenderer.invoke('pet:recordHotkey'),
+  cancelHotkeyRecording: () => ipcRenderer.invoke('pet:cancelHotkeyRecording'),
+  onHotkeyStatus: (cb) => {
+    ipcRenderer.on('pet:hotkeyStatus', (_e, payload) => cb(payload));
+  },
   // 总音量：提示音与桌宠说话共用一个值。
   onVolume: (cb) => {
     ipcRenderer.on('pet:volume', (_e, payload) => cb(payload?.volume));

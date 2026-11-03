@@ -658,6 +658,12 @@ app.whenReady().then(async () => {
       if (typeof filePath !== 'string' || filePath === '') return;
       void reportDroppedFile(filePath);
     },
+    // —— 系统级开关（第六部分）——
+    // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
+    getSystemState: () => system?.getState?.() || null,
+    // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
+    recordHotkey: () => system?.startRecording?.() || false,
+    cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。

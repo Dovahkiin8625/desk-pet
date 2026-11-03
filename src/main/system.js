@@ -10,6 +10,68 @@ import {
 import { clampToDisplays, displayForPoint } from './display.js';
 
 /**
+ * 键盘上带 Shift 时会变成的符号 → 基础键。
+ *
+ * 用户按 Ctrl+Shift+1 时 input.key 是 '!'（美式键盘），
+ * 直接用 '!' 会拼出注册不了的 'Control+Shift+!'。
+ */
+const SHIFTED_TO_BASE = Object.freeze({
+  '!': '1', '@': '2', '#': '3', $: '4', '%': '5', '^': '6', '&': '7',
+  '*': '8', '(': '9', ')': '0', _: '-', '+': '=', '{': '[', '}': ']',
+  '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`',
+});
+
+/** input.key → Electron 加速键里的键名。 */
+const KEY_NAMES = Object.freeze({
+  ' ': 'Space',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  Escape: 'Escape',
+  Enter: 'Enter',
+  Tab: 'Tab',
+  Backspace: 'Backspace',
+  Delete: 'Delete',
+  Insert: 'Insert',
+  Home: 'Home',
+  End: 'End',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
+  PrintScreen: 'PrintScreen',
+});
+
+/** 这些键是修饰键，单独按不算一个组合。 */
+const MODIFIER_KEYS = new Set([
+  'Control', 'Alt', 'Shift', 'Meta', 'Super', 'CapsLock',
+  'AltGraph', 'Fn', 'Hyper', 'NumLock', 'ScrollLock', 'Dead',
+]);
+
+/**
+ * 把一次按键拼成 Electron 的加速键串。
+ *
+ * 返回空串表示「还不算一个组合」（纯修饰键，或没有修饰键的裸键）。
+ *
+ * **必须至少一个修饰键**：Windows 的 RegisterHotKey 允许注册裸键，
+ * 那意味着全局劫持用户的字母键——「按 D 一下」会同时被桌宠吃掉。
+ */
+export function buildAccelerator(input) {
+  if (!input || typeof input.key !== 'string' || input.key === '') return '';
+  const raw = input.key;
+  if (raw === 'Escape') return '';
+  if (MODIFIER_KEYS.has(raw)) return '';
+  const mods = [];
+  if (input.control) mods.push('Control');
+  if (input.alt) mods.push('Alt');
+  if (input.shift) mods.push('Shift');
+  if (input.meta) mods.push('Super');
+  if (mods.length === 0) return '';
+  const base = SHIFTED_TO_BASE[raw] || raw;
+  const key = KEY_NAMES[base] || (base.length === 1 ? base.toUpperCase() : base);
+  return [...mods, key].join('+');
+}
+
+/**
  * 系统级开关的控制器：开机自启、全局快捷键、鼠标穿透、边缘吸附与贴边停靠。
  *
  * **这个文件以及它的依赖（edgeDock.js / display.js）都不得 import Electron**：
@@ -48,6 +110,13 @@ export function createSystemController({
   // 快捷键录制中。
   let recording = false;
   let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+
+  // 主进程 → 设置窗口的快捷键状态通知。
+  // 设置窗口是 index.js 管的，所以通知由外部注入。
+  const notifyHotkeyStatus = () => {
+    onHotkeyStatus?.({ ...hotkeyStatus });
+  };
+
   // 最近一次失败的说明。空串 = 没有失败。
   // 它是「界面上说得出来」那半的载体：光在终端留痕，用户看不见。
   let lastError = '';
@@ -80,6 +149,101 @@ export function createSystemController({
       // 返回原因而不只是成败：界面上要告诉用户「是什么事、为什么」。
       return err?.message || '未知原因';
     }
+  }
+
+  // —— 全局快捷键 ——
+
+  /**
+   * 注册一个组合。
+   *
+   * 返回 'ok' | 'taken' | 'invalid'：
+   * - 'ok'：注册成功。
+   * - 'taken'：**被别的程序占用**。`globalShortcut.register` 在这种情况下
+   *   返回 false 而且**不抛错**（Windows 上是静默失败，Electron 文档明说
+   *   这是操作系统的有意行为）。
+   * - 'invalid'：**加速键串语法非法**，这时 register 会抛异常。
+   *
+   * **两者必须分开**：用户看到的提示不同。
+   * 「被占用」要他去换个组合；「这个组合不能用」是设置本身写错了
+   * （比如从磁盘上读进来一个手改坏的字符串）。混成一句话等于让用户瞎猜。
+   */
+  function registerShortcut(accelerator) {
+    try {
+      return shortcuts.register(accelerator, onHotkeyAction) ? 'ok' : 'taken';
+    } catch (err) {
+      console.warn('[desk-pet] 快捷键注册失败：', err?.message || err);
+      return 'invalid';
+    }
+  }
+
+  /** 注册失败时的提示语。 */
+  function shortcutErrorText(result) {
+    return result === 'invalid' ? '这个组合不能用' : '该组合已被其他程序占用';
+  }
+
+  function setHotkeyStatus(next) {
+    hotkeyStatus = { ...hotkeyStatus, ...next };
+    notifyHotkeyStatus();
+  }
+
+  /**
+   * 换一组快捷键。
+   *
+   * **先注册新的、成功了再注销旧的**——反过来的话，失败时连原来的组合也丢了，
+   * 用户会发现自己连原来那个能用的快捷键都按不动了。
+   */
+  function setHotkey(accelerator) {
+    if (typeof accelerator !== 'string' || accelerator === '') return false;
+    const current = getSettings().hotkey;
+    if (accelerator === current) {
+      recording = false;
+      setHotkeyStatus({ state: 'ok', accelerator, error: '' });
+      return true;
+    }
+    const result = registerShortcut(accelerator);
+    if (result !== 'ok') {
+      recording = false;
+      setHotkeyStatus({
+        state: 'error',
+        accelerator: current,
+        error: shortcutErrorText(result),
+      });
+      return false;
+    }
+    if (current) shortcuts.unregister(current);
+    applySettings({ hotkey: accelerator });
+    recording = false;
+    setHotkeyStatus({ state: 'ok', accelerator, error: '' });
+    return true;
+  }
+
+  function startRecording() {
+    recording = true;
+    setHotkeyStatus({ state: 'recording', error: '' });
+    return true;
+  }
+
+  function cancelRecording() {
+    recording = false;
+    setHotkeyStatus({ state: 'idle', error: '' });
+    return true;
+  }
+
+  function isRecording() {
+    return recording;
+  }
+
+  /** 录制中的一次按键。返回拼好的组合；不是组合时返回 null。 */
+  function handleInput(input) {
+    if (!recording) return null;
+    if (input?.key === 'Escape') {
+      cancelRecording();
+      return null;
+    }
+    const acc = buildAccelerator(input);
+    if (!acc) return null;
+    setHotkey(acc);
+    return acc;
   }
 
   // —— 状态上报 ——
@@ -119,6 +283,22 @@ export function createSystemController({
     // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
     if (settings.clickThrough) applyClickThrough(true);
+    // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
+    //
+    // 已经注册过就不再注册一次：globalShortcut.register 对同一个加速键
+    // 重复注册会返回 false，而那会被误报成「被别的程序占用」。
+    if (settings.hotkey) {
+      if (shortcuts.isRegistered?.(settings.hotkey)) {
+        setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
+      } else {
+        const result = registerShortcut(settings.hotkey);
+        setHotkeyStatus({
+          state: result === 'ok' ? 'ok' : 'error',
+          accelerator: settings.hotkey,
+          error: result === 'ok' ? '' : shortcutErrorText(result),
+        });
+      }
+    }
   }
 
   function applyClickThrough(enabled) {
@@ -182,6 +362,20 @@ export function createSystemController({
     init,
     applySettings: applySettingsToSystem,
     getState,
-    dispose() {},
+    // —— 全局快捷键 ——
+    setHotkey,
+    startRecording,
+    cancelRecording,
+    isRecording,
+    handleInput,
+    dispose() {
+      // 退出时注销快捷键：不注销的话这个组合会一直被占着，
+      // 下次启动注册不上。
+      try {
+        shortcuts.unregisterAll();
+      } catch {
+        /* ignore */
+      }
+    },
   };
 }
