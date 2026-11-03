@@ -3474,17 +3474,51 @@ volumeInput.addEventListener('input', async () => {
 > 里的字段**深一层**合并（`{...current.sound, ...value}`），
 > 所以 `sound.enabled` 不会被抹掉。
 
-- [ ] **Step 5: 跑端到端测试确认通过**
+- [ ] **Step 5: 顺带修掉 Task 8 复审留下的三条 Minor**
+
+这三条都在 `src/settings/main.js` 里，Task 8 已经关闭，而本任务本来就要改同一个文件——
+放在这里一起收掉，省得再开一轮。
+
+**① 失败文案无条件宣称「原来的组合仍然有效」，但那种情形里它从未注册上。**
+主进程在**启动时**注册快捷键失败，也会产出 `state:'error'` + 一个 accelerator——
+而那个 accelerator 正是**注册失败**的那个组合（`src/main/system.js` 的 `init` 分支）。
+此时界面说「原来的 Control+Shift+D 仍然有效」，而它根本就没注册上。
+这与本项目「失败不许骗人」的基调冲突。
+
+**怎么修**：把文案改成**两种情形都成立**的说法。规格 §7.3 要求
+「失败时保留原组合，并把它显示出来」——只读框已经显示了它 ✓，
+所以文案不必再断言它「仍然有效」：
+
+```js
+    hotkeyHint.textContent = `${reason}。当前设置的组合：${accelerator}`;
+```
+
+**② 闩是一次性的：首条推送若早于首个快照到达，只读框将永远拿不到 hotkey。**
+`hotkeyStatusFromPush` 在**任何**推送到达时就置位，但推送监听注册在 `init()` 的
+`Promise.all` 之前——万一有一条推送先落地（哪怕 `accelerator` 为空），闩就永久置位，
+之后所有快照都不再写 `hotkeyInput.value` → 框停在占位符「未设置」。
+
+**怎么修**：只在推送**带 accelerator** 时才置闩（那种推送才是真的在更新快捷键状态），
+或者允许快照在框为空时补写。
+
+**③ `window.pet.getSystemState()` 未用可选调用。**
+`init()` 里直接调用，而同文件别处用的是 `window.pet.getSystemState?.()`。
+今天 preload 恒有该 API，不是活缺陷；但若日后 preload 少了它，`init()` 会**同步抛**
+（`undefined.catch` → TypeError），正好抵消这条发现想要的容错。
+
+**怎么修**：改成可选调用，并给 `.catch` 留好退路（`?.().catch?.(...)` 或先取出来再判）。
+
+- [ ] **Step 6: 跑端到端测试确认通过**
 
 Run: `npx playwright test test/e2e/settings.spec.js -g "音量"`
 Expected: PASS。
 
-- [ ] **Step 6: 跑全量测试**
+- [ ] **Step 7: 跑全量测试**
 
 Run: `npm test`
 Expected: 全部通过（单元 + 端到端）。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
 git add src/settings/index.html src/settings/main.js test/e2e/settings.spec.js
