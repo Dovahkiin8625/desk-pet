@@ -287,18 +287,60 @@ test('开机自启：用户再次改动开关时会再试一次', () => {
   captureWarnings(() => {
     controller.applySettings({ ...settings, autoLaunch: false });
   });
-  assert.equal(loginItemCalls.length, 1);
+  assert.equal(loginItemCalls.length, 1, '关闭失败时写了一次');
 
-  // 用户把开关改成 true 又改回 false：意图变了，要再试。
+  // 用户再次改动开关：意图变了，要再试。
   captureWarnings(() => {
     controller.applySettings({ ...settings, autoLaunch: true });
   });
   assert.equal(loginItemCalls.length, 2, '用户改了开关就该再试一次');
 
+  // 上面那次尝试又失败 → 磁盘被回退成 false，**意图也跟着回到 false**
+  // （意图 = 磁盘上现在是什么）。
+  // 所以「改回 false」根本不是一次改动（值本来就是 false）：
+  // 再写一次注册表只会把失败原因从「开启失败」换成「关闭失败」。
   captureWarnings(() => {
     controller.applySettings({ ...settings, autoLaunch: false });
   });
-  assert.equal(loginItemCalls.length, 3, '改回 false 也是一次改动');
+  assert.equal(loginItemCalls.length, 2, '值没变就不该再写注册表');
+  assert.match(controller.getState().lastError, /开机自启开启失败/);
+});
+
+test('开机自启：开启失败后，下一次 persist 不再写注册表，失败原因也不改', () => {
+  // 回归：开启失败时磁盘被回退成 false，而「上一次看到的意图」若停在 true，
+  // 下一次 persist（拖拽的下一帧、或者任何别的设置变更）就会看到
+  // 「want=false ≠ 意图=true」→ 又写一次注册表，
+  // 并把 lastError 从「开启失败」覆盖成「关闭失败」（写成功则直接清空）。
+  // 用户看到的是一条**方向相反**的失败原因——那正是要消灭的东西。
+  const { controller, loginItemCalls, settings } = makeController({
+    options: {
+      loginItem: {
+        set: (s) => {
+          loginItemCalls.push(s);
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: false }),
+      },
+    },
+  });
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: true });
+  });
+  assert.equal(loginItemCalls.length, 1);
+  assert.match(controller.getState().lastError, /开机自启开启失败/);
+
+  // 下一次 persist：磁盘已经是回退后的 false。
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: false });
+  });
+  // 不该再写注册表。
+  assert.equal(loginItemCalls.length, 1, '下一次 persist 不该再写注册表');
+  // 失败原因也不能被换成相反方向、更不能消失。
+  const state = controller.getState();
+  assert.notEqual(state.lastError, '');
+  assert.match(state.lastError, /开机自启开启失败/);
+  assert.doesNotMatch(state.lastError, /关闭失败/);
 });
 
 test('开机自启：磁盘与系统登录项不一致时要说得出来', () => {

@@ -673,6 +673,14 @@ export function createSystemController({
           if (want) {
             patch.autoLaunch = false;
             applied.autoLaunch = false;
+            // **意图要跟着磁盘一起回退。**
+            //
+            // 意图 = 磁盘上现在是什么。磁盘被回退成 false 了，意图还停在 true 的话，
+            // 下一次 persist（拖拽的下一帧、或者任何别的设置变更）就会看到
+            // 「want=false ≠ 意图=true」→ 又写一次注册表，
+            // 并把 lastError 从「开启失败」覆盖成「关闭失败」（写成功则直接清空）。
+            // 用户看到的是一条**方向相反**的失败原因——那正是要消灭的东西。
+            lastAutoLaunchIntent = false;
           }
         } else {
           applied.autoLaunch = want;
