@@ -752,3 +752,76 @@ test('「系统」分区能进入快捷键录制，状态由主进程推回来',
     await ctx.close();
   }
 });
+
+/**
+ * 往设置窗口推一条快捷键状态。
+ *
+ * 走的是主进程真的用的那条通道（pet:hotkeyStatus），
+ * 设置窗口收下它与收到主进程推送时走的是同一条路。
+ */
+async function pushHotkeyStatus(ctx, payload) {
+  await ctx.app.evaluate(({ BrowserWindow }, body) => {
+    const w = BrowserWindow.getAllWindows().find((x) =>
+      x.webContents.getURL().includes('/src/settings/index.html')
+    );
+    if (!w) throw new Error('设置窗口不在');
+    w.webContents.send('pet:hotkeyStatus', body);
+  }, payload);
+}
+
+test('录完新快捷键后，只读框要同步成新组合', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'system');
+
+    // 初始：显示的是当前生效的组合。
+    expect(await settingsWin.locator('#hotkeyValue').inputValue()).toBe('Control+Shift+D');
+
+    // 主进程报「新的组合已经注册成功」。
+    await pushHotkeyStatus(ctx, { state: 'ok', accelerator: 'Control+Shift+K', error: '' });
+
+    // 旧组合此刻已经被注销了，只读框里还留着它就是骗人。
+    await settingsWin.waitForFunction(
+      () => document.getElementById('hotkeyValue').value === 'Control+Shift+K',
+      null,
+      { timeout: 10000 },
+    );
+    // 说明行也要说清楚现在用的是哪个。
+    expect(await settingsWin.locator('#hotkeyHint').textContent()).toContain('Control+Shift+K');
+    expect(await settingsWin.locator('#recordHotkey').textContent()).toContain('重新录制');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('快捷键录制失败时，说明行点名保留下来的原组合', async () => {
+  const ctx = await launchApp();
+  try {
+    const settingsWin = await openSettingsWindow(ctx);
+    await gotoSection(settingsWin, 'system');
+
+    // 主进程报「这个组合被别的程序占了」，accelerator 是仍然有效的那个。
+    await pushHotkeyStatus(ctx, {
+      state: 'error',
+      accelerator: 'Control+Shift+D',
+      error: '该组合已被其他程序占用',
+    });
+
+    await settingsWin.waitForFunction(
+      () => document.getElementById('hotkeyHint').textContent.includes('该组合已被其他程序占用'),
+      null,
+      { timeout: 10000 },
+    );
+    const hint = await settingsWin.locator('#hotkeyHint').textContent();
+    // 失败要说清「是什么事」与「现在用的是哪个」。
+    expect(hint).toContain('Control+Shift+D');
+    expect(hint).toContain('仍然有效');
+    // 只读框里仍然是那个还生效的组合。
+    expect(await settingsWin.locator('#hotkeyValue').inputValue()).toBe('Control+Shift+D');
+    // 失败之后按钮回到「重新录制」——不在录制态。
+    expect(await settingsWin.locator('#recordHotkey').textContent()).toContain('重新录制');
+  } finally {
+    await ctx.close();
+  }
+});

@@ -569,24 +569,45 @@ clearFactsBtn.addEventListener('click', async () => {
 let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
 
 /**
+ * 有没有收到过主进程推来的快捷键状态。
+ *
+ * 快捷键状态有两个来源：主进程的推送（实时）与 getState() 的快照（初始读数）。
+ * 快照是**发起拉取那一刻**的值，可能比刚到的推送旧——
+ * 收到过推送之后，快照就不再覆盖它。
+ */
+let hotkeyStatusFromPush = false;
+
+/**
  * 用户改动开关的时刻。
  *
- * 用来丢弃「改动之前发起的状态拉取」：拉回来的状态是旧的，
- * 套上去会把用户刚点下的勾选框又拨回去。
+ * 用来保护「用户刚点的勾选框」：拉取回来的状态可能是**改动之前**的，
+ * 套上去会把用户的选择闪回旧值。
  */
 let systemEditEpoch = 0;
 
-/** 把主进程报上来的系统状态填进控件。 */
-function applySystemState(state) {
+/**
+ * 把主进程报上来的系统状态填进控件。
+ *
+ * `keepToggles` 表示「这次拉取是用户改动之前发起的」——
+ * 那时四个开关的值是旧的，不能盖掉用户刚点的勾选框；
+ * 快捷键状态与失败原因照常应用（它们不受本地改动影响）。
+ */
+function applySystemState(state, { keepToggles = false } = {}) {
   if (!state) return;
-  autoLaunchBox.checked = Boolean(state.autoLaunch);
-  clickThroughBox.checked = Boolean(state.clickThrough);
-  edgeSnapBox.checked = state.edgeSnap !== false;
-  dockEnabledBox.checked = Boolean(state.dockEnabled);
-  if (typeof state.hotkey === 'string' && state.hotkey) {
-    hotkeyInput.value = state.hotkey;
+  if (!keepToggles) {
+    autoLaunchBox.checked = Boolean(state.autoLaunch);
+    clickThroughBox.checked = Boolean(state.clickThrough);
+    edgeSnapBox.checked = state.edgeSnap !== false;
+    dockEnabledBox.checked = Boolean(state.dockEnabled);
   }
-  if (state.hotkeyStatus) hotkeyStatus = state.hotkeyStatus;
+  // 还没收到过推送时，快照是快捷键的唯一来源；
+  // 收到过之后，快照里的值可能比推送旧，就不再用它了。
+  if (!hotkeyStatusFromPush) {
+    if (typeof state.hotkey === 'string' && state.hotkey) {
+      hotkeyInput.value = state.hotkey;
+    }
+    if (state.hotkeyStatus) hotkeyStatus = state.hotkeyStatus;
+  }
   applyHotkeyStatus();
   // 系统级失败的原因（开机自启写注册表失败之类）。
   // 「失败必须留痕 + 在界面上说得出来」那半的载体——只有终端日志用户看不见。
@@ -611,9 +632,9 @@ async function refreshSystemState() {
   const epoch = systemEditEpoch;
   try {
     const state = await window.pet.getSystemState?.();
-    // 拉取期间用户改了开关：这次拉回来的是旧状态，别盖掉用户的操作。
-    if (epoch !== systemEditEpoch) return;
-    applySystemState(state);
+    // 拉取期间用户改了开关：这次拉回来的四个开关是旧值，
+    // 别盖掉用户刚点的勾选框；其余（快捷键、失败原因）照常应用。
+    applySystemState(state, { keepToggles: epoch !== systemEditEpoch });
   } catch {
     // 拉不到就保留页面上已有的值，别把界面清空。
   }
@@ -628,7 +649,12 @@ function applyHotkeyStatus() {
   }
   recordHotkeyBtn.textContent = '重新录制';
   if (hotkeyStatus.state === 'error') {
-    hotkeyHint.textContent = hotkeyStatus.error || '这个组合不能用了，原来的组合仍然有效。';
+    const reason = hotkeyStatus.error || '这个组合不能用了';
+    // 失败时要把「现在用的是哪个」一起写出来：
+    // 只说失败不说保留了什么，用户得自己往上面那个框里找。
+    hotkeyHint.textContent = hotkeyStatus.accelerator
+      ? `${reason}。原来的 ${hotkeyStatus.accelerator} 仍然有效。`
+      : `${reason}。`;
     return;
   }
   if (hotkeyStatus.state === 'ok' && hotkeyStatus.accelerator) {
@@ -641,11 +667,20 @@ function applyHotkeyStatus() {
 /** 录快捷键：主进程接管按键捕获（before-input-event）。 */
 recordHotkeyBtn.addEventListener('click', async () => {
   if (hotkeyStatus.state === 'recording') {
-    await window.pet.cancelHotkeyRecording?.();
+    try {
+      const cancelled = await window.pet.cancelHotkeyRecording?.();
+      // 主进程在系统控制器缺失时返回 false（**不抛**）：静默失败同样要说话。
+      if (!cancelled) show('取消失败：系统还没准备好', 'error');
+    } catch (err) {
+      show(`取消失败：${err?.message || err}`, 'error');
+    }
     return;
   }
   try {
-    await window.pet.recordHotkey?.();
+    const started = await window.pet.recordHotkey?.();
+    // 主进程在系统控制器缺失时返回 false（**不抛**）——
+    // 只在抛错时提示的话，点了没反应就是一次静默失败。
+    if (!started) show('录制失败：系统还没准备好', 'error');
   } catch (err) {
     show(`录制失败：${err?.message || err}`, 'error');
   }
@@ -680,12 +715,11 @@ async function init() {
     if (typeof s.modelId === 'string') setModel(s.modelId);
     if (typeof s.scale === 'number') updateScale(s.scale);
     if (typeof s.opacity === 'number') updateOpacity(s.opacity);
-    if (typeof s.autoLaunch === 'boolean') autoLaunchBox.checked = s.autoLaunch;
-    if (typeof s.clickThrough === 'boolean') clickThroughBox.checked = s.clickThrough;
-    if (typeof s.edgeSnap === 'boolean') edgeSnapBox.checked = s.edgeSnap;
-    if (typeof s.dockEnabled === 'boolean') dockEnabledBox.checked = s.dockEnabled;
     // 系统状态可能变了（比如开机自启写注册表失败、开关被回退）：
     // 广播里带的是**设置**，不是系统状态——重新拉一次才能拿到 lastError。
+    //
+    // 广播**不直接写勾选框**：那样一次早于用户点击的广播会把刚勾上的框闪回旧值。
+    // 勾选框只有一处真相——主进程的状态（refreshSystemState 里带 epoch 保护）。
     void refreshSystemState();
     refreshNavSummaries();
   });
@@ -694,7 +728,17 @@ async function init() {
   window.pet.onHotkeyStatus?.((status) => {
     if (!status) return;
     hotkeyStatus = status;
+    // 推送是快捷键状态的实时通道：收到过之后，
+    // getState() 的快照就不再覆盖它了（快照可能是发起拉取那一刻的旧值）。
+    hotkeyStatusFromPush = true;
+    if (status.accelerator) {
+      // 上面那个只读框显示的是「当前生效的组合」。
+      // 推送里的 accelerator 就是当前生效的那一个——
+      // 录制成功时旧的此刻已经被注销了，框里还留着它就是骗人。
+      hotkeyInput.value = status.accelerator;
+    }
     applyHotkeyStatus();
+    refreshNavSummaries();
   });
 
   const [settings, models, assistantState, tts, llm, systemState] = await Promise.all([
@@ -703,7 +747,9 @@ async function init() {
     window.pet.getAssistantState(),
     window.pet.getTtsStatus(),
     window.pet.getLlmStatus(),
-    window.pet.getSystemState(),
+    // 系统状态拉不到不能拖垮整个初始化：拉不到就当没有系统状态，
+    // 其余分区照常显示（Promise.all 一挂，设置窗口就停在半初始化状态）。
+    window.pet.getSystemState().catch(() => null),
   ]);
   // 下拉框照填不误——它所在的分区是不是当前分区，与填充无关。
   // （改成「切到外观分区才填」会让 setModel 的竞态兜底失效，
