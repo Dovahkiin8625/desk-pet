@@ -1089,6 +1089,8 @@ test('开机自启：开发态要带上应用路径，否则开机只弹空白 E
   controller.init(settings);
   controller.applySettings({ ...settings, autoLaunch: true });
   assert.deepEqual(loginItemCalls[0].args, ['E:/project/desk-pet']);
+  // path 指向当前可执行文件（Electron 的默认值，写出来是为了明确）。
+  assert.equal(loginItemCalls[0].path, process.execPath);
 });
 
 test('开机自启：打包后不带参数（process.execPath 就是应用自己）', () => {
@@ -1185,10 +1187,13 @@ export function createSystemController({
    * 开发态（未打包）必须带应用路径：那时 process.execPath 是 electron.exe，
    * 不带路径的话开机只会弹一个空白的 Electron 窗口。
    * 打包后 process.execPath 就是应用自己，不需要参数。
+   *
+   * `path` 写死 `process.execPath`：Electron 的默认值也是它，但写出来更清楚
+   * （`process` 是 Node 全局，不算 import Electron，单元测试里也能断言）。
    */
   function writeLoginItem(enabled) {
     const args = isPackaged ? [] : [getAppPath()];
-    loginItem.set({ openAtLogin: Boolean(enabled), args });
+    loginItem.set({ openAtLogin: Boolean(enabled), path: process.execPath, args });
   }
 
   function applyAutoLaunch(enabled) {
