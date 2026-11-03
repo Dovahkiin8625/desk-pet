@@ -102,6 +102,20 @@ export function createSystemController({
   // 只有真的变了才动作：applySettings 在拖拽的每一帧都会被调用，
   // 无变化时重复写注册表、重复注册快捷键是最热的路径上的无用功。
   let applied = null;
+  // 上一次看到的「用户意图」（settings.autoLaunch）。
+  //
+  // 写注册表**只看意图有没有变**，不看生效值：
+  // `persist()` 在拖拽的每一帧都会被调用，而它会调到这里——
+  // 用生效值当条件的话，一次失败（关闭方向写不进去）会被放大成
+  // 每秒几十次注册表写入 + 一条日志 + 一次广播 + 一次托盘菜单重建。
+  //
+  // 「上一次生效的值」（applied.autoLaunch）是另一回事：
+  // 关闭失败时它**不动**，留着旧值——系统里的注册项其实还在，
+  // 下次用户改动时再试一次。
+  let lastAutoLaunchIntent = null;
+  // 回退落盘期间（开启失败时把磁盘改回 false）为 true。
+  // 那不是用户按的开关，是控制器自己纠正磁盘——不能当成「意图变了」。
+  let autoLaunchRollback = false;
   // 当前停靠在哪条边（null = 没停靠）。
   let dock = null;
   // 本次拖拽的期望位置（未夹紧）与净位移。
@@ -348,6 +362,25 @@ export function createSystemController({
     }
   }
 
+  /**
+   * 读 Windows 登录项的真实状态。
+   *
+   * 返回 `null` = **读不到**（不是「没开」）。
+   *
+   * 「读不到」与「不一致」是两回事：读不到就不知道系统里是什么，
+   * 不能因为一次读取失败就报「不一致」——那是在说一个没验证过的事。
+   */
+  function readLoginItem() {
+    try {
+      const state = loginItem.get?.();
+      if (!state || typeof state.openAtLogin !== 'boolean') return null;
+      return state.openAtLogin;
+    } catch (err) {
+      console.warn('[desk-pet] 读不到开机自启的登录项：', err?.message || err);
+      return null;
+    }
+  }
+
   // —— 全局快捷键 ——
 
   /**
@@ -488,6 +521,9 @@ export function createSystemController({
     const settings = getSettings();
     return {
       autoLaunch: Boolean(settings.autoLaunch),
+      // 系统里真正生效的值（读登录项读到的）。
+      // 与 autoLaunch 不一致 = 磁盘与 Windows 登录项对不上（见 init）。
+      autoLaunchActive: Boolean(applied?.autoLaunch),
       hotkey: settings.hotkey,
       hotkeyStatus: { ...hotkeyStatus },
       clickThrough: Boolean(settings.clickThrough),
@@ -515,6 +551,27 @@ export function createSystemController({
       autoLaunch: Boolean(settings.autoLaunch),
       clickThrough: Boolean(settings.clickThrough),
     };
+    // 上一次看到的意图 = 磁盘上的值。
+    // 启动时**不重新写注册表**（见下面的说明），所以基线就是磁盘上的值：
+    // 用户没动过开关时，后面的 applySettings 不该去写注册表。
+    lastAutoLaunchIntent = Boolean(settings.autoLaunch);
+    // 开机自启：磁盘上的设置与 Windows 登录项可能对不上
+    // （用户在「任务管理器 → 启动」里把注册项删了）。
+    // 这种不一致**检测不到也不说**，用户看到的是「已开启」而系统里根本没有登录项。
+    // 必须说出来：写进 lastError，设置窗口会显示它。
+    const registered = readLoginItem();
+    if (registered !== null) {
+      // applied.autoLaunch 记的是「系统里真正生效的值」——不是磁盘上的说法。
+      applied.autoLaunch = registered;
+      if (registered !== Boolean(settings.autoLaunch)) {
+        const message = registered
+          ? '设置里关着「开机自启」，但系统里还留着登录项：重新打开再关闭一次即可清掉'
+          : '设置里开着「开机自启」，但系统里没有登录项：重新打开再关闭一次即可修复';
+        // 留痕也要有：终端里一条说得清原因的警告。
+        console.warn('[desk-pet] 开机自启与系统登录项不一致：', message);
+        lastError = message;
+      }
+    }
     // 穿透模式要在窗口建好之后立刻生效。
     // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
@@ -581,29 +638,46 @@ export function createSystemController({
     // 让界面知道出了错——失败不能是静默的。
     let failed = false;
 
-    if (Boolean(settings.autoLaunch) !== Boolean(applied.autoLaunch)) {
+    // —— 开机自启 ——
+    //
+    // **只在用户的意图变了的时候才写注册表。**
+    //
+    // 判据是「上一次看到的意图」（lastAutoLaunchIntent），不是
+    // 「上一次生效的值」（applied.autoLaunch）：后者在关闭方向失败时
+    // 故意不动（系统里的注册项其实还在），拿它当判据的话，
+    // persist() 在拖拽的每一帧调过来都会重试一次——
+    // 一次失败被放大成每秒几十次注册表写入 + 日志 + 广播 + 托盘菜单重建。
+    //
+    // 回退落盘（开启失败时把磁盘改回 false）不算「意图变了」：
+    // 那不是用户按的开关，是控制器自己纠正磁盘。
+    if (!autoLaunchRollback) {
       const want = Boolean(settings.autoLaunch);
-      const error = applyAutoLaunch(want);
-      if (error) {
-        failed = true;
-        // 说清是什么事、为什么：用户看到「开机自启没打开」时，
-        // 得知道是注册表写不进去还是别的。
-        lastError = `开机自启${want ? '开启' : '关闭'}失败：${error}`;
-        // 写失败：不管开关是开还是关，注册项与磁盘都可能不一致。
-        //
-        // 关闭方向：**不动 applied**——留着旧值，下一次 applySettings 会重试；
-        // 若把 applied 记成 false，控制器就以为已经关了（系统里的注册项还在，
-        // 下次开机照样自启），而且此后同值的 applySettings 永远不会再试。
-        //
-        // 打开方向：必须把磁盘改回去——磁盘上的 true 是假的，
-        // 用户重启后会以为自启开着。
-        if (want) {
-          patch.autoLaunch = false;
-          applied.autoLaunch = false;
+      // 判断必须在更新之前：反过来判断永远相等。
+      // 还没有基线时（第一次看到）只记下来——不知道基线就不知道是不是变了。
+      const intentChanged = lastAutoLaunchIntent !== null && want !== lastAutoLaunchIntent;
+      lastAutoLaunchIntent = want;
+      if (intentChanged) {
+        const error = applyAutoLaunch(want);
+        if (error) {
+          failed = true;
+          // 说清是什么事、为什么：用户看到「开机自启没打开」时，
+          // 得知道是注册表写不进去还是别的。
+          lastError = `开机自启${want ? '开启' : '关闭'}失败：${error}`;
+          // 写失败：不管开关是开还是关，注册项与磁盘都可能不一致。
+          //
+          // 关闭方向：**不动 applied**——留着旧值，系统里的注册项其实还在；
+          // 用户下次改动这个开关时会再试一次。
+          //
+          // 打开方向：必须把磁盘改回去——磁盘上的 true 是假的，
+          // 用户重启后会以为自启开着。
+          if (want) {
+            patch.autoLaunch = false;
+            applied.autoLaunch = false;
+          }
+        } else {
+          applied.autoLaunch = want;
+          lastError = '';
         }
-      } else {
-        applied.autoLaunch = want;
-        lastError = '';
       }
     }
 
@@ -621,7 +695,17 @@ export function createSystemController({
 
     // 先把回退落盘，再通知外面：通知时 settings 必须已经是回退后的值，
     // 否则界面会停留在「已开启」而磁盘上已经是「关闭」。
-    if (Object.keys(patch).length > 0) applySettings(patch);
+    if (Object.keys(patch).length > 0) {
+      // 回退期间不算「意图变了」：磁盘上的 false 是控制器自己写的，
+      // 不是用户按的开关。否则回退会立刻触发一次新的写入，
+      // 把「开启失败」这条原因覆盖成「关闭失败」。
+      autoLaunchRollback = true;
+      try {
+        applySettings(patch);
+      } finally {
+        autoLaunchRollback = false;
+      }
+    }
     if (failed) onStateChanged?.();
   }
 

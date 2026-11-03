@@ -15,6 +15,7 @@ import { createPluginRegistry } from './plugins/index.js';
 import { createAppIndex } from './apps.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
+import { makeHotkeyCapture } from './hotkeyCapture.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 
@@ -53,6 +54,15 @@ let settingsWin = null;
 let pendingWrite = null;
 // 系统级开关的控制器（第六部分）。
 let system = null;
+// E2E 下的「Windows 登录项」替身：记住最后一次写进去的值。
+// 真实实现读的是注册表，E2E 不碰注册表（见下面 loginItem 的注释），
+// 但 `get()` 仍要有个东西可返回——否则「磁盘与系统登录项是否一致」
+// 这条检查在 E2E 里会永远报不一致。
+//
+// 它是**进程内**的：重启后回到 false，而真实的注册项是持久的。
+// 所以「磁盘写着 true、重启后登录项却是 false」在 E2E 里会出现——
+// 那是替身不持久，不是缺陷。
+let e2eLoginItem = { openAtLogin: false };
 
 // 显示器列表缓存：拖拽时每一帧都要用它夹紧窗口（60Hz），
 // 而 getPrimaryDisplay()/getAllDisplays() 每次都是同步的跨进程查询——
@@ -464,11 +474,11 @@ function openSettings() {
   // {key, control, alt, shift, meta}，正好是拼加速键串要的东西，
   // 而且能 preventDefault——不然那一次按键会漏进页面的输入框
   // （规格 §4.3②）。
-  settingsWin.webContents.on('before-input-event', (event, input) => {
-    if (!system?.isRecording?.()) return;
-    event.preventDefault();
-    system.handleInput(input);
-  });
+  //
+  // 处理器在 src/main/hotkeyCapture.js 里：这段接线是「全局快捷键」
+  // 唯一的按键入口，而它在浏览器里按不出来（Playwright 的合成按键
+  // 不经过 before-input-event），所以必须能单测。
+  settingsWin.webContents.on('before-input-event', makeHotkeyCapture(system));
   settingsWin.loadURL(appUrl('/src/settings/index.html'));
   // 关掉设置窗口不退出应用：宠物窗口还在（顶多是被隐藏），
   // window-all-closed 不会因为它而触发。
@@ -724,10 +734,15 @@ app.whenReady().then(async () => {
       set: (opts) => {
         // E2E 不碰注册表：写注册表会污染跑测试的机器，
         // 而且注册表项可能指向临时路径，清理不掉。
-        if (IS_E2E) return;
+        if (IS_E2E) {
+          // 但要**记住**最后一次写进去的值：`get()` 得有个东西可返回，
+          // 否则「磁盘与系统登录项是否一致」这条检查永远报不一致。
+          e2eLoginItem = { ...e2eLoginItem, ...opts };
+          return;
+        }
         app.setLoginItemSettings(opts);
       },
-      get: () => app.getLoginItemSettings(),
+      get: () => (IS_E2E ? e2eLoginItem : app.getLoginItemSettings()),
     },
     shortcuts: {
       register: (acc, cb) => {

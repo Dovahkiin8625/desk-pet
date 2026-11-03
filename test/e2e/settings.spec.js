@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { launchApp, collectErrors, launchWithAssistantState, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
+import { launchApp, collectErrors, launchWithAssistantState, launchWithMenuProbe, gotoSection, waitForSystemState, PET_WINDOW_URL } from './helpers.js';
 
 /**
  * 收集渲染层与设置页的未捕获异常与 console.error。
@@ -658,6 +658,109 @@ test('设置窗口有「系统」分区，开关能落到 settings.json', async 
     expect(saved?.clickThrough, '鼠标穿透应当落盘').toBe(true);
     expect(saved?.dockEnabled, '贴边隐藏应当落盘').toBe(true);
     expect(saved?.edgeSnap, '边缘吸附默认开着').toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('只改一个开关不会把用户没碰过的开关写回磁盘', async () => {
+  // 竞态回归：设置窗口的四个勾选框在 init() 跑完之前全是 HTML 默认值。
+  // 全量写回时，用户此刻点一下「鼠标穿透」，
+  // `edgeSnap` 的默认值就跟着被写进 settings.json——
+  // 边缘吸附被**静默**关掉，界面上看不出任何异常。
+  const ctx = await launchApp();
+  try {
+    // 把状态拉取拖慢 3 秒：设置页的 init 卡在 await 里，
+    // 四个框停在 HTML 默认值上——正好落在竞态窗口内。
+    const patched = await ctx.app.evaluate(({ ipcMain }) => {
+      const orig = ipcMain._invokeHandlers?.get('pet:getSystemState');
+      if (!orig) return false;
+      ipcMain.removeHandler('pet:getSystemState');
+      ipcMain.handle('pet:getSystemState', async (...args) => {
+        await new Promise((r) => setTimeout(r, 3000));
+        return orig(...args);
+      });
+      return true;
+    });
+    // 用的是 Electron 的内部 API（ipcMain._invokeHandlers）：
+    // 一旦 Electron 改名，这条用例就失去意义了——宁可报错，也不要静默跳过。
+    expect(patched, 'ipcMain._invokeHandlers 不可用，这条竞态用例需要重写').toBe(true);
+
+    const settingsWinPromise = ctx.app.waitForEvent('window');
+    await ctx.win.evaluate(() => window.pet.openSettings());
+    const settingsWin = await settingsWinPromise;
+    // 只等文档就绪，不等初始化跑完：
+    // 模块脚本是 deferred 的，DOMContentLoaded 触发时它已经整段执行完，
+    // 勾选框的 change 处理器也就挂好了。
+    await settingsWin.waitForLoadState('domcontentloaded');
+
+    await gotoSection(settingsWin, 'system');
+    await settingsWin.locator('#clickThrough').check();
+
+    // 落盘：设置的写入是防抖的，轮询等它。
+    let saved = null;
+    for (let i = 0; i < 40; i += 1) {
+      try {
+        saved = JSON.parse(await readFile(join(ctx.userDataDir, 'settings.json'), 'utf8'));
+      } catch {
+        saved = null;
+      }
+      if (saved?.clickThrough === true) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(saved?.clickThrough, '鼠标穿透应当落盘').toBe(true);
+    // 用户**没碰过**边缘吸附：它不能被一起写回去。
+    expect(saved?.edgeSnap, '边缘吸附不该被静默关掉').toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('托盘改了穿透之后，在设置窗口动别的开关不会把它覆盖回去', async () => {
+  // F1 的第二个接缝：托盘菜单改了穿透 → 广播 → 设置窗口的异步
+  // refreshSystemState() 还没回来之前，用户在设置窗口动另一个开关。
+  // 全量写回会把托盘那次改动**覆盖回旧值**——
+  // 用户明明在托盘里开了穿透，在设置窗口动一下别的开关它就关了。
+  const ctx = await launchWithMenuProbe();
+  try {
+    // 拖慢状态拉取 3 秒：设置窗口的 init 卡在 await 里，
+    // 它的「鼠标穿透」框停在旧值上（广播的监听器也还没注册）。
+    const patched = await ctx.app.evaluate(({ ipcMain }) => {
+      const orig = ipcMain._invokeHandlers?.get('pet:getSystemState');
+      if (!orig) return false;
+      ipcMain.removeHandler('pet:getSystemState');
+      ipcMain.handle('pet:getSystemState', async (...args) => {
+        await new Promise((r) => setTimeout(r, 3000));
+        return orig(...args);
+      });
+      return true;
+    });
+    // 用的是 Electron 的内部 API（ipcMain._invokeHandlers）：
+    // 一旦 Electron 改名，这条用例就失去意义了——宁可报错，也不要静默跳过。
+    expect(patched, 'ipcMain._invokeHandlers 不可用，这条竞态用例需要重写').toBe(true);
+
+    const settingsWinPromise = ctx.app.waitForEvent('window');
+    await ctx.win.evaluate(() => window.pet.openSettings());
+    const settingsWin = await settingsWinPromise;
+    // 只等文档就绪，不等初始化跑完。
+    await settingsWin.waitForLoadState('domcontentloaded');
+
+    // 托盘里打开穿透（走的是主进程真的那条路）。
+    await ctx.clickMenuItem('鼠标穿透');
+
+    // 趁设置窗口的状态还没回来，动一下「边缘吸附」。
+    // 此时设置窗口里的「鼠标穿透」框还是旧值（false）。
+    await settingsWin.evaluate(() => {
+      const box = document.getElementById('edgeSnap');
+      box.checked = false;
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // 等拖慢的状态拉取过去（设置窗口的 init 也就跑完了）。
+    await new Promise((r) => setTimeout(r, 4000));
+    const after = await ctx.win.evaluate(() => window.pet.getSystemState());
+    expect(after.clickThrough, '托盘那次改动不该被设置窗口覆盖回去').toBe(true);
+    expect(after.clickThroughActive, '穿透应当仍然生效').toBe(true);
   } finally {
     await ctx.close();
   }

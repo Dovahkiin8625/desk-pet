@@ -582,7 +582,11 @@
           </div>
 
           <div class="toggle solo">
-            <input type="checkbox" id="edgeSnap">
+            <!-- 默认开着（DEFAULT_SETTINGS.edgeSnap 是 true）。
+                 这个 `checked` 不是装饰：HTML 的默认值必须与主进程的默认值一致——
+                 不一致时，用户在设置窗口还没拉到状态之前动别的开关，
+                 就会把这个默认值一起写回去。 -->
+            <input type="checkbox" id="edgeSnap" checked>
             <label for="edgeSnap">
               <span class="t-label">边缘吸附</span>
               <span class="t-hint">拖到屏幕边缘时自动贴齐</span>

@@ -1,3 +1,5 @@
+import { DEFAULT_VOLUME } from '../shared/volume.js';
+
 const modelSelect = document.getElementById('model');
 const scaleInput = document.getElementById('scale');
 const opacityInput = document.getElementById('opacity');
@@ -296,7 +298,7 @@ function applyAssistantState(state) {
   speedVal.textContent = Number(state.tts?.speed ?? 1).toFixed(2);
   setRangeFill(speedInput);
   // 总音量：存在 assistant.json 的 sound.volume 里，不在 settings.json。
-  updateVolume(state.sound?.volume ?? 0.8);
+  updateVolume(state.sound?.volume ?? DEFAULT_VOLUME);
 
   const llm = state.llm || {};
   llmEnabledBox.checked = Boolean(llm.enabled);
@@ -708,19 +710,35 @@ recordHotkeyBtn.addEventListener('click', async () => {
   }
 });
 
-for (const box of [autoLaunchBox, clickThroughBox, edgeSnapBox, dockEnabledBox]) {
+/**
+ * 四个系统开关与它们的设置字段名。
+ *
+ * **一次只送被改的那一个字段**：全量送回会把用户没碰过的开关一起写回去。
+ * 那不只是多余——它会真的把设置改坏：
+ *
+ * 1. 设置窗口刚打开、状态还没从主进程拉回来时，四个框全是 HTML 默认值；
+ *    用户此刻点一下「鼠标穿透」，`edgeSnap` 的默认值就跟着被写回磁盘，
+ *    边缘吸附被**静默**关掉。
+ * 2. 托盘菜单改了穿透 → 广播 → 设置窗口的异步 `refreshSystemState()`
+ *    还没回来之前，用户在设置窗口动另一个开关 → 全量写回会把托盘那次改动
+ *    覆盖回旧值。
+ *
+ * 主进程是唯一的状态来源：这里只转发「用户改了什么」。
+ */
+const SYSTEM_TOGGLES = [
+  [autoLaunchBox, 'autoLaunch'],
+  [clickThroughBox, 'clickThrough'],
+  [edgeSnapBox, 'edgeSnap'],
+  [dockEnabledBox, 'dockEnabled'],
+];
+
+for (const [box, key] of SYSTEM_TOGGLES) {
   box.addEventListener('change', async () => {
     systemEditEpoch += 1;
     refreshNavSummaries();
     try {
-      // 四个勾选框一起存：saveSettings 是整份设置对象的浅合并补丁，
-      // 四个字段一起送过去省得漏。
-      await window.pet.saveSettings({
-        autoLaunch: autoLaunchBox.checked,
-        clickThrough: clickThroughBox.checked,
-        edgeSnap: edgeSnapBox.checked,
-        dockEnabled: dockEnabledBox.checked,
-      });
+      // 只送被改的那一个字段。
+      await window.pet.saveSettings({ [key]: box.checked });
     } catch (err) {
       show(`保存失败：${err?.message || err}`, 'error');
     }

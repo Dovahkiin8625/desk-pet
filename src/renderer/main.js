@@ -28,6 +28,7 @@ import {
 } from './pet/audio.js';
 import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
+import { DEFAULT_VOLUME } from '../shared/volume.js';
 
 window.__pet = {
   ready: false,
@@ -68,7 +69,7 @@ window.__pet = {
   speechCount: 0,
   lastSpeechBytes: 0,
   // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
-  volume: 0.8,
+  volume: DEFAULT_VOLUME,
   // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
   // 「桌宠说话也受音量控制」只有这一个可断言的出口。
   speechOutput: null,

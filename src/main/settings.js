@@ -1,5 +1,6 @@
 import { readJson, writeJson } from './store.js';
 import { SCALE_RANGE } from '../shared/viewport.js';
+import { DOCK_SIDES } from './edgeDock.js';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   version: 1,
@@ -64,7 +65,8 @@ export function sanitizeSettings(raw) {
     if (trimmed !== '' && trimmed.length <= 64) out.hotkey = trimmed;
   }
   // dock：只认四个合法边名，其余一律 null。
-  if (['left', 'right', 'top', 'bottom'].includes(raw.dock)) out.dock = raw.dock;
+  // 边名清单在 edgeDock.js（DOCK_SIDES）——那是唯一的一份。
+  if (DOCK_SIDES.includes(raw.dock)) out.dock = raw.dock;
   if (typeof raw.version === 'number') out.version = raw.version;
 
   return out;

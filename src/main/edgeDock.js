@@ -10,6 +10,28 @@
  * 没有 Electron 环境。
  */
 
+/**
+ * 四条停靠边。
+ *
+ * 边名散落过多处时迟早会写错一个（这条分支已经因为方向写反栽过一次），
+ * 所以这里给出一份**唯一**的清单：几何计算、设置文件的 sanitize
+ * 都从它这儿取。
+ */
+export const DOCK_SIDES = Object.freeze(['left', 'right', 'top', 'bottom']);
+
+/**
+ * 每条边「本帧位移朝它去」的判据。
+ *
+ * 屏幕坐标的 y 轴**向下为正**——所以「往上推」是 `dy < 0`。
+ * 写反的话上下两个方向的吸附会整个对调。
+ */
+const TOWARD = Object.freeze({
+  left: (d) => d.dx < 0,
+  right: (d) => d.dx > 0,
+  top: (d) => d.dy < 0,
+  bottom: (d) => d.dy > 0,
+});
+
 /** 停靠时露在屏幕上的宽度（px）。 */
 export const DOCK_SLIP = 24;
 
@@ -67,18 +89,14 @@ export function snapToEdge(
   threshold = SNAP_THRESHOLD,
 ) {
   const gaps = edgeGaps(x, y, width, height, workArea);
+  const d = delta || { dx: 0, dy: 0 };
   const candidates = [];
-  if (gaps.left > 0 && gaps.left <= threshold && delta.dx < 0) {
-    candidates.push({ side: 'left', gap: gaps.left });
-  }
-  if (gaps.right > 0 && gaps.right <= threshold && delta.dx > 0) {
-    candidates.push({ side: 'right', gap: gaps.right });
-  }
-  if (gaps.top > 0 && gaps.top <= threshold && delta.dy < 0) {
-    candidates.push({ side: 'top', gap: gaps.top });
-  }
-  if (gaps.bottom > 0 && gaps.bottom <= threshold && delta.dy > 0) {
-    candidates.push({ side: 'bottom', gap: gaps.bottom });
+  // 四条边走同一套判据：间隙在阈值内，且位移朝它去。
+  for (const side of DOCK_SIDES) {
+    const gap = gaps[side];
+    if (!(gap > 0 && gap <= threshold)) continue;
+    if (!TOWARD[side](d)) continue;
+    candidates.push({ side, gap });
   }
   if (candidates.length === 0) return { x, y, side: null };
   // 间隙最小的优先：它离贴齐最近。
@@ -137,7 +155,12 @@ export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
   if (side === 'top') {
     return { min: workArea.y + slip - height, max: workArea.y + workArea.height - height };
   }
-  return { min: workArea.y, max: workArea.y + workArea.height - slip };
+  if (side === 'bottom') {
+    return { min: workArea.y, max: workArea.y + workArea.height - slip };
+  }
+  // 不是四条边之一：调用方（clampDocked）会先挡掉这种情形，
+  // 这里给一个「普通可见区」兜底——不做任何停靠放宽。
+  return { min: workArea.x, max: workArea.x + workArea.width - width };
 }
 
 /**
@@ -159,7 +182,7 @@ export function dockedRange(side, width, height, workArea, slip = DOCK_SLIP) {
 export function clampDocked(x, y, width, height, workArea, side, slip = DOCK_SLIP) {
   const maxX = workArea.x + Math.max(0, workArea.width - width);
   const maxY = workArea.y + Math.max(0, workArea.height - height);
-  if (side !== 'left' && side !== 'right' && side !== 'top' && side !== 'bottom') {
+  if (!DOCK_SIDES.includes(side)) {
     return {
       x: Math.min(Math.max(Math.round(x), workArea.x), maxX),
       y: Math.min(Math.max(Math.round(y), workArea.y), maxY),
@@ -197,10 +220,14 @@ export function chooseDockSide(gaps, delta, { minPush = MIN_DOCK_PUSH } = {}) {
   const d = delta || { dx: 0, dy: 0 };
   const candidates = [];
   const flush = (v) => Math.abs(v) < FLUSH_EPSILON;
-  if (flush(gaps.right) && d.dx >= minPush) candidates.push({ side: 'right', push: d.dx });
-  if (flush(gaps.left) && -d.dx >= minPush) candidates.push({ side: 'left', push: -d.dx });
-  if (flush(gaps.bottom) && d.dy >= minPush) candidates.push({ side: 'bottom', push: d.dy });
-  if (flush(gaps.top) && -d.dy >= minPush) candidates.push({ side: 'top', push: -d.dy });
+  // 每条边「朝它推」的量：往左推时 dx 是负的，所以左边的量是 -dx；
+  // 往上是 dy 负，所以上边的量是 -dy（屏幕坐标 y 向下为正）。
+  const push = { left: -d.dx, right: d.dx, top: -d.dy, bottom: d.dy };
+  for (const side of DOCK_SIDES) {
+    if (!flush(gaps[side])) continue;
+    if (push[side] < minPush) continue;
+    candidates.push({ side, push: push[side] });
+  }
   if (candidates.length === 0) return null;
   // 两个方向都贴齐时（默认位置就在右下角），取位移大的那个。
   candidates.sort((a, b) => b.push - a.push);

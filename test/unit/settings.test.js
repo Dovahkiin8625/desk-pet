@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sanitizeSettings, loadSettings, saveSettings, DEFAULT_SETTINGS } from '../../src/main/settings.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('空输入返回默认设置', () => {
   assert.deepEqual(sanitizeSettings(undefined), DEFAULT_SETTINGS);
@@ -167,4 +170,23 @@ test('过长的 hotkey 回退默认值而不是截断', () => {
 test('空的 hotkey 回退默认值', () => {
   assert.equal(sanitizeSettings({ hotkey: '' }).hotkey, 'Control+Shift+D');
   assert.equal(sanitizeSettings({ hotkey: '   ' }).hotkey, 'Control+Shift+D');
+});
+
+test('设置页四个系统开关的 HTML 默认值与 DEFAULT_SETTINGS 一致', async () => {
+  // 设置窗口在拉到主进程状态之前，四个勾选框停在 HTML 默认值上。
+  // 默认值与 DEFAULT_SETTINGS 不一致时，用户在这段时间里动别的开关，
+  // 就会把这个偏差一起写回磁盘——「边缘吸附」曾经就是这样被静默关掉的。
+  const html = await readFile(join(ROOT, 'src', 'settings', 'index.html'), 'utf8');
+  const defaults = {
+    autoLaunch: DEFAULT_SETTINGS.autoLaunch,
+    clickThrough: DEFAULT_SETTINGS.clickThrough,
+    edgeSnap: DEFAULT_SETTINGS.edgeSnap,
+    dockEnabled: DEFAULT_SETTINGS.dockEnabled,
+  };
+  for (const [id, want] of Object.entries(defaults)) {
+    const tag = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(tag, `设置页里应当有 #${id}`);
+    const checked = /\schecked(\s|>|=)/.test(tag[0]);
+    assert.equal(checked, want, `#${id} 的 HTML 默认值应当是 ${want}`);
+  }
 });

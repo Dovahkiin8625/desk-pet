@@ -10,11 +10,13 @@
  * 那是「角色的台词」，这里是「界面反馈」。
  */
 
+import { DEFAULT_VOLUME } from '../../shared/volume.js';
+
 let ctx = null;
 let enabled = true;
 let masterGain = null;
 // 总音量：提示音与桌宠说话共用一个值（设置窗口的「音量」滑块）。
-let volume = 0.8;
+let volume = DEFAULT_VOLUME;
 // 语音实际连到了哪个节点（null = 还没播过）。
 let speechTarget = null;
 
@@ -53,7 +55,7 @@ export function isAudioEnabled() {
 export function setMasterVolume(value) {
   const n = typeof value === 'number' && Number.isFinite(value)
     ? Math.min(1, Math.max(0, value))
-    : 0.8;
+    : DEFAULT_VOLUME;
   volume = n;
   if (masterGain) masterGain.gain.value = n;
   return volume;

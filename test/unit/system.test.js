@@ -44,6 +44,12 @@ function makeController(overrides = {}) {
     dock: null,
     ...(overrides.settings || {}),
   };
+  // 「Windows 登录项」的替身：跟着写入走。
+  //
+  // 真实的注册表就是这样——set 写进去、get 读出来。
+  // 初值与磁盘一致：正常情况下二者本来就该一致，
+  // 不一致的情形要单独构造（见「磁盘与登录项不一致」那条用例）。
+  const registry = { openAtLogin: Boolean(settings.autoLaunch) };
   const patched = [];
   let controller = null;
   const options = {
@@ -68,8 +74,11 @@ function makeController(overrides = {}) {
     onStateChanged: () => {},
     onHotkeyStatus: () => {},
     loginItem: {
-      set: (s) => loginItemCalls.push(s),
-      get: () => ({ openAtLogin: false }),
+      set: (s) => {
+        loginItemCalls.push(s);
+        registry.openAtLogin = Boolean(s.openAtLogin);
+      },
+      get: () => ({ openAtLogin: registry.openAtLogin }),
     },
     shortcuts: {
       register: () => true,
@@ -204,7 +213,7 @@ test('开机自启：注册失败要通知外面，而且通知时开关已经�
   assert.deepEqual(seen, [false]);
 });
 
-test('开机自启：关闭失败时保持旧值，下次同值会重试', () => {
+test('开机自启：关闭失败时保持旧值，等用户下次改动时再重试', () => {
   const { controller, loginItemCalls, patched, settings } = makeController({
     settings: { autoLaunch: true },
     options: {
@@ -213,7 +222,9 @@ test('开机自启：关闭失败时保持旧值，下次同值会重试', () =>
           loginItemCalls.push(s);
           throw new Error('注册表写不进去');
         },
-        get: () => ({ openAtLogin: false }),
+        // 登录项还在（写失败不影响系统里的现状）——与磁盘一致，
+        // 所以启动时不会报「不一致」。
+        get: () => ({ openAtLogin: true }),
       },
     },
   });
@@ -222,11 +233,127 @@ test('开机自启：关闭失败时保持旧值，下次同值会重试', () =>
     controller.applySettings({ ...settings, autoLaunch: false });
     controller.applySettings({ ...settings, autoLaunch: false });
   });
-  // 第一次失败后 applied 仍记着 true（系统里的注册项其实还在），
-  // 所以第二次同值调用会重试，而不是「以为已经关了」。
-  assert.equal(loginItemCalls.length, 2);
+  // 关闭失败后 applied 仍记着 true（系统里的注册项其实还在）。
+  // 但**不重试**：写注册表的判据是「用户意图有没有变」，
+  // 同值重复调用不是意图变了——否则 persist() 每帧调一次就是一次风暴。
+  assert.equal(loginItemCalls.length, 1);
   // 关闭方向失败不改磁盘：只有「打开」方向失败才必须把磁盘改回去。
   assert.deepEqual(patched, []);
+  // 失败的原因要在状态里说得出来。
+  assert.match(controller.getState().lastError, /开机自启关闭失败/);
+});
+
+test('开机自启：关闭失败后连着 5 次同样的设置不会再写注册表', () => {
+  // 回归：`persist()` 在拖拽的每一帧都会被调用，
+  // 而它会调 applySettings。用「生效值」当判据的话，
+  // 一次失败会被放大成每秒几十次注册表写入 + 日志 + 广播。
+  const { controller, loginItemCalls, settings } = makeController({
+    settings: { autoLaunch: true },
+    options: {
+      loginItem: {
+        set: (s) => {
+          loginItemCalls.push(s);
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: true }),
+      },
+    },
+  });
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: false });
+    for (let i = 0; i < 5; i += 1) {
+      controller.applySettings({ ...settings, autoLaunch: false });
+    }
+  });
+  // 一次失败只留一次痕迹。
+  assert.equal(loginItemCalls.length, 1);
+});
+
+test('开机自启：用户再次改动开关时会再试一次', () => {
+  const { controller, loginItemCalls, settings } = makeController({
+    settings: { autoLaunch: true },
+    options: {
+      loginItem: {
+        set: (s) => {
+          loginItemCalls.push(s);
+          throw new Error('注册表写不进去');
+        },
+        get: () => ({ openAtLogin: true }),
+      },
+    },
+  });
+  controller.init(settings);
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: false });
+  });
+  assert.equal(loginItemCalls.length, 1);
+
+  // 用户把开关改成 true 又改回 false：意图变了，要再试。
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: true });
+  });
+  assert.equal(loginItemCalls.length, 2, '用户改了开关就该再试一次');
+
+  captureWarnings(() => {
+    controller.applySettings({ ...settings, autoLaunch: false });
+  });
+  assert.equal(loginItemCalls.length, 3, '改回 false 也是一次改动');
+});
+
+test('开机自启：磁盘与系统登录项不一致时要说得出来', () => {
+  // 用户在「任务管理器 → 启动」里把注册项删了：
+  // 磁盘写着 true，系统里什么都没有。
+  // 界面显示「已开启」，用户按了快捷键也没反应——
+  // 这种事必须被说出来（失败必须留痕 + 在界面上说得出来）。
+  const { controller, settings } = makeController({
+    settings: { autoLaunch: true },
+    options: {
+      loginItem: {
+        set: () => {},
+        get: () => ({ openAtLogin: false }),
+      },
+    },
+  });
+  const warnings = captureWarnings(() => controller.init(settings));
+  const state = controller.getState();
+  assert.notEqual(state.lastError, '', '不一致要说出来');
+  assert.match(state.lastError, /开机自启/);
+  assert.match(state.lastError, /系统里没有登录项/);
+  // 终端里也要留痕。
+  assert.equal(warnings.length, 1);
+  assert.match(warnings.join('\n'), /登录项不一致/);
+  // 磁盘上仍然是 true：控制器不替用户改设置（那是用户自己的开关）。
+  assert.equal(settings.autoLaunch, true);
+  // 系统里其实没开——applied 记的是真正生效的值。
+  assert.equal(state.autoLaunchActive, false);
+});
+
+test('开机自启：读不到登录项时不报「不一致」', () => {
+  // 读不到 ≠ 不一致：读不到就不知道系统里是什么，
+  // 不能因为一次读取失败就报一个没验证过的事。
+  const { controller, settings } = makeController({
+    settings: { autoLaunch: true },
+    options: {
+      loginItem: {
+        set: () => {},
+        get: () => {
+          throw new Error('注册表读不了');
+        },
+      },
+    },
+  });
+  captureWarnings(() => controller.init(settings));
+  assert.equal(controller.getState().lastError, '');
+});
+
+test('开机自启：登录项与设置一致时不报任何东西', () => {
+  const { controller, settings } = makeController({
+    settings: { autoLaunch: true },
+  });
+  controller.init(settings);
+  assert.equal(controller.getState().lastError, '');
+  assert.equal(controller.getState().autoLaunchActive, true);
 });
 
 test('getState 把当前状态与最后一次失败一起报出来', () => {
@@ -598,6 +725,64 @@ test('停靠：拖到右边缘并松手 → 藏到边缘外，只露 24px', () =
   const last = win.calls[win.calls.length - 1];
   assert.equal(last[0], 'setPosition');
   assert.equal(last[1], 1000 - 24);
+});
+
+test('停靠：拖到左边缘并松手 → 藏到左边缘外，只露 24px', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  controller.moveBy(-100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'left');
+  // 只露 24px：窗口的**右**边缘落在工作区左边缘 + 24。
+  const [x] = win.getPosition();
+  assert.equal(x + 300, 24);
+});
+
+test('停靠：拖到上边缘并松手 → 藏到上边缘外，只露 24px', () => {
+  // 上下两个方向的符号最容易写反（屏幕坐标 y 向下为正）：
+  // 「往上推」是 dy < 0。这条用例钉住的就是它。
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  controller.moveBy(0, -100);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'top');
+  // 只露 24px：窗口的**下**边缘落在工作区上边缘 + 24。
+  const [, y] = win.getPosition();
+  assert.equal(y + 560, 24);
+});
+
+test('停靠：拖到下边缘并松手 → 藏到下边缘外，只露 24px', () => {
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  // 往下推到工作区底边（窗口高 560，起点 y=100，最多能推到 240）。
+  controller.moveBy(0, 140);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'bottom');
+  // 只露 24px：窗口的上边缘落在工作区下边缘 − 24。
+  const [, y] = win.getPosition();
+  assert.equal(y, 800 - 24);
+});
+
+test('停靠时不能换边：垂直方向拖动不会变成上边停靠', () => {
+  // 规格 §6.6：停靠时只沿停靠轴拽出，垂直方向可以在工作区内自由移动
+  // 但**不触发停靠**。窗口大部分在屏幕外时，把它当成上边停靠
+  // 会得到一个用户没要求过的位置（横着卡在屏幕右外侧）。
+  const { controller, win, settings } = makeController({ settings: { dockEnabled: true } });
+  controller.init(settings);
+  controller.dragStart();
+  for (let i = 0; i < 10; i++) controller.moveBy(100, 0);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right');
+
+  controller.dragStart();
+  controller.moveBy(0, -100);
+  controller.dragEnd();
+  assert.equal(controller.getState().dock, 'right', '停靠时不能换边');
+  // 垂直方向仍然可以自由移动（那不是「被冻住」）。
+  assert.equal(win.getPosition()[1], 0);
 });
 
 test('停靠：没开「贴边隐藏」时不藏', () => {

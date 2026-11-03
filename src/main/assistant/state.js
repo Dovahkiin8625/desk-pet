@@ -7,6 +7,7 @@ import {
   MAX_CHAT_FACTS,
 } from '../../shared/assistant.js';
 import { createPomodoroState } from './pomodoro.js';
+import { DEFAULT_VOLUME } from '../../shared/volume.js';
 
 const FILE_NAME = 'assistant.json';
 
@@ -27,7 +28,7 @@ export const DEFAULT_ASSISTANT = Object.freeze({
   chime: { enabled: true },
   greeting: { enabled: true },
   // sound.volume 是**总音量**：提示音与桌宠说话共用一个值。
-  sound: { enabled: true, volume: 0.8 },
+  sound: { enabled: true, volume: DEFAULT_VOLUME },
   hotAlert: { enabled: true },
   tts: { ...DEFAULT_TTS },
   llm: structuredClone(DEFAULT_LLM),
