@@ -2788,6 +2788,38 @@ export const petBounds = (ctx) =>
   }, PET_WINDOW_URL);
 ```
 
+**再把 `waitForSystemState` 从 `test/e2e/system.spec.js` 搬到这里。**
+Task 6 的修复轮把它放在了 `system.spec.js` 里（模块私有），
+但 Task 8 的设置窗口用例也要用——**夹具抄成多份是本仓库反复出现过的坑**
+（`docs/decisions.md` #46 记过），所以要搬，不要抄。
+
+```js
+/**
+ * 轮询主进程上报的系统状态，直到满足条件（或超时）。返回最后一次的状态。
+ *
+ * **不能**用 `page.waitForFunction(async () => ...)`：Playwright 不 await
+ * 异步谓词——返回的 Promise 恒为真，于是「等待」立刻返回，什么也没等
+ * （实测：同步谓词会等到超时，异步谓词 2ms 就返回了）。
+ * 那条坑会让「等状态变成 true」这种断言变成恒真。
+ */
+export async function waitForSystemState(ctx, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  let state = null;
+  for (;;) {
+    state = await ctx.win.evaluate(() => window.pet.getSystemState());
+    if (predicate(state)) return state;
+    if (Date.now() >= deadline) return state;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+```
+
+`test/e2e/system.spec.js` 里删掉本地的那个定义，改成从 `./helpers.js` 导入。
+
+**顺带把两处菜单注释改对**（Task 6 的复审发现它们漏了「取回桌宠」）：
+`src/main/menu.js` 与 `src/main/menuTemplate.js` 顶部都写着菜单只有
+「显示/隐藏 · 鼠标穿透 · 设置 · 退出」——停靠时还会多出「取回桌宠」。
+
 - [ ] **Step 9: 写端到端测试**
 
 `test/e2e/system.spec.js` 的 import 行改成：
