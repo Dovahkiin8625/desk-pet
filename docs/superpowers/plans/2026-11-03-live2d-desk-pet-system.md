@@ -708,6 +708,35 @@ export function getMasterVolume() {
   },
 ```
 
+`src/renderer/pet/audio.js`：
+- 在模块变量区加一行，并导出一个诊断函数：
+
+```js
+// 语音输出接到了哪个节点：'masterGain' 或 'destination'。
+// 诊断用——「桌宠说话受不受音量控制」这件事没有别的办法从外面看出来。
+let speechOutput = null;
+```
+
+```js
+/**
+ * 语音输出接到了哪个节点。
+ *
+ * 有了它，「桌宠说话也受音量控制」才有可断言的出口——
+ * 否则那只是一行 `source.connect(...)`，改了也没人看得出来。
+ */
+export function getSpeechOutput() {
+  return speechOutput;
+}
+```
+
+- `playSpeech` 里，`source.connect(masterGain || ac.destination);` 改成：
+
+```js
+  // 接主增益，不接 destination：不然语音不受总音量控制。
+  source.connect(masterGain || ac.destination);
+  speechOutput = masterGain ? 'masterGain' : 'destination';
+```
+
 `src/renderer/main.js`：
 - import 那行改成：
 
@@ -721,6 +750,7 @@ import {
   setAudioEnabled,
   setMasterVolume,
   getMasterVolume,
+  getSpeechOutput,
 } from './pet/audio.js';
 ```
 
@@ -729,6 +759,9 @@ import {
 ```js
   // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
   volume: 0.8,
+  // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
+  // 「桌宠说话也受音量控制」只有这一个可断言的出口。
+  speechOutput: null,
 ```
 
 - `registerChannels()` 里，在 `window.pet.onSoundEnabled?.(...)` 之后加：
@@ -740,6 +773,25 @@ import {
     window.__pet.volume = setMasterVolume(v);
   });
 ```
+
+- `onSpeak` 的处理里，`void playSpeech(bytes, ...)` 改成记下输出节点：
+
+```js
+    void playSpeech(bytes, (amplitude) => {
+      lipSync?.setAmplitude(amplitude);
+      window.__pet.mouthAmplitude = amplitude;
+    })
+      .then(() => {
+        // 播完之后才拿得到：连接是在 decodeAudioData 之后才做的。
+        window.__pet.speechOutput = getSpeechOutput();
+      })
+      .catch((err) => {
+        console.warn('[desk-pet] 语音播放失败：', err?.message || err);
+      });
+```
+
+> 原来的 `void playSpeech(...).catch(...)` 改成 `.then(...).catch(...)`——
+> `catch` 仍在最后，链不会断。
 
 - `boot()` 里，`window.__pet.opacity = ...` 那行之后加：
 
@@ -827,9 +879,59 @@ test('总音量传到了渲染层', async () => {
 });
 ```
 
+再在 `test/e2e/tts.spec.js` 里加一条——**「桌宠说话也受音量控制」只有这一个可断言的出口**
+（那个文件已经有桩服务与「语音送到渲染层」的完整写法，**照抄它的 setup**）：
+
+```js
+test('桌宠说话接在主增益上，所以它也受总音量控制', async () => {
+  const stub = await startStubTts();
+  const dir = await mkdtemp(join(tmpdir(), 'desk-pet-tts-'));
+  const userDataDir = join(dir, 'userData');
+  await mkdir(userDataDir, { recursive: true });
+  // 预置：语音开着，域名指向桩服务，音量调到 0.3。
+  await writeFile(
+    join(userDataDir, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      tts: { enabled: true, voiceId: 'female-shaonv', model: 'speech-02-hd', host: stub.url },
+      sound: { enabled: true, volume: 0.3 },
+    }),
+    'utf8'
+  );
+
+  const ctx = await launchWithMenuProbe({
+    userDataDir,
+    env: {
+      MINIMAX_API_KEY: 'sk-test-local-stub',
+      DESK_PET_TTS_HOSTS: stub.url,
+    },
+  });
+  try {
+    // 音量到了渲染层。
+    await ctx.win.waitForFunction(() => window.__pet.volume === 0.3, null, { timeout: 10000 });
+
+    // 语音**接在主增益上**，而不是直接接扬声器——
+    // 接错了的话「桌宠说话」这一路就不受音量控制。
+    await ctx.win.waitForFunction(
+      () => window.__pet.speechOutput === 'masterGain',
+      null,
+      { timeout: 20000 },
+    );
+  } finally {
+    await ctx.close();
+    await stub.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+```
+
+> `speechOutput` 是在 `decodeAudioData` 之后才写的，所以**不能**用
+> `window.__pet.speechCount > 0` 当条件——那个计数在解码之前就加了。
+> 用 `speechOutput === 'masterGain'` 才对。
+
 - [ ] **Step 9: 跑端到端测试确认通过**
 
-Run: `npx playwright test test/e2e/system.spec.js`
+Run: `npx playwright test test/e2e/system.spec.js test/e2e/tts.spec.js`
 Expected: PASS。
 
 - [ ] **Step 10: 提交**
@@ -837,7 +939,7 @@ Expected: PASS。
 ```bash
 git add src/main/assistant/state.js src/renderer/pet/audio.js src/renderer/main.js \
         src/preload/index.cjs src/main/index.js test/unit/assistant.test.js \
-        test/e2e/system.spec.js
+        test/e2e/system.spec.js test/e2e/tts.spec.js
 git commit -m "feat(audio): 总音量同时管住提示音与桌宠说话"
 ```
 
@@ -1128,8 +1230,6 @@ export function createSystemController({
     // 默认（关）时**不要**调 setIgnoreMouseEvents：窗口本来就是可点的，
     // 多余的一次原生调用没有意义，还会让「本次只调了一次」的断言变复杂。
     if (settings.clickThrough) applyClickThrough(true);
-    // 停靠：把窗口挪到藏起来的位置。
-    applyDockAtStartup();
   }
 
   function applyClickThrough(enabled) {
@@ -1165,18 +1265,8 @@ export function createSystemController({
       onStateChanged?.();
     }
 
-    // 「贴边隐藏」被关掉时，正在停靠的桌宠要立刻取回来：
-    // 不然用户关了开关、桌宠还赖在屏幕外，开关看起来没生效。
-    if (settings.dockEnabled === false && dock) {
-      undock();
-    }
-
     if (Object.keys(patch).length > 0) applySettings(patch);
   }
-
-  // —— 停靠（真正的实现随 Task 7 补齐；这里先留占位以便本任务自洽）——
-  function undock() {}
-  function applyDockAtStartup() {}
 
   return {
     init,
@@ -1187,20 +1277,89 @@ export function createSystemController({
 }
 ```
 
-> **注意**：本任务里 `undock` / `applyDockAtStartup` 是空壳，Task 7 会用真实实现替换掉它们。
-> 空壳存在的理由是：`init()` 会调用 `applyDockAtStartup()`，
-> 而 Task 4 的单元测试已经断言 `init()` 之后能正常跑完。
-> **Task 7 必须替换掉它们**——本任务结束时空壳留着不算完成。
+> 停靠（`undock` / `applyDockAtStartup` / 拖拽状态机）**不在本任务里**——
+> Task 7 会连同它们的调用点一起加进来。
+> 这里刻意不留空壳：空函数在代码里是「看起来实现了其实没有」的东西，
+> 审查时很难分辨它是占位还是遗漏。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 4: 把控制器接进主进程**
+
+`src/main/index.js`：
+
+1. 顶部 import 加：
+
+```js
+import { createSystemController } from './system.js';
+```
+
+2. `let pendingWrite = null;` 之后加：
+
+```js
+// 系统级开关的控制器（第六部分）。
+let system = null;
+```
+
+3. `app.whenReady()` 里，`win = createPetWindow({ rootDir: ROOT, settings, displays: currentDisplays() });` **之后**加：
+
+```js
+  // 系统控制器：必须在窗口建好之后创建——穿透模式要作用在窗口上。
+  system = createSystemController({
+    getWindow: () => win,
+    getDisplays: () => currentDisplays(),
+    getSettings: () => settings,
+    applySettings: (patch) => persist(patch),
+    onHotkeyAction: () => toggleVisible(),
+    onStateChanged: () => {},
+    onHotkeyStatus: (status) => {
+      // 设置窗口还没建时无处可发；它建好后会自己拉一次状态。
+      if (settingsWin && !settingsWin.isDestroyed()) {
+        settingsWin.webContents.send('pet:hotkeyStatus', status);
+      }
+    },
+    loginItem: {
+      set: (opts) => {
+        // E2E 不碰注册表：写注册表会污染跑测试的机器，
+        // 而且注册表项可能指向临时路径，清理不掉。
+        if (IS_E2E) return;
+        app.setLoginItemSettings(opts);
+      },
+      get: () => app.getLoginItemSettings(),
+    },
+    shortcuts: {
+      register: (acc, cb) => globalShortcut.register(acc, cb),
+      unregister: (acc) => globalShortcut.unregister(acc),
+      unregisterAll: () => globalShortcut.unregisterAll(),
+      isRegistered: (acc) => globalShortcut.isRegistered(acc),
+    },
+    getAppPath: () => app.getAppPath(),
+    isPackaged: app.isPackaged,
+    isE2E: IS_E2E,
+  });
+  system.init(settings);
+```
+
+4. 顶部 import 里的 electron 依赖加 `globalShortcut`：
+
+```js
+import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
+```
+
+5. `persist()` 里，在 `if (saveTimer) clearTimeout(saveTimer);` **之前**加：
+
+```js
+  // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
+  system?.applySettings?.(settings);
+```
+
+- [ ] **Step 5: 跑测试确认通过**
 
 Run: `node --test test/unit/system.test.js`
 Expected: PASS（6 条全过）。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
-git add src/main/system.js test/unit/system.test.js
+git add src/main/system.js src/main/index.js test/unit/system.test.js
 git commit -m "feat(system): 系统级开关的控制器骨架与开机自启"
 ```
 
@@ -1780,59 +1939,16 @@ export function menuTemplate(actions) {
 
 `src/main/index.js`：
 
-1. 导入：
+> 控制器本体已经在 Task 4 里创建并接进 `persist()` 了。
+> 本任务只加**菜单与快捷键动作**这一层。
+
+1. 把 Task 4 里创建控制器时的 `onStateChanged: () => {},` 改成：
 
 ```js
-import { createSystemController } from './system.js';
-```
-
-2. 在 `let pendingWrite = null;` 之后加：
-
-```js
-// 系统级开关的控制器（第六部分）。
-let system = null;
-```
-
-3. 在 `app.whenReady()` 里，`win = createPetWindow(...)` 之后加：
-
-```js
-  // 系统控制器：窗口建好之后才创建（穿透模式要作用在窗口上）。
-  system = createSystemController({
-    getWindow: () => win,
-    getDisplays: () => currentDisplays(),
-    getSettings: () => settings,
-    applySettings: (patch) => persist(patch),
-    onHotkeyAction: () => toggleVisible(),
     onStateChanged: () => refreshTrayMenu(),
-    loginItem: {
-      set: (opts) => {
-        // E2E 不碰注册表：写注册表会污染跑测试的机器，
-        // 而且注册表项可能指向临时路径，清理不掉。
-        if (IS_E2E) return;
-        app.setLoginItemSettings(opts);
-      },
-      get: () => app.getLoginItemSettings(),
-    },
-    shortcuts: {
-      register: (acc, cb) => globalShortcut.register(acc, cb),
-      unregister: (acc) => globalShortcut.unregister(acc),
-      unregisterAll: () => globalShortcut.unregisterAll(),
-      isRegistered: (acc) => globalShortcut.isRegistered(acc),
-    },
-    getAppPath: () => app.getAppPath(),
-    isPackaged: app.isPackaged,
-    isE2E: IS_E2E,
-  });
-  system.init(settings);
 ```
 
-4. 顶部 import 里加 `globalShortcut`：
-
-```js
-import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
-```
-
-5. 加托盘菜单重建函数（放在 `openSettings` 之后）：
+2. 加托盘菜单重建函数（放在 `openSettings` 之后）：
 
 ```js
 /**
@@ -1857,7 +1973,7 @@ function refreshTrayMenu() {
 }
 ```
 
-6. `toggleVisible` 改成：
+3. `toggleVisible` 改成：
 
 ```js
 function toggleVisible() {
@@ -1875,7 +1991,7 @@ function toggleVisible() {
 }
 ```
 
-7. `showContextMenu` 改成：
+4. `showContextMenu` 改成：
 
 ```js
 function showContextMenu() {
@@ -1892,14 +2008,7 @@ function showContextMenu() {
 }
 ```
 
-8. `persist()` 里，在 `if (saveTimer) clearTimeout(saveTimer);` **之前**加：
-
-```js
-  // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
-  system?.applySettings?.(settings);
-```
-
-9. `registerIpc({...})` 里加三个系统级通道的实现：
+5. `registerIpc({...})` 里加三个系统级通道的实现：
 
 ```js
     // —— 系统级开关（第六部分）——
@@ -1913,7 +2022,7 @@ function showContextMenu() {
 > `system` 在 `registerIpc` **之后**才创建，但这三个是箭头函数，
 > 调用时才求值——那时 `system` 已经有值了。
 
-10. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
+6. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
 
 ```js
   tray.setContextMenu(
@@ -1931,7 +2040,7 @@ function showContextMenu() {
   refreshTrayMenu();
 ```
 
-11. `app.on('before-quit', flushPendingSave);` 之后加：
+7. `app.on('before-quit', flushPendingSave);` 之后加：
 
 ```js
 // 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
@@ -2277,14 +2386,25 @@ Expected: FAIL —— `controller.dragStart` 不是函数。
   }
 ```
 
-- [ ] **Step 4: 把占位空壳删掉**
+- [ ] **Step 4: 补上两处调用点**
 
-Task 4 留下的这两行空壳删掉（真实现已在上面补上）：
+Task 4 里控制器没有停靠相关的调用点（那时还没有停靠）。本任务要补上：
+
+1. `init(settings)` 里，在 `if (settings.clickThrough) applyClickThrough(true);` 之后加：
 
 ```js
-  // —— 停靠（下面的实现随 Task 7 补齐；这里先留占位以便本任务自洽）——
-  function undock() {}
-  function applyDockAtStartup() {}
+    // 停靠：把窗口挪到藏起来的位置（settings.dock 记着上次藏在哪条边）。
+    applyDockAtStartup();
+```
+
+2. `applySettingsToSystem(settings)` 里，在 `if (Boolean(settings.clickThrough) !== ...)` 那段之后加：
+
+```js
+    // 「贴边隐藏」被关掉时，正在停靠的桌宠要立刻取回来：
+    // 不然用户关了开关、桌宠还赖在屏幕外，开关看起来没生效。
+    if (settings.dockEnabled === false && dock) {
+      undock();
+    }
 ```
 
 - [ ] **Step 5: 暴露给 index.js**
