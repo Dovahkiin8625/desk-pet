@@ -1792,15 +1792,36 @@ export function buildAccelerator(input) {
   },
 ```
 
-- [ ] **Step 7: 跑测试确认通过**
+- [ ] **Step 7: 把三个通道的实现接进主进程**
+
+`src/main/index.js` 的 `registerIpc({...})` 里加：
+
+```js
+    // —— 系统级开关（第六部分）——
+    // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
+    getSystemState: () => system?.getState?.() || null,
+    // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
+    recordHotkey: () => system?.startRecording?.() || false,
+    cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
+```
+
+> `system` 在 `registerIpc` **之后**才创建，但这三个是箭头函数，
+> 调用时才求值——那时 `system` 已经有值了。
+>
+> 这三个实现**必须与 `ipc.js` 里的通道注册在同一个任务里**：
+> 只注册通道而不给实现，`registerIpc` 解构出来的是 `undefined`，
+> 通道一旦被调用就会抛「getSystemState is not a function」。
+
+- [ ] **Step 8: 跑测试确认通过**
 
 Run: `node --test test/unit/system.test.js`
-Expected: PASS（4 + 10 = 14 条全过）。
+Expected: PASS（6 + 11 = 17 条全过）。
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
-git add src/main/system.js src/main/ipc.js src/preload/index.cjs test/unit/system.test.js
+git add src/main/system.js src/main/ipc.js src/preload/index.cjs src/main/index.js \
+        test/unit/system.test.js
 git commit -m "feat(hotkey): 全局快捷键的录制、注册与冲突提示"
 ```
 
@@ -2054,21 +2075,11 @@ function showContextMenu() {
 }
 ```
 
-5. `registerIpc({...})` 里加三个系统级通道的实现：
+> 三个系统级 IPC 通道的实现（`getSystemState` / `recordHotkey` /
+> `cancelHotkeyRecording`）**在 Task 5 就接好了**——通道注册与实现必须同任务落地，
+> 否则中间那个提交里通道引用的是未定义的绑定。
 
-```js
-    // —— 系统级开关（第六部分）——
-    // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
-    getSystemState: () => system?.getState?.() || null,
-    // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
-    recordHotkey: () => system?.startRecording?.() || false,
-    cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
-```
-
-> `system` 在 `registerIpc` **之后**才创建，但这三个是箭头函数，
-> 调用时才求值——那时 `system` 已经有值了。
-
-6. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
+5. 托盘菜单的构建改成走 `refreshTrayMenu()`：把
 
 ```js
   tray.setContextMenu(
@@ -2086,7 +2097,7 @@ function showContextMenu() {
   refreshTrayMenu();
 ```
 
-7. `app.on('before-quit', flushPendingSave);` 之后加：
+6. `app.on('before-quit', flushPendingSave);` 之后加：
 
 ```js
 // 退出时注销全局快捷键：不注销的话这个组合会一直被占着，
