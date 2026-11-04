@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('panel', {
   reportSize: (height) => ipcRenderer.send('panel:size', { height }),
   // 打开一个插件（点结果或按回车）。
   open: (pluginId) => ipcRenderer.send('panel:open', pluginId),
+  // 把插件分离出去：`window` = 独立窗口，`widget` = 桌面小部件。
+  detach: (pluginId, mode) =>
+    ipcRenderer.send('panel:detach', { pluginId: String(pluginId || ''), mode: String(mode || '') }),
   // 本机程序清单：一次性拿下来，页面本地做模糊搜索。
   //
   // 用 invoke 而不是 send：主进程要等索引扫完才能给清单，

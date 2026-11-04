@@ -11,7 +11,11 @@
 <body>
   <div id="stage"></div>
   <script src="/node_modules/pixi.js/dist/browser/pixi.js"></script>
-  <script src="/node_modules/live2dcubismcore/live2dcubismcore.min.js"></script>
+  <!-- Cubism Core（Cubism 4 / 5 的运行时核心）。
+       用的是官方 SDK 5-r.5 里的那份（见 vendor/live2d/），不是 npm 上那个
+       live2dcubismcore@1.0.2 —— 后者是 Cubism 4.2.2，moc3 只认到格式 4，
+       官方样例里的 Mao（格式 5）与 Ren（格式 6）在它上面根本加载不了。 -->
+  <script src="/vendor/live2d/live2dcubismcore.min.js"></script>
 
   <!-- Cubism 2（老格式模型，如 DSR50）需要两样东西：
        live2d.min.js 是老 SDK（Live2D 2.1），提供 Live2DModelWebGL /
@@ -22,7 +26,10 @@
        老模型加载时直接用它（见 live2dRuntime.js）。 -->
   <script src="/node_modules/live2dcubismcore/live2d.min.js"></script>
   <script src="/node_modules/pixi-live2d-display/dist/cubism2.min.js"></script>
-  <script>window.__live2dCubism2 = { Live2DModel: PIXI.live2d.Live2DModel };</script>
+  <!-- config 也要存：静音模型自带的声音时要用它
+       （库在 startMotion() 里同步读 config.sound，见 renderer/main.js）。
+       Cubism 4 的 bundle 加载后会覆盖 PIXI.live2d，两份 config 各管各的。 -->
+  <script>window.__live2dCubism2 = { Live2DModel: PIXI.live2d.Live2DModel, config: PIXI.live2d.config };</script>
 
   <script src="/node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
   <script type="module" src="/src/renderer/main.js"></script>

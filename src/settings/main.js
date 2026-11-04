@@ -1,4 +1,5 @@
 import { DEFAULT_VOLUME } from '../shared/volume.js';
+import { parseTapLines } from '../shared/tapVoice.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
@@ -10,13 +11,14 @@ const opacityVal = document.getElementById('opacityVal');
 const status = document.getElementById('status');
 
 // 桌面助理
+//
+// 剪贴板、天气、过热提醒的开关**不在这里**：它们是插件的配置，
+// 归各自的插件页面管（面板里搜插件名就能打开）。
+// 这里既不显示它们，也**不把它们写回去**——
+// 补丁里带上一个旧值，用户在插件页面改过的设置就被这里悄悄覆盖了。
 const chimeBox = document.getElementById('chime');
 const greetingBox = document.getElementById('greeting');
 const soundBox = document.getElementById('sound');
-const clipboardBox = document.getElementById('clipboard');
-const hotAlertBox = document.getElementById('hotAlert');
-const weatherEnabledBox = document.getElementById('weatherEnabled');
-const weatherCityInput = document.getElementById('weatherCity');
 
 // 语音
 const ttsEnabledBox = document.getElementById('ttsEnabled');
@@ -30,6 +32,11 @@ const apiKeyInput = document.getElementById('apiKey');
 const saveKeyBtn = document.getElementById('saveKey');
 const clearKeyBtn = document.getElementById('clearKey');
 const keyStatus = document.getElementById('keyStatus');
+
+// 点桌宠时说的话
+const tapTalkEnabledBox = document.getElementById('tapTalkEnabled');
+const tapTalkModelSoundBox = document.getElementById('tapTalkModelSound');
+const tapTalkLinesInput = document.getElementById('tapTalkLines');
 
 // 对话
 const llmEnabledBox = document.getElementById('llmEnabled');
@@ -147,8 +154,8 @@ function setRangeFill(input) {
 // 左边是目录，右边一次只显示一节。
 // ---------------------------------------------------------------------------
 
-/** 六个分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['appearance', 'assistant', 'voice', 'chat', 'memory', 'system'];
+/** 七个分区：目录项、面板、摘要都用同一个 key。 */
+const SECTION_KEYS = ['appearance', 'assistant', 'voice', 'chat', 'memory', 'plugins', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -186,6 +193,8 @@ function activateSection(key, { focus = false } = {}) {
   if (focus) navTabs.get(key).focus();
   // 事实列表会过期：在插件面板里聊一句，桌宠就可能多记住一条。
   if (key === 'memory') void refreshFacts();
+  // 插件清单也会过期：用户可能刚装了插件，或者在别处关了哪个。
+  if (key === 'plugins') void refreshPlugins();
   // 系统状态也会过期：开机自启可能写注册表失败了，快捷键可能被别人占了。
   if (key === 'system') void refreshSystemState();
 }
@@ -222,8 +231,8 @@ syncOrientation();
 // 目录因此兼作一块仪表盘：不进每一节，也看得出整个应用现在是什么状态。
 // ---------------------------------------------------------------------------
 
-/** 助理那六个开关。 */
-const ASSISTANT_TOGGLES = [chimeBox, greetingBox, soundBox, clipboardBox, hotAlertBox, weatherEnabledBox];
+/** 助理那三个开关（插件的开关在插件页面里，这里不算）。 */
+const ASSISTANT_TOGGLES = [chimeBox, greetingBox, soundBox];
 
 function setSummary(key, text) {
   const el = navSummaries.get(key);
@@ -293,15 +302,29 @@ function setModel(id) {
 // 内置模型删不得，那是程序的一部分。
 let knownModels = [];
 
-/** 当前选中的形象能不能删：只有导入的能删。 */
+/**
+ * 当前选中的形象能不能删。
+ *
+ * 导入的与预制的**都能删**，只是后果不同：导入的删模型文件，
+ * 预制的只是从形象列表里移除（模型文件仍在程序目录中）。
+ * 确认框（主进程弹的原生框）会把区别说清楚。
+ *
+ * 列表里只剩一个形象时不能删：一个都没有的话桌宠窗口里什么也画不出来。
+ */
 function updateDeleteEnabled() {
   const id = modelSelect.value;
   const entry = knownModels.find((m) => m.id === id);
-  const removable = entry?.source === 'user';
+  const removable = !!entry && knownModels.length > 1;
   deleteModelBtn.disabled = !removable;
-  deleteModelBtn.title = removable
-    ? `删除「${entry.name}」`
-    : '内置模型不能删除——它是程序的一部分。';
+  if (!entry) {
+    deleteModelBtn.title = '没有选中的形象。';
+  } else if (knownModels.length <= 1) {
+    deleteModelBtn.title = '至少要保留一个形象。';
+  } else if (entry.source === 'user') {
+    deleteModelBtn.title = `删除「${entry.name}」（会删掉模型文件）`;
+  } else {
+    deleteModelBtn.title = `移除「${entry.name}」（从列表中去掉，模型文件仍保留）`;
+  }
 }
 
 /**
@@ -366,15 +389,15 @@ function applyAssistantState(state) {
   chimeBox.checked = Boolean(state.chime?.enabled);
   greetingBox.checked = Boolean(state.greeting?.enabled);
   soundBox.checked = Boolean(state.sound?.enabled);
-  clipboardBox.checked = Boolean(state.clipboard?.enabled);
-  hotAlertBox.checked = Boolean(state.hotAlert?.enabled);
-  weatherEnabledBox.checked = Boolean(state.weather?.enabled);
-  weatherCityInput.value = state.weather?.city || '';
   ttsEnabledBox.checked = Boolean(state.tts?.enabled);
   voiceInput.value = state.tts?.voiceId || '';
   speedInput.value = String(state.tts?.speed ?? 1);
   speedVal.textContent = Number(state.tts?.speed ?? 1).toFixed(2);
   setRangeFill(speedInput);
+  // 点桌宠时说的话。
+  tapTalkEnabledBox.checked = Boolean(state.tapTalk?.enabled);
+  tapTalkModelSoundBox.checked = Boolean(state.tapTalk?.modelSound);
+  tapTalkLinesInput.value = (state.tapTalk?.lines || []).join('\n');
   // 总音量：存在 assistant.json 的 sound.volume 里，不在 settings.json。
   updateVolume(state.sound?.volume ?? DEFAULT_VOLUME);
 
@@ -414,13 +437,19 @@ function assistantPatchFromControls() {
     chime: { enabled: chimeBox.checked },
     greeting: { enabled: greetingBox.checked },
     sound: { enabled: soundBox.checked },
-    clipboard: { enabled: clipboardBox.checked },
-    hotAlert: { enabled: hotAlertBox.checked },
-    weather: { enabled: weatherEnabledBox.checked, city: weatherCityInput.value.trim() },
+    // 剪贴板 / 天气 / 过热提醒**故意不在这里**：
+    // 它们是插件的配置，由插件页面自己管。
+    // 这里写回一份旧值，用户在插件页面改过的设置就被覆盖了。
     tts: {
       enabled: ttsEnabledBox.checked,
       voiceId: voiceInput.value.trim(),
       speed: Number(speedInput.value),
+    },
+    tapTalk: {
+      enabled: tapTalkEnabledBox.checked,
+      modelSound: tapTalkModelSoundBox.checked,
+      // 台词：一行一句。解析规则与主进程一致（见 shared/tapVoice.js）。
+      lines: parseTapLines(tapTalkLinesInput.value),
     },
     llm: {
       enabled: llmEnabledBox.checked,
@@ -463,21 +492,32 @@ function persistAssistantPrefs() {
 }
 
 /** 每个勾选框的变更都立刻生效。 */
-for (const box of [chimeBox, greetingBox, soundBox, clipboardBox, hotAlertBox, weatherEnabledBox]) {
+for (const box of [chimeBox, greetingBox, soundBox]) {
   box.addEventListener('change', () => {
     persistAssistantPrefs();
   });
 }
-
-weatherCityInput.addEventListener('change', () => {
-  persistAssistantPrefs();
-});
 
 ttsEnabledBox.addEventListener('change', () => {
   persistAssistantPrefs();
 });
 
 voiceInput.addEventListener('change', () => {
+  persistAssistantPrefs();
+});
+
+// —— 点桌宠时说的话 ——
+for (const box of [tapTalkEnabledBox, tapTalkModelSoundBox]) {
+  box.addEventListener('change', () => {
+    persistAssistantPrefs();
+  });
+}
+
+// 台词是文本框：失焦或按下回车时才算数。
+//
+// 「input」事件每敲一个字就存一次盘——文本框里常有中文输入法，
+// 拼音过程中会存下一堆半成品，白白写磁盘。
+tapTalkLinesInput.addEventListener('change', () => {
   persistAssistantPrefs();
 });
 
@@ -650,6 +690,88 @@ clearFactsBtn.addEventListener('click', async () => {
     factsEpoch += 1;
   }
 });
+
+// ---------------------------------------------------------------------------
+// 插件分区
+//
+// 「装了什么、开着哪些」是**应用级别**的开关，所以归设置窗口管。
+// 插件**自己**的偏好（剪贴板助手的开关、天气的城市……）在插件页面里——
+// 各管各的，这里不重复一份。
+// ---------------------------------------------------------------------------
+
+const pluginListEl = document.getElementById('pluginList');
+
+/** 画插件清单。 */
+function renderPlugins(list) {
+  pluginListEl.textContent = '';
+  let on = 0;
+  for (const p of list) {
+    if (p.enabled) on += 1;
+
+    const li = document.createElement('li');
+    li.className = p.enabled ? 'plugin-row' : 'plugin-row off';
+    // 带上 id：自动化要能指着某个插件点（它也方便用户用开发者工具查）。
+    li.dataset.pluginId = p.id;
+
+    const icon = document.createElement('span');
+    icon.className = 'p-icon';
+    icon.textContent = p.icon || '•';
+
+    const text = document.createElement('span');
+    text.className = 'p-text';
+    const name = document.createElement('span');
+    name.className = 'p-name';
+    name.textContent = p.name || p.id;
+    const desc = document.createElement('span');
+    desc.className = 'p-desc';
+    desc.textContent = p.description || '';
+    text.append(name, desc);
+
+    // 「内置 / 用户」：用户得一眼看出哪个是自己装的。
+    const src = document.createElement('span');
+    src.className = 'p-src';
+    src.textContent = p.source === 'user' ? '用户' : '内置';
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = Boolean(p.enabled);
+    box.title = p.enabled ? '关掉它' : '打开它';
+    box.addEventListener('change', async () => {
+      // 勾选框已经动了：界面先跟上，别等 IPC 回来才变。
+      li.classList.toggle('off', !box.checked);
+      try {
+        const result = await window.pet.setPluginEnabled(p.id, box.checked);
+        if (!result || result.ok !== true) {
+          throw new Error(result?.message || '主进程拒绝了这次开关');
+        }
+        show(box.checked ? `「${p.name}」开起来了` : `「${p.name}」关掉了`);
+        // 重画一遍：关掉的插件它的窗口也跟着关了，状态要从主进程重新拉。
+        await refreshPlugins();
+      } catch (err) {
+        // 没生效就把勾选框拨回去：界面不能显示一个没发生的状态。
+        box.checked = !box.checked;
+        li.classList.toggle('off', !box.checked);
+        show(`开关失败：${err?.message || err}`, 'error');
+      }
+    });
+
+    li.append(icon, text, src, box);
+    pluginListEl.append(li);
+  }
+  setSummary('plugins', `${on}/${list.length}`);
+}
+
+/** 重新拉一次插件清单。 */
+async function refreshPlugins() {
+  let list = null;
+  try {
+    list = (await window.pet.listPlugins?.()) || [];
+  } catch (err) {
+    console.warn('[desk-pet] 插件清单拉取失败：', err?.message);
+    return;
+  }
+  renderPlugins(list);
+}
 
 // ---------------------------------------------------------------------------
 // 系统分区
@@ -967,6 +1089,8 @@ async function init() {
   applySystemState(systemState);
   showKeyStatus(tts);
   showLlmKeyStatus(llm);
+  // 插件清单：目录上的「N/M」摘要要一开始就对。
+  await refreshPlugins();
   refreshNavSummaries();
   // 落在默认分区（外观）。roving tabindex 也在这一步定下来。
   activateSection('appearance');
@@ -1060,8 +1184,8 @@ importModelBtn.addEventListener('click', async () => {
 deleteModelBtn.addEventListener('click', async () => {
   const id = modelSelect.value;
   const entry = knownModels.find((m) => m.id === id);
-  if (!entry || entry.source !== 'user') {
-    show('只有导入的模型可以删除。', 'error');
+  if (!entry) {
+    show('没有选中的形象。', 'error');
     return;
   }
   deleteModelBtn.disabled = true;
@@ -1086,7 +1210,7 @@ deleteModelBtn.addEventListener('click', async () => {
   // 主进程已经把它切走了——它把现在该选哪个一并带回来了。
   await refreshModelOptions(result.modelId);
   refreshNavSummaries();
-  show(`已删除 ${result.name || ''}`);
+  show(entry.source === 'user' ? `已删除 ${result.name || ''}` : `已移除 ${result.name || ''}`);
 });
 
 // 主进程导入/删除之后会通知：设置窗口据此刷新下拉框。

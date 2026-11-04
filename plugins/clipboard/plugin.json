@@ -1,0 +1,13 @@
+{
+  "id": "clipboard",
+  "name": "剪贴板",
+  "icon": "📋",
+  "description": "最近复制的内容（不落盘）",
+  "keywords": ["clipboard", "copy", "jiban", "jb", "剪贴板", "复制"],
+  "window": {
+    "title": "剪贴板",
+    "width": 340,
+    "height": 240,
+    "refreshMs": 0
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "weather",
+  "name": "天气",
+  "icon": "🌤",
+  "description": "当前天气与定时播报",
+  "keywords": ["weather", "tianqi", "tq", "天气", "气温", "下雨", "温度"],
+  "window": {
+    "title": "天气",
+    "width": 320,
+    "height": 320,
+    "refreshMs": 0
+  }
+}

@@ -8,6 +8,7 @@ import {
   SEARCH_VIEW_HEIGHT,
   MAX_VIEW_HEIGHT,
 } from '../shared/panel.js';
+import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin, builtinPage, builtinAction } from './builtins.js';
 
 /**
  * 插件面板：桌宠的「uTools 式」入口。
@@ -47,6 +48,8 @@ export function createPanelController({
   getDisplays,
   plugins,
   apps,
+  assistant,
+  openSettings,
   onChat,
 }) {
   let win = null;
@@ -67,6 +70,17 @@ export function createPanelController({
   function send(channel, payload) {
     if (!win || win.isDestroyed()) return;
     win.webContents.send(channel, payload);
+  }
+
+  /**
+   * 搜索清单：内置功能 + 磁盘上的插件。
+   *
+   * 内置功能（设置、聊天记录）与插件**摆在同一张清单里**：
+   * 它们都是「面板里能搜到、能打开的东西」，用户不该为它们分两套心智。
+   * 区别只在能不能被关掉——内置的不能。
+   */
+  function searchList() {
+    return [...builtinFeatures(), ...plugins.list()];
   }
 
   /** 把当前视图发给页面。 */
@@ -205,6 +219,11 @@ export function createPanelController({
   /** 打开一个插件。 */
   async function openPlugin(pluginId) {
     const token = ++requestSeq;
+    // 内置功能不走插件宿主：它们是程序自带的，不是插件。
+    if (isBuiltin(pluginId)) {
+      openBuiltin(pluginId);
+      return;
+    }
     const page = await plugins.open(pluginId, update);
     // 期间用户又点了别的：这一次的结果作废。
     if (token !== requestSeq) return;
@@ -217,9 +236,38 @@ export function createPanelController({
     sendView(makePluginView(page));
   }
 
+  /**
+   * 打开一个内置功能。
+   *
+   * 「设置」开的是**另一个窗口**（设置窗口）：面板这时候就该收起来，
+   * 否则两块界面叠在一起，用户不知道该看哪儿。
+   * 其余内置功能（聊天记录）就画在面板里。
+   */
+  function openBuiltin(pluginId) {
+    if (pluginId === BUILTIN_SETTINGS) {
+      hide();
+      openSettings?.();
+      return;
+    }
+    const page = builtinPage(pluginId, assistant);
+    if (!page) {
+      hide();
+      return;
+    }
+    currentPluginId = pluginId;
+    sendView(makePluginView(page));
+  }
+
   /** 处理插件里的一个动作。 */
   async function handleAction(pluginId, actionId, value) {
     const token = ++requestSeq;
+    if (isBuiltin(pluginId)) {
+      const page = builtinAction(pluginId, actionId, assistant);
+      if (!page) return;
+      currentPluginId = pluginId;
+      sendView(makePluginView(page));
+      return;
+    }
     const page = await plugins.action(pluginId, actionId, value, update);
     if (token !== requestSeq) return;
     if (!page) {
@@ -235,7 +283,7 @@ export function createPanelController({
     if (!win || event.sender !== win.webContents) return;
     ready = true;
     // 清单要先发：页面要靠它做本地模糊搜索。
-    send('panel:plugins', plugins.list());
+    send('panel:plugins', searchList());
     sendView(pendingView || makeSearchView());
     pendingView = null;
     reveal();
@@ -273,6 +321,12 @@ export function createPanelController({
     send('panel:appsChanged', list);
   });
 
+  // 插件清单变了（在设置窗口里开关了插件）：
+  // 把新清单推给页面，搜索结果跟着变。
+  plugins.onChange?.(() => {
+    send('panel:plugins', searchList());
+  });
+
   // 打开某个插件（点结果或按回车）。
   ipcMain.on('panel:open', (event, pluginId) => {
     if (!win || event.sender !== win.webContents) return;
@@ -281,6 +335,20 @@ export function createPanelController({
       // 而面板该继续能用。
       console.warn('[desk-pet] 打开插件失败：', err?.message || err);
     });
+  });
+
+  // 把插件分离出去：开一个独立窗口，或者变成桌面小部件。
+  //
+  // 面板这时就该收起来了：插件已经在自己的窗口里了，
+  // 两个界面抢同一件事只会让人不知道该看哪儿。
+  ipcMain.on('panel:detach', (event, payload) => {
+    if (!win || event.sender !== win.webContents) return;
+    const pluginId = String(payload?.pluginId || '');
+    const mode = String(payload?.mode || 'window');
+    const result = plugins.openWindow?.(pluginId, mode);
+    // 开不出来（插件不支持这种形态）：面板留着，别把人踢回搜索。
+    if (!result || result.ok === false) return;
+    hide();
   });
 
   // 插件里的一个动作。

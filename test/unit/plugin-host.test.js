@@ -1,0 +1,320 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  validateManifest,
+  isSafeRelativePath,
+  PLUGIN_ID_RE,
+  PLUGIN_WINDOW_MODE,
+} from '../../src/shared/plugin.js';
+import { discoverPlugins, loadPluginFactory } from '../../src/main/plugins/loader.js';
+import { createPluginHost } from '../../src/main/plugins/host.js';
+
+/**
+ * 插件的测试分两层：
+ *
+ * 1. **清单**（纯函数）：什么样的 plugin.json 才算数；
+ * 2. **宿主**（真读磁盘）：摆一个插件目录进去，它该被认出来、
+ *    该出现在清单里、该能打开。
+ *
+ * 宿主这一层不碰 Electron：它只管插件目录与页面描述，
+ * 窗口那部分（src/main/plugins/window.js）要 Electron，跑不了。
+ */
+
+/**
+ * 摆一个插件目录。
+ *
+ * 摆在 `<root>/plugins/<id>/` 下——内置插件就在项目根的 plugins/ 里，
+ * 宿主的发现逻辑找的正是那个位置。
+ */
+async function makePlugin(root, id, manifest, main) {
+  const dir = join(root, 'plugins', id);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'plugin.json'), JSON.stringify(manifest, null, 2), 'utf8');
+  if (main) await writeFile(join(dir, 'main.js'), main, 'utf8');
+  return dir;
+}
+
+/** 一个假的助理：插件读写状态都走它。 */
+function fakeAssistant() {
+  return {
+    todosView: () => ({ items: [{ id: '1', label: '写测试', done: false }], pending: 1, total: 1 }),
+    addTodo: (text) => ({ ok: true, message: `加好了：${text}` }),
+    toggleTodo: () => ({ ok: true, message: '完成啦' }),
+    clearDoneTodos: () => ({ ok: true, message: '清掉了' }),
+  };
+}
+
+test('清单：id 只能是小写字母、数字与连字符', () => {
+  assert.ok(PLUGIN_ID_RE.test('todos'));
+  assert.ok(PLUGIN_ID_RE.test('my-plugin-2'));
+  assert.ok(!PLUGIN_ID_RE.test('Todos'));
+  assert.ok(!PLUGIN_ID_RE.test('待办'));
+  assert.ok(!PLUGIN_ID_RE.test('-todos'));
+  assert.ok(!PLUGIN_ID_RE.test('to dos'));
+});
+
+test('清单：缺 id 或 name 一律不通过', () => {
+  assert.equal(validateManifest({ name: '待办' }).ok, false);
+  assert.equal(validateManifest({ id: 'todos' }).ok, false);
+  assert.equal(validateManifest(null).ok, false);
+  assert.equal(validateManifest([]).ok, false);
+});
+
+test('清单：入口与页面不能跑到插件目录外面', () => {
+  assert.ok(isSafeRelativePath('main.js'));
+  assert.ok(isSafeRelativePath('pages/widget.html'));
+  assert.ok(!isSafeRelativePath('../evil.js'));
+  assert.ok(!isSafeRelativePath('a/../../evil.js'));
+  assert.ok(!isSafeRelativePath('/etc/passwd'));
+  assert.ok(!isSafeRelativePath('C:\\evil.js'));
+
+  const out = validateManifest({ id: 'x', name: 'X', entry: '../../evil.js' });
+  assert.equal(out.ok, false);
+  assert.match(out.errors.join('；'), /entry/);
+});
+
+test('清单：没写的东西用默认值补齐', () => {
+  const { ok, value } = validateManifest({ id: 'todos', name: '待办' });
+  assert.ok(ok);
+  assert.equal(value.entry, 'main.js');
+  assert.equal(value.icon, '•');
+  assert.deepEqual(value.keywords, []);
+  // 没写 `window` / `widget` 段 = 没有这两种形态（不是「有，默认值」）。
+  assert.equal(value.window, null);
+  assert.equal(value.widget, null);
+});
+
+test('清单：写了 window 段才有独立窗口', () => {
+  const { ok, value } = validateManifest({
+    id: 'todos',
+    name: '待办',
+    window: { title: '待办', width: 300 },
+  });
+  assert.ok(ok);
+  assert.equal(value.window.mode, PLUGIN_WINDOW_MODE.WINDOW);
+  assert.equal(value.window.width, 300);
+  assert.equal(value.widget, null);
+});
+
+test('清单：窗口尺寸会被夹到合理范围', () => {
+  const { value } = validateManifest({
+    id: 'x',
+    name: 'X',
+    window: { width: 999999, height: 1 },
+  });
+  assert.ok(value.window.width <= 1200);
+  assert.ok(value.window.height >= 120);
+});
+
+test('发现：目录里没有清单就不是插件', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await mkdir(join(root, 'not-a-plugin'), { recursive: true });
+    await writeFile(join(root, 'loose.txt'), 'x', 'utf8');
+    const found = await discoverPlugins([{ dir: join(root, 'plugins'), source: 'bundled' }]);
+    assert.deepEqual(found, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('发现：清单坏了的插件被跳过，好的照常加载', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(root, 'broken', { id: 'broken' }, 'export default () => ({});');
+    await makePlugin(
+      root,
+      'good',
+      { id: 'good', name: '好的', keywords: ['hao'] },
+      'export default () => ({ page: () => null });'
+    );
+    const found = await discoverPlugins([{ dir: join(root, 'plugins'), source: 'bundled' }]);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].manifest.id, 'good');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('发现：目录名与清单里的 id 不一致时不认', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(
+      root,
+      'dirname',
+      { id: 'other', name: '别的' },
+      'export default () => ({ page: () => null });'
+    );
+    const found = await discoverPlugins([{ dir: join(root, 'plugins'), source: 'bundled' }]);
+    assert.deepEqual(found, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('加载：入口必须导出默认函数', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(root, 'noexport', { id: 'noexport', name: '没有导出' }, 'export const x = 1;');
+    const found = await discoverPlugins([{ dir: join(root, 'plugins'), source: 'bundled' }]);
+    await assert.rejects(() => loadPluginFactory(found[0]));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：插件被认出来，清单里有它', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'todos',
+      { id: 'todos', name: '待办', keywords: ['todo'], window: { title: '待办' } },
+      `export default function create() {
+         return {
+           page(ctx) {
+             return ctx.ui.makePage({
+               pluginId: 'todos',
+               title: '待办',
+               blocks: [ctx.ui.textBlock(ctx.assistant.todosView().total + ' 件事')],
+             });
+           },
+           action(ctx, actionId, value) {
+             if (actionId === 'add') ctx.assistant.addTodo(value);
+             return this.page(ctx);
+           },
+         };
+       }`
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const list = host.list();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, 'todos');
+    assert.equal(list[0].name, '待办');
+    // 清单里写了 window 段 → 面板上就该有「在新窗口打开」这个按钮。
+    assert.equal(list[0].canDetach, true);
+    assert.equal(list[0].hasWidget, false);
+
+    const page = await host.open('todos');
+    assert.equal(page.title, '待办');
+    assert.equal(page.blocks[0].text, '1 件事');
+
+    const after = await host.action('todos', 'add', '新的');
+    assert.equal(after.title, '待办');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：关掉的插件不出现在清单里，也打不开', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'todo',
+      { id: 'todo', name: '待办' },
+      'export default () => ({ page: () => ({ pluginId: "todo", title: "待办" }) });'
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+    assert.equal(host.list().length, 1);
+
+    await host.setEnabled('todo', false);
+    assert.equal(host.list().length, 0);
+    assert.equal(await host.open('todo'), null);
+    // listAll 仍然看得见它——设置窗口的「插件」分区要知道它还在。
+    assert.equal(host.listAll()[0].enabled, false);
+
+    await host.setEnabled('todo', true);
+    assert.equal(host.list().length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：插件清单变了会通知监听者', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'todo',
+      { id: 'todo', name: '待办' },
+      'export default () => ({ page: () => null });'
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const seen = [];
+    host.onChange((list) => seen.push(list.length));
+    await host.setEnabled('todo', false);
+    assert.deepEqual(seen, [0]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：插件自己的数据（窗口/小部件用）与动作', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'stat',
+      { id: 'stat', name: '状态', widget: { page: 'widget.html', refreshMs: 1000 } },
+      `export default function create() {
+         return {
+           page: () => null,
+           data: () => ({ cpu: 42 }),
+           tick: () => ({ cpu: 43 }),
+           act: (ctx, actionId, payload) => ({ actionId, payload }),
+         };
+       }`
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    assert.deepEqual(await host.data('stat'), { cpu: 42 });
+    assert.deepEqual(await host.tick('stat'), { cpu: 43 });
+    assert.deepEqual(await host.act('stat', 'click', { a: 1 }), { actionId: 'click', payload: { a: 1 } });
+    // 清单里的 widget 段：宽度被夹住，页面路径留着。
+    const spec = host.spec('stat', PLUGIN_WINDOW_MODE.WIDGET);
+    assert.equal(spec.page, 'widget.html');
+    assert.equal(spec.refreshMs, 1000);
+    assert.ok(spec.width > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});

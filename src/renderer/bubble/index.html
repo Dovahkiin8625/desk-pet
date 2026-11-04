@@ -5,18 +5,30 @@
   <title>桌宠气泡</title>
   <style>
     :root { color-scheme: light; }
-    html, body {
+    html {
       margin: 0; padding: 0;
       background: transparent;
       overflow: hidden;
-      /* 气泡靠近屏幕边缘时不要被裁掉：给阴影留出余量 */
-      padding: 6px;
+    }
+    body {
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
       box-sizing: border-box;
+      /* 气泡靠近屏幕边缘时不要被裁掉：给影子与小尾巴留出余量。
+         这一圈留白**只加在 body 上**：html 与 body 都加的话，
+         留白就是两圈，而窗口是按内容尺寸开出来的——
+         多出来的那一圈会把气泡挤到窗口边上，小尾巴与影子就被切掉。 */
+      padding: 16px;
     }
     /* 宽度按内容走：窗口是主进程按内容尺寸摆出来的，
-       这里若被窗口宽度限制住，量出来的尺寸就是错的。 */
+       这里若被窗口宽度限制住，量出来的尺寸就是错的。
+
+       用 block 而不是 inline-block：行盒的高度是按基线与行撑算出来的，
+       用 block 就是气泡本身的高度——窗口是按内容尺寸开的，
+       这个差别会变成留白里少掉的几像素。 */
     #bubble {
-      display: inline-block;
+      display: block;
       width: max-content;
       max-width: 340px;
       box-sizing: border-box;
@@ -25,7 +37,8 @@
       border-radius: 16px;
       background: #fffdf8;
       border: 1px solid #d8d2c4;
-      box-shadow: 0 6px 18px rgba(40, 34, 24, 0.28);
+      /* 影子的模糊半径要小于留白：放不下就会被窗口边削掉半截。 */
+      box-shadow: 0 4px 10px rgba(40, 34, 24, 0.28);
       font: 14px/1.65 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
       color: #2b2a26;
       -webkit-user-select: text;

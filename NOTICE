@@ -4,24 +4,30 @@
 
 ## Live2D Cubism Core
 
-- 来源：npm 包 `live2dcubismcore@1.0.2`（内含 Live2D Cubism Core for Web）
+- 来源：官方 **Cubism SDK for Web 5-r.5** 的 `Core/` 目录
+  （`Core/live2dcubismcore.min.js`，即 Cubism Core 6.0.1），
+  本仓库把它放在 `vendor/live2d/` 下（连同 SDK 自带的 `LICENSE.md`
+  与 `RedistributableFiles.txt`）
 - 版权：© Live2D Inc.
 - 许可：Live2D Proprietary Software License Agreement
   <https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html>
 - 说明：Cubism Core 为专有许可代码，**不是** MIT 许可。个人使用与内部分发无碍；
   若要公开分发本项目或其编译产物，必须先阅读并履行上述许可条款。
-- **npm 包的 `package.json` 写着 `"license": "ISC"`，那是打包元数据错误。**
-  以文件自带的许可声明为准：`live2dcubismcore.min.js` 的文件头自述为
-  Live2D 专有许可协议下的 "Redistributable Code"（可再分发代码），
-  该声明约束本项目的使用与分发。
 - **它是随包分发的运行时组件，不只是一个 npm 依赖**：渲染层在运行时
-  直接从 `node_modules` 加载它（见 `src/renderer/index.html`），
+  直接从 `vendor/live2d/` 加载它（见 `src/renderer/index.html`），
   因此随本项目一同分发即构成对 Cubism Core 的再分发，
   必须履行上述专有许可条款。
+- **为什么不是 npm 上的 `live2dcubismcore`**：那个包（1.0.2）是
+  Cubism 4.2.2，moc3 只认到格式 4；官方样例里的 Mao（格式 5）与
+  Ren（格式 6）在它上面加载不了。SDK 5-r.5 自带的 Core 6.0.1 才行。
+- npm 包 `live2dcubismcore@1.0.2` 仍然保留，但只用它的**另一个**文件：
+  `live2d.min.js`（Live2D 2.1 老 SDK），Cubism 2 格式的老模型
+  （如 DSR50）需要它来读**文本**格式的动作文件。
 
-## Live2D 官方样例模型（Haru、Natori）
+## Live2D 官方样例模型（Haru、Hiyori、Mao、Mark、Natori、Ren、Rice、Wanko）
 
 - 来源：<https://github.com/Live2D/CubismWebSamples> 的 `Samples/Resources/` 目录
+  （与官方 Cubism SDK for Web 5-r.5 自带的 `Samples/Resources/` 一致）
 - 版权：© Live2D Inc.
 - 许可：Live2D 官方样例素材条款，**限非商业用途**
 - 说明：本仓库不提交这些二进制资源，由 `npm run setup` 自动获取。

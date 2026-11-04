@@ -45,3 +45,27 @@ export async function writeJson(dir, fileName, value) {
   }
   return value;
 }
+
+/**
+ * 原子写一个二进制文件。
+ *
+ * 与 writeJson 同一个道理，但写的是字节（TTS 缓存的 mp3）。
+ *
+ * 缓存文件被读走半截的后果比设置文件更糟：
+ * 设置文件读坏了会退回默认值，用户改一改就好了；
+ * **半截的 mp3 会被当成有效缓存一直用下去**——
+ * 桌宠那句话从此永远是哑的，而且没有任何地方会报错。
+ */
+export async function writeFileAtomic(dir, fileName, data) {
+  await mkdir(dir, { recursive: true });
+  const target = join(dir, fileName);
+  const tmp = join(dir, `${fileName}.tmp`);
+  await writeFile(tmp, data);
+  try {
+    await rename(tmp, target);
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
+  return target;
+}

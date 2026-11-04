@@ -3,17 +3,32 @@
 <head>
   <meta charset="utf-8">
   <title>桌宠插件面板</title>
+  <link rel="stylesheet" href="/src/renderer/ui/blocks.css">
   <style>
     :root { color-scheme: light; }
-    html, body {
+    html {
       margin: 0; padding: 0;
       background: transparent;
       overflow: hidden;
-      /* 阴影留白：窗口是透明的，卡片画在中间。 */
-      padding: 6px;
-      box-sizing: border-box;
       /* 高度链要通：#panel 的 height: 100% 才有参照。 */
       height: 100%;
+    }
+    body {
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+      box-sizing: border-box;
+      height: 100%;
+      /* 阴影留白：窗口是透明的，卡片画在中间。
+         留白必须**放得下阴影**：上下左右各留的那一圈
+         要大于阴影的扩散半径，否则阴影会被窗口边界切掉
+         （底部那一截被切掉最明显，像卡片没画完）。
+
+         这一圈留白**只加在 body 上**：
+         html 与 body 都加的话，卡片会被推进两圈留白里，
+         而窗口高度是按一圈算的（reportHeight 只量 body 的留白）——
+         卡片下沿会顶出 body 的裁剪框，圆角被切平，影子也被切掉半截。 */
+      padding: 12px 12px 16px;
     }
     #panel {
       box-sizing: border-box;
@@ -24,7 +39,7 @@
       background: #fffdf8;
       border: 1px solid #d8d2c4;
       border-radius: 14px;
-      box-shadow: 0 10px 30px rgba(40, 34, 24, 0.3);
+      box-shadow: 0 4px 10px rgba(40, 34, 24, 0.28);
       font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
       color: #2b2a26;
       overflow: hidden;
@@ -47,7 +62,9 @@
       border-bottom: 1px solid #ece6d8;
       -webkit-app-region: drag;
     }
-    #searchbar .icon { font-size: 15px; opacity: 0.65; }
+    /* 图标不再只是「搜索」：这个框既搜插件与程序，也能直接跟桌宠说话。
+       放大镜会把它说窄了，用一颗星星表示「万能输入」。 */
+    #searchbar .icon { font-size: 15px; opacity: 0.85; }
     #query {
       flex: 1;
       min-width: 0;
@@ -140,6 +157,8 @@
       font-size: 14px;
     }
     #plugin-head button:hover { background: #f1ead8; color: #3a352c; }
+    /* 这个插件不支持的形态：按钮整个藏掉，不留一个点不动的灰按钮。 */
+    #plugin-head button[hidden] { display: none; }
     #plugin-body {
       /* 高度由内容决定（上限写死在下面），**不**跟着窗口长。
          跟着窗口长就会变成「窗口等卡片、卡片等窗口」的死循环。 */
@@ -157,90 +176,14 @@
       min-height: 30px;
     }
     #plugin-status:empty { display: none; }
-
-    /* —— 插件页面里的块 —— */
-    .block-text { white-space: pre-wrap; word-break: break-word; }
-    .block-empty { color: #9a9384; padding: 10px 0; }
-    .block-list { list-style: none; margin: 0 0 10px; padding: 0; }
-    .block-list li {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 8px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    .block-list li:hover { background: #f6f1e4; }
-    .block-list li.done .label { color: #9a9384; text-decoration: line-through; }
-    .block-list .label { flex: 1; word-break: break-word; }
-    .block-list .hint { color: #a29a89; font-size: 12px; white-space: nowrap; }
-    .block-list .remove {
-      border: none;
-      background: transparent;
-      color: #b3ab99;
-      cursor: pointer;
-      font-size: 14px;
-      line-height: 1;
-      padding: 2px 4px;
-      border-radius: 6px;
-    }
-    .block-list .remove:hover { background: #efe6d2; color: #8a6a4a; }
-    .block-input { display: flex; gap: 8px; margin-bottom: 10px; }
-    .block-input input {
-      flex: 1;
-      min-width: 0;
-      font: inherit;
-      padding: 7px 10px;
-      border: 1px solid #c9c1b0;
-      border-radius: 9px;
-      background: #fff;
-      color: inherit;
-    }
-    .block-input input:focus { outline: 2px solid #c8b78f; outline-offset: 1px; }
-    .block-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
-    .block-buttons button {
-      font: inherit;
-      padding: 6px 13px;
-      border: 1px solid #c9c1b0;
-      border-radius: 9px;
-      background: #f6f2e7;
-      color: #3a352c;
-      cursor: pointer;
-    }
-    .block-buttons button:hover { background: #efe9d8; }
-    .block-buttons button.primary { background: #d9c9a3; border-color: #bda87c; }
-    .block-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 0;
-      cursor: pointer;
-    }
-    .block-toggle input { accent-color: #bda87c; }
-
-    /* 聊天记录：带角色与时间，条条都不可点。 */
-    .block-messages { list-style: none; margin: 0 0 10px; padding: 0; }
-    .block-messages li {
-      display: flex;
-      align-items: baseline;
-      gap: 6px;
-      padding: 6px 8px;
-      border-radius: 8px;
-      margin-bottom: 4px;
-    }
-    .block-messages li.user { background: #ece6d8; }
-    .block-messages li.assistant { background: #f6f2e7; }
-    .block-messages .role { font-size: 12px; color: #8a8272; flex: none; }
-    .block-messages .text { flex: 1; word-break: break-word; }
-    .block-messages .time { font-size: 11px; color: #a9a294; flex: none; }
   </style>
 </head>
 <body>
   <div id="panel" data-view="search">
     <section id="search">
       <div id="searchbar">
-        <span class="icon">🔍</span>
-        <input id="query" type="text" placeholder="搜索插件或程序…" autocomplete="off" spellcheck="false" />
+        <span class="icon">✨</span>
+        <input id="query" type="text" placeholder="搜索插件、程序，或跟桌宠说点什么…" autocomplete="off" spellcheck="false" />
       </div>
       <div id="results-wrap">
         <ul id="results"></ul>
@@ -254,6 +197,8 @@
         <button id="back" title="返回搜索">←</button>
         <span id="plugin-title"></span>
         <span class="spacer"></span>
+        <button id="detach" title="在新窗口打开" hidden>↗</button>
+        <button id="widget" title="变成桌面小部件" hidden>▣</button>
         <button id="close" title="关闭">✕</button>
       </header>
       <div id="plugin-subtitle"></div>

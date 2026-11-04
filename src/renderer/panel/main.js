@@ -1,5 +1,6 @@
 import { searchPlugins, searchApps } from '../../shared/fuzzy.js';
-import { PANEL_VIEW, BLOCK_KIND, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
+import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
+import { renderPage } from '../ui/blocks.js';
 
 /**
  * 插件面板的页面。
@@ -29,6 +30,8 @@ const pluginBodyEl = document.getElementById('plugin-body');
 const pluginStatusEl = document.getElementById('plugin-status');
 const backEl = document.getElementById('back');
 const closeEl = document.getElementById('close');
+const detachEl = document.getElementById('detach');
+const widgetEl = document.getElementById('widget');
 
 /** 插件清单（主进程一次性下发）。 */
 let plugins = [];
@@ -100,8 +103,13 @@ function reportHeight() {
     // 往上取整：窗口要装得下卡片，少一像素就会把底部切掉。
     const needed = panelEl.getBoundingClientRect().height;
     if (needed <= 0) return;
-    // 加上 body 的内边距（卡片四周各 6px）。
-    window.panel?.reportSize?.(Math.ceil(needed) + 12);
+    // 加上 body 的内边距：卡片四周留的那一圈是给阴影用的，
+    // 窗口得把它们也算进去，否则卡片会被窗口切掉一截。
+    // 数值从样式里读，别写死——改了 CSS 忘了改这里，底部就会被切。
+    const style = getComputedStyle(document.body);
+    const padTop = parseFloat(style.paddingTop) || 0;
+    const padBottom = parseFloat(style.paddingBottom) || 0;
+    window.panel?.reportSize?.(Math.ceil(needed) + padTop + padBottom);
   });
 }
 
@@ -220,15 +228,6 @@ function setSearchStatus(text) {
   searchStatusEl.hidden = !text;
 }
 
-/** 时间戳说成人话（几点几分）。 */
-function formatTime(at) {
-  if (!Number.isFinite(at) || at <= 0) return '';
-  const d = new Date(at);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return hh + ':' + mm;
-}
-
 /** 画插件界面。 */
 function renderPlugin(page) {
   currentPluginId = page?.pluginId || '';
@@ -236,11 +235,20 @@ function renderPlugin(page) {
   pluginSubtitleEl.textContent = page?.subtitle || '';
   pluginStatusEl.textContent = page?.status || '';
 
-  pluginBodyEl.textContent = '';
-  for (const block of page?.blocks || []) {
-    const node = renderBlock(block, currentPluginId);
-    if (node) pluginBodyEl.append(node);
-  }
+  // 块怎么画是共用的一份（src/renderer/ui/blocks.js）：
+  // 面板与插件的独立窗口必须长得一模一样。
+  renderPage(page, {
+    body: pluginBodyEl,
+    onAction: (actionId, value) => {
+      window.panel?.action?.(currentPluginId, actionId, value);
+    },
+  });
+
+  // 「分离出去」的两个按钮：能不能分离取决于插件自己
+  // （清单里有没有 window / widget 段）。不支持的形态整个藏掉。
+  const meta = plugins.find((p) => p.id === currentPluginId);
+  detachEl.hidden = !meta?.canDetach;
+  widgetEl.hidden = !meta?.hasWidget;
 
   searchEl.hidden = true;
   pluginEl.hidden = false;
@@ -257,135 +265,6 @@ function renderPlugin(page) {
     } catch {
       /* 窗口还没拿到焦点时会抛，忽略即可 */
     }
-  }
-}
-
-/** 画一个块。 */
-function renderBlock(block, pluginId) {
-  switch (block?.kind) {
-    case BLOCK_KIND.TEXT: {
-      const div = document.createElement('div');
-      div.className = 'block-text';
-      div.textContent = block.text || '';
-      return div;
-    }
-    case BLOCK_KIND.EMPTY: {
-      const div = document.createElement('div');
-      div.className = 'block-empty';
-      div.textContent = block.text || '';
-      return div;
-    }
-    case BLOCK_KIND.LIST: {
-      const ul = document.createElement('ul');
-      ul.className = 'block-list';
-      for (const item of block.items || []) {
-        const li = document.createElement('li');
-        if (item.done) li.classList.add('done');
-        const label = document.createElement('span');
-        label.className = 'label';
-        label.textContent = item.label || '';
-        li.append(label);
-        if (item.hint) {
-          const hint = document.createElement('span');
-          hint.className = 'hint';
-          hint.textContent = item.hint;
-          li.append(hint);
-        }
-        if (item.removeId) {
-          const remove = document.createElement('button');
-          remove.className = 'remove';
-          remove.type = 'button';
-          remove.textContent = '✕';
-          remove.title = '删除';
-          remove.addEventListener('click', (e) => {
-            e.stopPropagation();
-            window.panel?.action?.(pluginId, item.removeId, item.id);
-          });
-          li.append(remove);
-        }
-        li.addEventListener('click', () => {
-          window.panel?.action?.(pluginId, item.actionId || item.id, item.id);
-        });
-        ul.append(li);
-      }
-      return ul;
-    }
-    case BLOCK_KIND.INPUT: {
-      const row = document.createElement('div');
-      row.className = 'block-input';
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = block.placeholder || '';
-      input.value = block.value || '';
-      const submit = () => {
-        const value = input.value;
-        window.panel?.action?.(pluginId, block.id || '', value);
-      };
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          submit();
-        }
-      });
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = block.submitLabel || '确定';
-      btn.addEventListener('click', submit);
-      row.append(input, btn);
-      return row;
-    }
-    case BLOCK_KIND.BUTTONS: {
-      const row = document.createElement('div');
-      row.className = 'block-buttons';
-      for (const item of block.items || []) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = item.label || '确定';
-        if (item.primary) btn.classList.add('primary');
-        btn.addEventListener('click', () => {
-          window.panel?.action?.(pluginId, item.id || '', '');
-        });
-        row.append(btn);
-      }
-      return row;
-    }
-    case BLOCK_KIND.MESSAGES: {
-      const ul = document.createElement('ul');
-      ul.className = 'block-messages';
-      for (const item of block.items || []) {
-        const li = document.createElement('li');
-        li.className = item.role === 'user' ? 'user' : 'assistant';
-        const role = document.createElement('span');
-        role.className = 'role';
-        role.textContent =
-          item.role === 'user' ? '你' : item.proactive ? '桌宠（主动）' : '桌宠';
-        const text = document.createElement('span');
-        text.className = 'text';
-        text.textContent = item.text || '';
-        const time = document.createElement('span');
-        time.className = 'time';
-        time.textContent = formatTime(item.at);
-        li.append(role, text, time);
-        ul.append(li);
-      }
-      return ul;
-    }
-    case BLOCK_KIND.TOGGLE: {
-      const label = document.createElement('label');
-      label.className = 'block-toggle';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = Boolean(block.checked);
-      input.addEventListener('change', () => {
-        window.panel?.action?.(pluginId, block.id || '', String(input.checked));
-      });
-      const text = document.createElement('span');
-      text.textContent = block.label || '';
-      label.append(input, text);
-      return label;
-    }
-    default:
-      return null;
   }
 }
 
@@ -465,6 +344,13 @@ queryEl.addEventListener('input', () => {
 
 backEl.addEventListener('click', () => window.panel?.back?.());
 closeEl.addEventListener('click', () => window.panel?.close?.());
+// 分离出去：开一个独立窗口，或者变成挂在桌面上的小部件。
+detachEl.addEventListener('click', () => {
+  window.panel?.detach?.(currentPluginId, 'window');
+});
+widgetEl.addEventListener('click', () => {
+  window.panel?.detach?.(currentPluginId, 'widget');
+});
 
 // 主进程下发插件清单：搜索在本地做，从这一刻起不再需要主进程。
 window.panel?.onPlugins?.((list) => {

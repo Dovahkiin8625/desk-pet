@@ -1,4 +1,5 @@
 import { createStage } from './pet/stage.js';
+import { applyLive2DCoreCompat } from './live2dCoreCompat.js';
 import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
@@ -30,6 +31,7 @@ import {
 import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
 import { DEFAULT_VOLUME } from '../shared/volume.js';
+import { decideTapVoice, TAP_VOICE_COOLDOWN_MS } from '../shared/tapVoice.js';
 
 window.__pet = {
   ready: false,
@@ -49,6 +51,10 @@ window.__pet = {
   lastZone: null,
   lastExpression: null,
   lastMotion: null,
+  // 最近一次点击的声音决定：'voice'（念台词）/ 'model'（模型自己出声）/ 'none'。
+  lastTapDecision: null,
+  // 主进程推来的「声音池子」成分。
+  tapVoice: null,
   focusPoint: null,
   // 最近一次拖拽**送出的一段**增量（相对上一次移动事件）。
   // 注意它只是最后一段，不代表整段拖拽的总量——
@@ -167,6 +173,53 @@ let dragWobble = null;
 
 // 口型驱动的句柄（null 表示当前模型没有口型参数）。
 let lipSync = null;
+
+// ---------------------------------------------------------------------------
+// 点桌宠时的声音
+//
+// 池子里有两种东西：生成台词（设置里的音色念的）与模型自带的声音。
+// **抽签在渲染层做**：静音模型声音的决定必须赶在动作启动之前——
+// 第三方库是在 startMotion() 里同步读 config.sound 的，
+// 而动作是点击那一刻同步触发的，主进程来不及回话。
+//
+// 主进程只负责把「池子里有什么」推过来（见 pet:tapVoice）。
+// ---------------------------------------------------------------------------
+
+/** 池子的成分。主进程没推过来之前按「什么都不出声」处理。 */
+const tapVoice = {
+  voiceEnabled: false,
+  modelSound: false,
+  lineCount: 0,
+  cooldownMs: TAP_VOICE_COOLDOWN_MS,
+};
+
+/** 上一次念台词的时刻（null = 从来没念过）。用来做冷却。 */
+let lastVoiceAt = null;
+
+/**
+ * 临时静音模型自带的声音。
+ *
+ * 第三方库（pixi-live2d-display）在 `startMotion()` 里**同步**读
+ * `config.sound`——那行代码在第一个 await 之前，所以只要在触发动作
+ * 前把它关掉、触发完立刻打开，这一次动作就没有声音。
+ *
+ * 只静音这一次，不动全局：用户模型挂在 idle 动作上的声音照旧。
+ *
+ * Cubism 2 与 Cubism 4 是两个互不共享的 bundle，各有各的 config
+ * （见 live2dRuntime.js）——两个都要管。
+ */
+function withModelSoundMuted(fn) {
+  const configs = [window.PIXI?.live2d?.config, window.__live2dCubism2?.config].filter(Boolean);
+  const saved = configs.map((c) => c.sound);
+  for (const c of configs) c.sound = false;
+  try {
+    fn();
+  } finally {
+    configs.forEach((c, i) => {
+      c.sound = saved[i];
+    });
+  }
+}
 
 /**
  * 施加一个情绪事件：更新心情，必要时换上对应表情。
@@ -688,6 +741,16 @@ function registerChannels() {
   // 音效总开关（设置窗口改的）。
   window.pet.onSoundEnabled?.((enabled) => setAudioEnabled(enabled));
 
+  // 「点桌宠时的声音」池子的成分：主进程推过来，渲染层照着抽签。
+  window.pet.onTapVoice?.((payload) => {
+    if (!payload) return;
+    tapVoice.voiceEnabled = Boolean(payload.voiceEnabled);
+    tapVoice.modelSound = Boolean(payload.modelSound);
+    tapVoice.lineCount = Number(payload.lineCount) || 0;
+    if (Number.isFinite(payload.cooldownMs)) tapVoice.cooldownMs = payload.cooldownMs;
+    window.__pet.tapVoice = { ...tapVoice };
+  });
+
   // 总音量：主进程把它推过来。
   window.pet.onVolume?.((v) => {
     if (typeof v !== 'number') return;
@@ -731,6 +794,9 @@ function registerChannels() {
 }
 
 async function boot() {
+  // 显示层是 Cubism 4 时代的、Core 是 Cubism 6 的：先把它们对上话，
+  // 否则模型加载得到、渲染时却炸（见 live2dCoreCompat.js）。
+  applyLive2DCoreCompat();
   const container = document.getElementById('stage');
   // 每次重新适配模型都要重新量可见轮廓：形象在画布里的位置变了，
   // 「哪里点得到桌宠」「桌宠能拖到哪」也跟着变。
@@ -924,15 +990,45 @@ async function boot() {
           /* 表情缺失时静默跳过 */
         }
       }
-      if (reaction.motionSpec && currentModel?.motion) {
+
+      // 这一次点击该出什么声。
+      //
+      // 'voice' = 念一句生成的台词（模型自带的声音让位），
+      // 'model' = 让模型自己出声（它自带的声音在随机池里），
+      // 'none' = 不出声（两样都没有）。
+      const decision = decideTapVoice({
+        voiceEnabled: tapVoice.voiceEnabled,
+        modelSound: tapVoice.modelSound,
+        lineCount: tapVoice.lineCount,
+        cooldownMs: tapVoice.cooldownMs,
+        now: Date.now(),
+        lastVoiceAt,
+      });
+      window.__pet.lastTapDecision = decision;
+
+      const playMotion = () => {
+        if (!reaction.motionSpec || !currentModel?.motion) return;
         try {
           currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});
         } catch {
           /* 动作缺失时静默跳过 */
         }
+      };
+      // 模型自带的声音在动作启动的那一刻播（config.sound 是同步读的），
+      // 所以要静音就得**在触发动作前**静音。
+      if (decision === 'model') playMotion();
+      else withModelSoundMuted(playMotion);
+
+      if (decision === 'voice') {
+        // 念台词：音频是主进程**预先**合成好的，报告一声即可，
+        // 主进程读缓存播放——不调接口。
+        lastVoiceAt = Date.now();
+        window.pet.reportTap?.();
+      } else {
+        // 触摸反馈音效：角色的台词由模型自带，这里只是「碰了一下」的界面反馈。
+        // 念台词的时候不播它——两声叠在一起，台词就听不清了。
+        playTap();
       }
-      // 触摸反馈音效：角色的台词由模型自带，这里只是「碰了一下」的界面反馈。
-      playTap();
       // 左键点桌宠 → 弹出插件面板（搜索框）。
       //
       // 摸头的表情与音效**照旧**：面板是入口，不是把角色的反应抢走。

@@ -127,13 +127,14 @@ test.describe('导入的 Live2D 模型', () => {
       // 内置形象也还在。
       expect(options.map((o) => o.value)).toContain('haru');
 
-      // 选中的导入形象可以删；内置的不行。
+      // 导入的与预制的**都能删**（预制的语义是「从列表里移除」，
+      // 模型文件仍留在程序目录里——确认框里会说明区别）。
       await settings.selectOption('#model', 'testchar');
       await settings.waitForFunction(() => document.getElementById('deleteModel')?.disabled === false, null, {
         timeout: 10000,
       });
       await settings.selectOption('#model', 'haru');
-      await settings.waitForFunction(() => document.getElementById('deleteModel')?.disabled === true, null, {
+      await settings.waitForFunction(() => document.getElementById('deleteModel')?.disabled === false, null, {
         timeout: 10000,
       });
 

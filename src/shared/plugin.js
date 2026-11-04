@@ -147,10 +147,21 @@ export function validateManifest(raw) {
     description: str(raw.description).trim(),
     keywords,
     entry,
-    window: normalizeWindowSpec(raw.window, PLUGIN_WINDOW_MODE.WINDOW),
-    widget: normalizeWindowSpec(raw.widget, PLUGIN_WINDOW_MODE.WIDGET),
+    // **没写就是没有**：清单里没提 `window` / `widget` 的插件
+    // 就没有独立窗口与小部件（面板上也不给那两个按钮）。
+    window: isPlainObject(raw.window)
+      ? normalizeWindowSpec(raw.window, PLUGIN_WINDOW_MODE.WINDOW)
+      : null,
+    widget: isPlainObject(raw.widget)
+      ? normalizeWindowSpec(raw.widget, PLUGIN_WINDOW_MODE.WIDGET)
+      : null,
   };
   return { ok: true, value: manifest, errors: [] };
+}
+
+/** 是不是一个普通对象（不是数组、不是 null）。 */
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

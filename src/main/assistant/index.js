@@ -16,6 +16,8 @@ import * as systemStatus from './systemStatus.js';
 import * as weather from './weather.js';
 import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
 import { synthesizeCached } from './tts/minimax.js';
+import { createTapTalk } from './tapTalk.js';
+import { tapTalkNeedsPrewarm } from '../../shared/tapVoice.js';
 import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
@@ -57,6 +59,9 @@ const PROACTIVE_STARTUP_DELAY_MS = 10 * 60 * 1000;
 /** 主动搭话：连续失败后的退避上限。 */
 const PROACTIVE_BACKOFF_MAX_MS = 6 * 3600 * 1000;
 
+/** 台词语音预生成的防抖（毫秒）。 */
+const PREWARM_DEBOUNCE_MS = 800;
+
 /** 深夜不搭话：[开始小时, 结束小时)。 */
 const QUIET_HOURS = [23, 8];
 
@@ -84,6 +89,8 @@ export function createAssistant({  userDataDir,
   let greetingTimer = null;
   let saveTimer = null;
   let pendingWrite = null;
+  // 台词语音预生成的防抖计时器。
+  let prewarmTimer = null;
 
   // 上一次报时的分钟键：整点那一分钟只报一次。
   let lastChimeKey = '';
@@ -196,6 +203,11 @@ export function createAssistant({  userDataDir,
       mood = 0,
       showBubble = true,
       interrupt = false,
+      // 气泡优先摆哪边（'top' / 'bottom' / 'left' / 'right'）。
+      // 点桌宠时用它把气泡摆在脚下——面板在头顶，两者不重叠。
+      side = '',
+      // 语音缓存目录：台词音频单独放一个目录（见 assistant/tapTalk.js）。
+      cacheDir = '',
     } = {}
   ) {
     const content = String(text ?? '').trim();
@@ -214,18 +226,20 @@ export function createAssistant({  userDataDir,
         // 在桌宠回来后会变成一个气泡，横在插件面板上。
         showBubble,
         interrupt,
+        side,
+        cacheDir,
       });
       while (pendingMessages.length > MAX_PENDING_MESSAGES) pendingMessages.shift();
       return;
     }
     if (showBubble) {
-      bubble.show({ kind: MESSAGE_KIND.SAY, text: content, emotion, ttlMs, interrupt });
+      bubble.show({ kind: MESSAGE_KIND.SAY, text: content, emotion, ttlMs, interrupt, side });
     }
     // 情绪与心情增量一起发过去：任务完成让桌宠也开心一点。
     if (emotion) onEmotion?.(emotion, mood);
     if (sound) onSound?.(sound);
     if (speak && state?.tts?.enabled) {
-      void speakNow(content);
+      void speakNow(content, { cacheDir });
     }
   }
 
@@ -237,23 +251,71 @@ export function createAssistant({  userDataDir,
     }
   }
 
+  /**
+   * TTS 的域名顺序：上次探测成功的那个排最前。
+   *
+   * DESK_PET_TTS_HOSTS 是**测试与开发用的覆盖口**：
+   * E2E 把它指向本地桩服务，就绝不会打到真实接口上去
+   * （桩服务答不上来时也不该去打真的——那会让测试又慢又不确定）。
+   */
+  function resolveHosts(tts) {
+    const override = process.env.DESK_PET_TTS_HOSTS;
+    if (override) return override.split(',').map((h) => h.trim()).filter(Boolean);
+    return tts?.host ? [tts.host, ...TTS_HOSTS] : TTS_HOSTS;
+  }
+
+  /**
+   * 「点桌宠时念台词」这件事本身。
+   *
+   * 逻辑在 assistant/tapTalk.js 里——那边不引 electron，才能脱离
+   * Electron 单测（这个文件引了剪贴板与电源事件）。
+   */
+  const tapTalker = createTapTalk({
+    getState: () => state,
+    say,
+    userDataDir,
+    loadApiKey: () => loadApiKey(userDataDir, rootDir),
+    resolveHosts,
+    fetchImpl,
+    onError: (err, text) => {
+      console.warn(
+        `[desk-pet] 台词${text ? `「${text}」` : ''}预生成失败：`,
+        err?.message || err
+      );
+    },
+  });
+
+  /** 预先把台词合成好（后台，不阻塞启动）。 */
+  function prewarmTapLines() {
+    return tapTalker.prewarm();
+  }
+
+  /**
+   * 预生成的防抖。
+   *
+   * 拖动语速滑块时每一格都会改一次设置，每改一次就重新生成全部台词——
+   * 那是一连串接口调用。停手 800 毫秒后再生成，只生成一次。
+   */
+  function schedulePrewarm() {
+    if (prewarmTimer) clearTimeout(prewarmTimer);
+    prewarmTimer = setTimeout(() => {
+      prewarmTimer = null;
+      void prewarmTapLines();
+    }, PREWARM_DEBOUNCE_MS);
+  }
+
+  /** 点桌宠：念一句台词。 */
+  function tapTalk() {
+    return tapTalker.tapTalk();
+  }
+
   /** 合成语音并交给渲染层播放。 */
-  async function speakNow(text) {
+  async function speakNow(text, { cacheDir = '' } = {}) {
     try {
       const apiKey = await loadApiKey(userDataDir, rootDir);
       if (!apiKey) return;
       const tts = state.tts;
-      // 域名顺序：上次探测成功的那个排最前。
-      //
-      // DESK_PET_TTS_HOSTS 是**测试与开发用的覆盖口**：
-      // E2E 把它指向本地桩服务，就绝不会打到真实接口上去
-      // （桩服务答不上来时也不该去打真的——那会让测试又慢又不确定）。
-      const override = process.env.DESK_PET_TTS_HOSTS;
-      const hosts = override
-        ? override.split(',').map((h) => h.trim()).filter(Boolean)
-        : tts.host
-          ? [tts.host, ...TTS_HOSTS]
-          : TTS_HOSTS;
+      const hosts = resolveHosts(tts);
       const result = await synthesizeCached(
         {
           text,
@@ -265,7 +327,7 @@ export function createAssistant({  userDataDir,
           pitch: tts.pitch,
         },
         {
-          cacheDir: join(userDataDir, 'tts-cache'),
+          cacheDir: cacheDir || join(userDataDir, 'tts-cache'),
           fetchImpl,
           hosts,
         }
@@ -523,17 +585,24 @@ export function createAssistant({  userDataDir,
   // 系统状态
   // ------------------------------------------------------------------
 
-  /** 系统状态（插件界面用）。 */
+  /**
+   * 系统状态（插件界面用）。
+   *
+   * `text` 是给人看的一段话；`cpu` / `memory` / `thermal` / `onBattery`
+   * 是给**图**用的原始数值——桌面小部件要画进度条，只能用数字。
+   */
   function statusView() {
     const cpu = systemStatus.sampleCpuPercent();
     const memory = systemStatus.sampleMemoryPercent();
+    const thermal = safeThermalState();
+    const onBattery = safeOnBattery();
     return {
-      text: systemStatus.formatStatus({
-        cpu,
-        memory,
-        thermal: safeThermalState(),
-        onBattery: safeOnBattery(),
-      }),
+      text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery }),
+      cpu,
+      memory,
+      thermal,
+      thermalText: systemStatus.thermalText(thermal),
+      onBattery,
       hotAlert: Boolean(state.hotAlert.enabled),
     };
   }
@@ -882,6 +951,8 @@ export function createAssistant({  userDataDir,
     async start() {
       state = await loadAssistant(userDataDir);
       if (state.clipboard.enabled) clipboardWatcher.start();
+      // 台词语音预先合成好（后台）：点桌宠时要立刻出声。
+      void prewarmTapLines();
       // 先取一次 CPU 采样当基准：占用率是**两次采样的差值**，
       // 没有基准就只有一个「不知道」。启动时取一次，
       // 用户第一次看系统状态时就已经有数字了。
@@ -901,9 +972,11 @@ export function createAssistant({  userDataDir,
       if (tickTimer) clearInterval(tickTimer);
       if (greetingTimer) clearTimeout(greetingTimer);
       if (saveTimer) clearTimeout(saveTimer);
+      if (prewarmTimer) clearTimeout(prewarmTimer);
       saveTimer = null;
       tickTimer = null;
       greetingTimer = null;
+      prewarmTimer = null;
       clipboardWatcher.stop();
     },
 
@@ -920,6 +993,8 @@ export function createAssistant({  userDataDir,
       // 状态还没加载完（start() 还在等磁盘）时收到偏好：
       // 直接丢掉，别让 `state.llm.persona` 之类炸掉。
       if (!state) return state;
+      // 改之前的值：拿来判断缓存有没有作废。
+      const before = state;
       // 合并之后**必须**过一遍 sanitizeAssistant：
       // 否则内存里可能留着越界的值（比如语速 0），
       // 而落盘的那份被夹紧过——内存与磁盘不一致，
@@ -942,8 +1017,18 @@ export function createAssistant({  userDataDir,
         if (patch.clipboard.enabled) clipboardWatcher.start();
         else clipboardWatcher.stop();
       }
+      // 改了音色/语速/台词 → 缓存键变了，重新预生成一遍。
+      // 刚把语音打开 → 之前根本没生成过，这时也要生成。
+      const ttsJustOn = before.tts?.enabled !== state.tts?.enabled && state.tts?.enabled;
+      if (ttsJustOn || tapTalkNeedsPrewarm(before, state)) schedulePrewarm();
       return state;
     },
+
+    // 重新预生成台词语音（设置窗口存了 Key 之后要调）。
+    prewarmTapLines,
+
+    // 点桌宠时念一句台词（渲染层点到了桌宠）。
+    tapTalk,
 
     // —— 插件接口 ——
     // 「读」是给插件界面显示的，「改」是用户动了之后要落地的；

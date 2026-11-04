@@ -11,6 +11,7 @@ export function registerIpc({
   onOpenSettings,
   onShowContextMenu,
   onOpenPanel,
+  onTap,
   onMoveBy,
   onDragStart,
   onDragEnd,
@@ -30,6 +31,8 @@ export function registerIpc({
   recordHotkey,
   cancelHotkeyRecording,
   clearHotkey,
+  listPlugins,
+  setPluginEnabled,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -45,6 +48,10 @@ export function registerIpc({
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
   // 左键点桌宠 → 弹出插件面板。
   ipcMain.handle('pet:openPanel', () => onOpenPanel());
+  // 桌宠被点了 → 主进程据此念一句台词。
+  //
+  // 单向通道：点桌宠是最高频的交互，等回执只会拖慢反应。
+  ipcMain.on('pet:tap', () => onTap?.());
   // 以下三个是**单向**通道（send 而非 invoke）：
   // 渲染层只是回报结果，主进程不需要回执；单向通道也不会产生
   // 「invoke 找不到处理器」的拒绝。
@@ -99,4 +106,10 @@ export function registerIpc({
   // 清除一个快捷键（= 不设它）：注销要由主进程做，
   // 渲染层只负责把用户的意思递过来。
   ipcMain.handle('pet:clearHotkey', (_e, slot) => clearHotkey(slot));
+
+  // —— 插件 ——
+  // 设置窗口的「插件」分区用它列出插件、开关插件。
+  // 插件的启用状态存在 userData/plugins.json，宿主负责落盘。
+  ipcMain.handle('pet:listPlugins', () => listPlugins());
+  ipcMain.handle('pet:setPluginEnabled', (_e, id, enabled) => setPluginEnabled(id, enabled));
 }

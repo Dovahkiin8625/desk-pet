@@ -1,0 +1,13 @@
+{
+  "id": "pomodoro",
+  "name": "番茄钟",
+  "icon": "🍅",
+  "description": "25 分钟专注 / 5 分钟休息",
+  "keywords": ["pomodoro", "tomato", "fanqie", "fq", "focus", "专注", "计时", "计时器"],
+  "window": {
+    "title": "番茄钟",
+    "width": 300,
+    "height": 300,
+    "refreshMs": 1000
+  }
+}

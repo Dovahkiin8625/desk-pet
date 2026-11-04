@@ -9,9 +9,15 @@ const OUT_ROOT = join(ROOT, 'assets', 'live2d', 'models');
 const API = 'https://api.github.com/repos/Live2D/CubismWebSamples/git/trees/develop?recursive=1';
 const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop';
 
+// 要下载的官方样例模型。
+//
+// id 是**本地目录名**（必须与 assets/live2d/index.json 里的注册表 id 一致——
+// 加载模型时拼的路径是 `models/<id>/<model3>`），dir 是上游仓库里的目录名。
+// 本地目录用小写：注册表 id 统一小写，用户导入同名模型时才会正确去重。
 const MODELS = [
   { id: 'haru', dir: 'Haru' },
-  { id: 'natori', dir: 'Natori' },
+  { id: 'hiyori', dir: 'Hiyori' },
+  { id: 'mao', dir: 'Mao' },
 ];
 
 async function fetchWithRetry(url, tries = 4, timeoutMs = 60000) {

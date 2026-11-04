@@ -1,6 +1,7 @@
 {
   "models": [
     { "id": "haru", "name": "Haru", "manifest": "haru/pet.json", "model3": "Haru.model3.json" },
-    { "id": "natori", "name": "Natori", "manifest": "natori/pet.json", "model3": "Natori.model3.json" }
+    { "id": "hiyori", "name": "Hiyori", "manifest": "hiyori/pet.json", "model3": "Hiyori.model3.json" },
+    { "id": "mao", "name": "Mao", "manifest": "mao/pet.json", "model3": "Mao.model3.json" }
   ]
 }

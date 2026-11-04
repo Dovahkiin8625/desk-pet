@@ -1,0 +1,21 @@
+{
+  "id": "system",
+  "name": "系统状态",
+  "icon": "📊",
+  "description": "CPU、内存、温度、电源",
+  "keywords": ["system", "status", "cpu", "neicun", "xituan", "状态", "内存", "温度", "电源"],
+  "window": {
+    "title": "系统状态",
+    "width": 320,
+    "height": 300,
+    "refreshMs": 1000
+  },
+  "widget": {
+    "title": "系统监控",
+    "width": 216,
+    "height": 108,
+    "page": "widget.html",
+    "refreshMs": 1000,
+    "alwaysOnTop": true
+  }
+}

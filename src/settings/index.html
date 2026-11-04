@@ -164,6 +164,34 @@
     }
     .group-title { font-size: 13px; font-weight: 600; color: var(--accent-ink); margin: 0 0 12px; }
 
+    /* ---------- 插件清单 ---------- */
+    .plugin-list {
+      list-style: none; margin: 0 0 14px; padding: 0;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .plugin-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 11px;
+      border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+    .plugin-row.off { background: var(--surface-sunken); }
+    .plugin-row.off .p-name { color: var(--muted); }
+    .p-icon { flex: none; font-size: 16px; line-height: 1; }
+    .p-text { flex: 1 1 auto; min-width: 0; }
+    .p-name { display: block; font-weight: 600; }
+    .p-desc { display: block; color: var(--muted-2); font-size: 12px; }
+    /* 「内置 / 用户」：用户一眼要能看出哪个是自己装的。 */
+    .p-src { flex: none; color: var(--muted-2); font-size: 11px; }
+    .plugin-row input[type="checkbox"] {
+      flex: none; width: 15px; height: 15px; accent-color: var(--accent);
+    }
+    code {
+      padding: 1px 5px; border-radius: 4px;
+      background: var(--surface-sunken); color: var(--text-2);
+      font-family: Consolas, "Courier New", monospace; font-size: 12px;
+    }
+
     /* ---------- 控件 ---------- */
     select, input[type="text"], input[type="password"], textarea {
       width: 100%;
@@ -321,6 +349,12 @@
           <span class="nav-label">记忆</span>
           <span class="nav-summary" data-summary="memory">—</span>
         </button>
+        <button type="button" class="nav-tab" id="tab-plugins" role="tab"
+                data-section="plugins" aria-controls="panel-plugins"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">插件</span>
+          <span class="nav-summary" data-summary="plugins">—</span>
+        </button>
         <button type="button" class="nav-tab" id="tab-system" role="tab"
                 data-section="system" aria-controls="panel-system"
                 aria-selected="false" tabindex="-1">
@@ -385,32 +419,13 @@
               <input type="checkbox" id="sound">
               <label for="sound"><span class="t-label">提示音</span></label>
             </div>
-            <div class="toggle">
-              <input type="checkbox" id="hotAlert">
-              <label for="hotAlert"><span class="t-label">太热时提醒</span></label>
-            </div>
-            <div class="toggle">
-              <input type="checkbox" id="clipboard">
-              <label for="clipboard">
-                <span class="t-label">剪贴板助手</span>
-                <span class="t-hint">复制内容时提示</span>
-              </label>
-            </div>
-            <div class="toggle">
-              <input type="checkbox" id="weatherEnabled">
-              <label for="weatherEnabled">
-                <span class="t-label">定时播报天气</span>
-                <span class="t-hint">按下面的城市查</span>
-              </label>
-            </div>
           </div>
 
-          <div class="field">
-            <label for="weatherCity">天气城市</label>
-            <div class="control"><input type="text" id="weatherCity" placeholder="例如：北京"></div>
-          </div>
-
-          <p class="hint">待办、提醒、番茄钟在<b>插件面板</b>里：<b>左键点一下桌宠</b>，输入关键词就能找到。</p>
+          <p class="hint">
+            待办、提醒、番茄钟在<b>插件面板</b>里：<b>左键点一下桌宠</b>，输入关键词就能找到。
+            剪贴板、天气、过热提醒的开关在<b>各自的插件页面</b>里——
+            插件的设置归插件自己管，这里不重复一份。
+          </p>
         </section>
 
         <section class="panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
@@ -446,6 +461,27 @@
             </div>
           </div>
           <p class="hint">总音量：同时影响提示音与桌宠说话。</p>
+
+          <div class="group">
+            <h2 class="group-title">点桌宠时</h2>
+            <div class="toggle solo">
+              <input type="checkbox" id="tapTalkEnabled">
+              <label for="tapTalkEnabled"><span class="t-label">点桌宠时说话</span></label>
+            </div>
+            <div class="toggle solo">
+              <input type="checkbox" id="tapTalkModelSound">
+              <label for="tapTalkModelSound"><span class="t-label">也用 Live2D 模型自带的声音</span></label>
+            </div>
+            <p class="hint">
+              开着「也用模型自带的声音」时，模型的声音会和这些台词一起随机抽；
+              关着就只用生成的台词。
+            </p>
+            <div class="field stack">
+              <label for="tapTalkLines">台词（每行一句）</label>
+              <textarea id="tapTalkLines" rows="5"></textarea>
+            </div>
+            <p class="hint">改完之后会在后台重新生成这些台词的语音。</p>
+          </div>
 
           <div class="field">
             <label for="apiKey">API Key</label>
@@ -563,6 +599,18 @@
             <button type="button" id="clearFacts" class="btn danger">忘掉这些</button>
           </div>
           <p class="hint">点「忘掉这些」就全清了。</p>
+        </section>
+
+        <section class="panel" id="panel-plugins" role="tabpanel" aria-labelledby="tab-plugins" hidden>
+          <h1>插件</h1>
+          <p class="panel-sub">插件是磁盘上的目录，装上就能用。关掉的插件不出现在面板的搜索结果里。</p>
+          <ul class="plugin-list" id="pluginList"></ul>
+          <p class="hint">
+            想装自己的插件？把插件目录放进
+            <code>userData/plugins/&lt;插件名&gt;/</code>
+            ——每个插件一个子目录，里面放 <code>plugin.json</code>（清单）与
+            <code>main.js</code>（入口）——重启后就能在面板里搜到它。
+          </p>
         </section>
 
         <section class="panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" hidden>

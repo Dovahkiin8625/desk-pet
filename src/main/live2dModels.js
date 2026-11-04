@@ -98,12 +98,46 @@ async function writeUserRegistry(userDataDir, models) {
  *
  * 两边合成同一个形状（都带 base / source），渲染层于是能用同一段代码
  * 拼 URL，不必知道某个形象是内置的还是导入的。
+ *
+ * 用户移除掉的内置形象默认**不出现**在这个列表里（见 readRemovedBundled）。
+ * includeRemoved 只给「算 id 占用」用：被移除的形象仍然占着它的 id，
+ * 用户再导入一个同名的模型时得换个 id，不能撞车。
  */
-export async function readMergedRegistry(rootDir, userDataDir) {
+export async function readMergedRegistry(rootDir, userDataDir, { includeRemoved = false } = {}) {
   const bundled = await readBundledRegistry(rootDir);
   const user = await readUserRegistry(userDataDir);
-  return [...bundled, ...user];
+  if (includeRemoved) return [...bundled, ...user];
+  const removed = await readRemovedBundled(userDataDir);
+  return [...bundled.filter((m) => !removed.has(m.id)), ...user];
 }
+
+/**
+ * 用户移除掉的内置形象：一份 id 清单，存在 userData 里。
+ *
+ * 为什么是「记一份清单」而不是删文件：内置模型躺在程序安装目录下，
+ * 装到 Program Files 下根本没有写权限——删不掉。内置注册表
+ * （assets/live2d/index.json）也跟着程序走、只读，更不该被改写。
+ *
+ * 所以「删除内置形象」的实际含义是**从形象列表里移除**：
+ * 模型文件仍在程序目录里，清掉这份清单就能让它重新出现。
+ */
+export async function readRemovedBundled(userDataDir) {
+  const raw = await readJson(userRegistryDir(userDataDir), 'removed.json', null, 'live2d/removed.json');
+  const list = Array.isArray(raw?.models) ? raw.models : [];
+  return new Set(list.filter((id) => typeof id === 'string' && id.trim() !== '').map((id) => id.trim()));
+}
+
+/** 把一个内置形象标记为「已移除」（只记清单，不动程序目录里的文件）。 */
+export async function removeBundledModel({ id, userDataDir }) {
+  const removed = await readRemovedBundled(userDataDir);
+  removed.add(id);
+  await writeJson(userRegistryDir(userDataDir), 'removed.json', {
+    version: 1,
+    models: [...removed],
+  });
+  return { id };
+}
+
 
 /**
  * 这是哪种 Cubism 格式的设置文件。
@@ -407,7 +441,9 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
   // id 去重：内置与用户导入的形象都要算上——撞上内置的 id 会让
   // 注册表里出现两条同 id 的条目，而「取第一个」的规则会让用户
   // 刚导入的模型选了却切不过去。
-  const existing = await readMergedRegistry(rootDir, userDataDir);
+  // 被用户移除掉的内置形象**仍然占着 id**：它还在程序目录里，
+  // 用户随时能恢复，导入一个同 id 的模型会让两条记录指向不同的目录。
+  const existing = await readMergedRegistry(rootDir, userDataDir, { includeRemoved: true });
   const takenIds = existing.map((m) => m.id);
   const id = uniqueModelId(slugifyModelId(sourceRootName), takenIds);
 

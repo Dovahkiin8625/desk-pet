@@ -34,7 +34,12 @@ const GAP = 8;
 
 /** 气泡窗口的最小/最大尺寸，防止内容把窗口撑到离谱。 */
 const MIN_WIDTH = 160;
-const MAX_WIDTH = 360;
+/**
+ * 最大宽度要装得下「气泡本体 + 四周的留白」：
+ * 气泡本体的上限是 340（见 renderer/bubble/index.html），
+ * 留白是两边各 16——窗口被截短了，气泡右边的影子就没了。
+ */
+const MAX_WIDTH = 380;
 
 /** 流式消息定稿后的存活时长（毫秒）：比一句话长——回复要读完。 */
 const CHAT_TTL_MS = 15000;
@@ -52,8 +57,25 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
   let streamSeq = 0;
   // 流式期间锁定的摆放方向：气泡长大后换边会让小尾巴跳。
   let streamSide = null;
+  // 单条消息指定的摆放方向（点桌宠的台词要摆在脚下，
+  // 免得和头顶的插件面板重叠）。只在显示这一条时有效。
+  let oneShotSide = null;
   // 当前流的存活时长（定稿后开始计时）。
   let currentStreamTtl = CHAT_TTL_MS;
+  /**
+   * 气泡**本体**的尺寸与四周留白（页面上报的）。
+   *
+   * 摆位按本体算，窗口比本体大一圈：那圈留白是给影子与小尾巴的，
+   * 不是气泡的一部分，不该算进「离桌宠多远」里。
+   */
+  let content = {
+    width: 0,
+    height: 0,
+    paddingLeft: 0,
+    paddingRight: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  };
   // 流式期间到达的普通消息：等流结束再显示（不要打断半句话）。
   const deferred = [];
   // 页面还没就绪时收到的流式增量：先攒着。
@@ -103,9 +125,11 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
    *
    * 返回摆在哪一侧：气泡页面要据此决定小尾巴朝哪边指。
    */
-  function place(width, height) {
-    const preferred = streamSide
-      ? [streamSide, ...DEFAULT_SIDES.filter((side) => side !== streamSide)]
+  function place() {
+    // 优先顺序：单条消息指定的边 > 流式锁定 > 默认（头顶 → 脚下 → 左 → 右）。
+    const locked = oneShotSide || streamSide;
+    const preferred = locked
+      ? [locked, ...DEFAULT_SIDES.filter((side) => side !== locked)]
       : undefined;
     const chosen = placeBesidePet({
       petWindow: getPetWindow(),
@@ -113,26 +137,46 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       // 按窗口摆气泡会浮在角色头顶老高的地方。
       petRect: getPetRect?.(),
       displays: getDisplays(),
-      width,
-      height,
+      // 按**气泡本体**摆：窗口四周还有一圈留白（给影子与小尾巴），
+      // 那一圈不是气泡，不该算进「离桌宠多远」里。
+      width: content.width || win.getSize()[0],
+      height: content.height || win.getSize()[1],
       gap: GAP,
       preferred,
     });
     if (streamSide) streamSide = chosen.placement;
-    win.setPosition(chosen.x, chosen.y);
+    // 窗口要往桌宠那边挪一圈留白，气泡本体的边才真的离桌宠 GAP 这么远。
+    win.setPosition(chosen.x - content.paddingLeft, chosen.y - content.paddingTop);
     return chosen.placement;
   }
 
   /** 页面量出内容尺寸后回来：按内容撑开窗口，再重新摆位置。 */
   function applySize(size) {
     if (!win || win.isDestroyed()) return;
-    const width = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, size?.width || MIN_WIDTH)));
-    const height = Math.max(24, Math.round(size?.height || 24));
+    content = {
+      width: Math.max(0, Number(size?.width) || 0),
+      height: Math.max(0, Number(size?.height) || 0),
+      paddingLeft: Math.max(0, Number(size?.paddingLeft) || 0),
+      paddingRight: Math.max(0, Number(size?.paddingRight) || 0),
+      paddingTop: Math.max(0, Number(size?.paddingTop) || 0),
+      paddingBottom: Math.max(0, Number(size?.paddingBottom) || 0),
+    };
+    // 窗口 = 气泡本体 + 四周的留白（影子与小尾巴要待的地方）。
+    const width = Math.round(
+      Math.min(
+        MAX_WIDTH,
+        Math.max(MIN_WIDTH, content.width + content.paddingLeft + content.paddingRight)
+      )
+    );
+    const height = Math.max(
+      24,
+      Math.round(content.height + content.paddingTop + content.paddingBottom)
+    );
     const [currentWidth, currentHeight] = win.getSize();
     if (currentWidth !== width || currentHeight !== height) {
       win.setBounds({ ...win.getBounds(), width, height });
     }
-    const placement = place(width, height);
+    const placement = place();
     send('pet:bubblePlacement', placement);
   }
 
@@ -146,6 +190,8 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     // 自己要收气泡，就别让 cancelStream 再装一个计时器。
     cancelStream({ hide: false });
     currentMessage = null;
+    // 单条消息指定的摆位方向只对那一条有效：收掉就清掉。
+    oneShotSide = null;
     if (!win || win.isDestroyed()) return;
     send('pet:bubbleHide');
     win.hide();
@@ -167,6 +213,8 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       emotion: message?.emotion || '',
       // 存活时长：调用方可以指定，不给就用默认的 6 秒。
       ttlMs: Number.isFinite(message?.ttlMs) ? message.ttlMs : undefined,
+      // 摆位偏好（'top'/'bottom'/'left'/'right'）：不给就按默认顺序摆。
+      side: message?.side || '',
     };
     // **先**记住气泡现在显示的是什么：下面要用它判断
     // 「聊天回复是不是正占着气泡」——currentMessage 马上就要被覆盖了。
@@ -203,6 +251,8 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
 
   function deliver(payload) {
     clearTimer();
+    // 摆位用的方向跟着这条消息走：页面报尺寸时会用到它。
+    oneShotSide = payload?.side || null;
     send('pet:bubbleShow', payload);
     scheduleHide(payload.ttlMs);
   }
@@ -410,8 +460,7 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     /** 桌宠窗口移动后重新摆位。 */
     reposition: () => {
       if (!win || win.isDestroyed() || !win.isVisible()) return;
-      const [w, h] = win.getSize();
-      const placement = place(w, h);
+      const placement = place();
       // 摆到哪一侧要告诉页面：小尾巴要朝桌宠那边指。
       // 只挪窗口而不改尾巴，桌宠拖到屏幕另一边后，
       // 尾巴还指着原来的方向——看起来像指错了人。

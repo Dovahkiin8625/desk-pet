@@ -43,7 +43,7 @@ contextBridge.exposeInMainWorld('bubble', {
   reportReady: () => ipcRenderer.send('pet:bubbleReady'),
   // 内容画完之后把尺寸报回去：窗口要按内容撑开，
   // 不然长文本会被截断、短文本会留一大块空白。
-  reportSize: (width, height) => ipcRenderer.send('pet:bubbleSize', { width, height }),
+  reportSize: (size) => ipcRenderer.send('pet:bubbleSize', size),
   // 气泡当前的状态（形态、是否可交互、是否可见）。
   getState: () => ipcRenderer.invoke('pet:bubbleState'),
 });

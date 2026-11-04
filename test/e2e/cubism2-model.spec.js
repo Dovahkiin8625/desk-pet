@@ -5,6 +5,7 @@
 // 它走的是完全不同的运行时与解析路径，所以单独测。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdir, writeFile, rm, cp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -22,6 +23,11 @@ test.describe('Cubism 2 老模型', () => {
   });
 
   test('DSR50 能被导入、加载并渲染', async () => {
+    // DSR50 只有旧版 Cubism SDK 才带（Cubism 5 的 SDK 与上游样例仓库
+    // 都没有它），本机没有这个模型文件时这条用例没法跑——跳过，
+    // 而不是让它永远红着。
+    test.skip(!existsSync(DSR50), `本机没有 DSR50 样例模型（${DSR50}）`);
+
     const app = await electron.launch({
       args: [ROOT],
       env: {
@@ -35,7 +41,7 @@ test.describe('Cubism 2 老模型', () => {
       await app.evaluate(({ dialog }) => {
         dialog.showOpenDialog = async () => ({
           canceled: false,
-          filePaths: ['E:\\project\\desk-pet\\assets\\live2d\\models\\DSR50'],
+          filePaths: [DSR50],
         });
         dialog.showMessageBox = async () => ({ response: 1 });
       });

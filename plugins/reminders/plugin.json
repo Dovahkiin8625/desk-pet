@@ -1,0 +1,13 @@
+{
+  "id": "reminders",
+  "name": "提醒",
+  "icon": "⏰",
+  "description": "到点提醒你做事",
+  "keywords": ["reminder", "remind", "alarm", "tixing", "tx", "naozhong", "闹钟", "备忘"],
+  "window": {
+    "title": "提醒",
+    "width": 320,
+    "height": 380,
+    "refreshMs": 0
+  }
+}

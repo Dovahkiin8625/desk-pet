@@ -10,7 +10,9 @@ import {
   readMergedRegistry,
   importModelDir,
   deleteImportedModel,
+  removeBundledModel,
 } from './live2dModels.js';
+import { USER_PLUGINS_URL_PREFIX, userPluginsDir } from './plugins/paths.js';
 import { createPetWindow, applySettingsToWindow, applyScaleToWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
@@ -18,7 +20,8 @@ import { registerIpc } from './ipc.js';
 import { loadSettings, saveSettings, sanitizeSettings } from './settings.js';
 import { createBubbleController } from './bubble.js';
 import { createPanelController } from './panel.js';
-import { createPluginRegistry } from './plugins/index.js';
+import { createPluginHost } from './plugins/host.js';
+import { createPluginWindowController } from './plugins/window.js';
 import { createAppIndex } from './apps.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
@@ -26,6 +29,7 @@ import { visibleRectOnScreen } from '../shared/petRect.js';
 import { makeHotkeyCapture } from './hotkeyCapture.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
+import { buildTapVoicePayload } from '../shared/tapVoice.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -51,6 +55,8 @@ let assistant = null;
 // 插件面板与插件注册表：左键点桌宠弹出来的那个搜索框。
 let panel = null;
 let plugins = null;
+// 插件的独立窗口与桌面小部件。
+let pluginWindows = null;
 // 本机程序索引：搜索框里能搜到本机的程序，回车就启动。
 let apps = null;
 // 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
@@ -499,10 +505,15 @@ async function importModel(event) {
 }
 
 /**
- * 删除一个导入的模型。
+ * 删除一个形象：导入的删文件，预制的从列表里移除。
  *
- * 内置模型删不得——它是程序的一部分。删除前要原生确认：
- * 文件从 userData 里消失之后没法撤销，一次点击不该就删掉。
+ * 两种「删除」的后果不同，确认框必须说清楚：
+ *   - 导入的：模型文件从 userData 里消失，没法撤销；
+ *   - 预制的：只把它从形象列表里去掉（记进 userData 的清单），
+ *     程序目录里的模型文件仍然保留——装到 Program Files 下也没写权限，
+ *     内置注册表更不该被改写。
+ *
+ * 删除前一律要原生确认：一次点击不该就删掉。
  */
 async function deleteModel(event, modelId) {
   if (!isSettingsSender(event)) {
@@ -513,17 +524,23 @@ async function deleteModel(event, modelId) {
   if (!entry) {
     return { ok: false, error: `未找到形象：${modelId}` };
   }
-  if (entry.source !== 'user') {
-    return { ok: false, error: '内置模型不能删除——它是程序的一部分。' };
+
+  // 至少要留下一个形象：一个都没有的话桌宠窗口里什么也画不出来，
+  // 而恢复内置形象的办法（清 userData 里的清单）用户未必知道。
+  if (models.length <= 1) {
+    return { ok: false, error: '至少要保留一个形象——删掉最后一个就没有形象可用了。' };
   }
 
+  const isBundled = entry.source === 'bundled';
   const parent = settingsWin && !settingsWin.isDestroyed() ? settingsWin : undefined;
   const options = {
     type: 'warning',
-    title: '删除模型',
-    message: `确定删除「${entry.name}」吗？`,
-    detail: '模型文件会从用户数据目录中移除，无法撤销。',
-    buttons: ['取消', '删除'],
+    title: isBundled ? '移除预制形象' : '删除模型',
+    message: isBundled ? `确定移除「${entry.name}」吗？` : `确定删除「${entry.name}」吗？`,
+    detail: isBundled
+      ? '它会从形象列表里消失。模型文件仍保留在程序目录中，清空用户数据目录里的 live2d/removed.json 可让它重新出现。'
+      : '模型文件会从用户数据目录中移除，无法撤销。',
+    buttons: ['取消', isBundled ? '移除' : '删除'],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -543,7 +560,9 @@ async function deleteModel(event, modelId) {
   // 反过来的话桌宠还挂在那个已经被删掉的模型上——纹理已经在显存里，
   // 暂时看不出问题，但下次重载或切换就会失败。
   if (settings.modelId === entry.id) {
-    const fallback = models.find((m) => m.source === 'bundled')?.id || models[0]?.id;
+    // 备用形象必须排除**正在删的这个**：它也在 models 里，
+    // 直接取第一个就会切回一个即将消失的形象。
+    const fallback = models.find((m) => m.id !== entry.id)?.id;
     if (!fallback) {
       return { ok: false, error: '没有可以切换过去的其它模型，删除已取消。' };
     }
@@ -557,7 +576,11 @@ async function deleteModel(event, modelId) {
   }
 
   try {
-    await deleteImportedModel({ id: entry.id, userDataDir: app.getPath('userData') });
+    if (isBundled) {
+      await removeBundledModel({ id: entry.id, userDataDir: app.getPath('userData') });
+    } else {
+      await deleteImportedModel({ id: entry.id, userDataDir: app.getPath('userData') });
+    }
   } catch (err) {
     console.warn('[desk-pet] 模型删除失败：', err?.message);
     return { ok: false, error: err?.message || String(err) };
@@ -583,6 +606,29 @@ function pushVolume() {
   win.webContents.send('pet:volume', { volume });
 }
 
+/**
+ * 把「点桌宠时的声音」池子的成分推给宠物窗口。
+ *
+ * 抽签在渲染层做（静音模型声音的决定必须赶在动作启动之前，
+ * 而动作是点击那一刻同步触发的——主进程来不及回话），
+ * 所以主进程只负责把「池子里有什么」送过去。
+ *
+ * 「有没有 Key」是异步的：key 存在本机，主进程读得到，渲染层读不到。
+ */
+async function pushTapVoice() {
+  if (!win || win.isDestroyed()) return;
+  const state = assistant?.getState();
+  const keyStatus = await apiKeyStatus(app.getPath('userData'), ROOT).catch(() => ({
+    configured: false,
+  }));
+  const payload = buildTapVoicePayload({
+    tapTalk: state?.tapTalk,
+    ttsEnabled: state?.tts?.enabled,
+    hasKey: keyStatus.configured,
+  });
+  win.webContents.send('pet:tapVoice', payload);
+}
+
 /** 渲染层就绪：补发积压的切换请求，并重新广播一次设置。 */
 function onRendererReady() {
   rendererReady = true;
@@ -601,6 +647,8 @@ function onRendererReady() {
   // 音量也一样要在这一刻补发一次：渲染层的监听器在那之前还没注册，
   // 发过去的推送会被丢弃（decisions.md #23 记过这个坑）。
   pushVolume();
+  // 「点桌宠时的声音」池子同理：渲染层要靠它决定这一次出声还是不出声。
+  void pushTapVoice();
 }
 
 /**
@@ -854,8 +902,12 @@ function formatBytes(bytes) {
 app.whenReady().then(async () => {
   // 用户导入的 Live2D 模型存在 userData 里（安装目录可能没有写权限），
   // 给它一个虚拟根：渲染层就能用和内置模型一样的 URL 形状去取它们。
+  //
+  // 用户自己的插件也在 userData 里（userData/plugins/<插件名>/），
+  // 同样给它一个虚拟根——插件的页面就是这么被加载的。
   registerAppProtocol(ROOT, {
     [USER_MODELS_URL_PREFIX]: userModelsDir(app.getPath('userData')),
+    [USER_PLUGINS_URL_PREFIX]: userPluginsDir(app.getPath('userData')),
   });
   settings = await loadSettings(app.getPath('userData'));
   // 没有保存过位置时不需要在这里补默认值：createPetWindow 的 restorePosition
@@ -881,6 +933,10 @@ app.whenReady().then(async () => {
     onShowContextMenu: showContextMenu,
     // 左键点桌宠：弹出插件面板。
     onOpenPanel: openPanel,
+    // 桌宠被点了：主进程据此念一句台词（读的是预先生成好的缓存）。
+    onTap: () => {
+      assistant?.tapTalk?.();
+    },
     // 拖拽的增量位移：累加到**期望位置**上，夹紧后才落到窗口，并持久化实际位置。
     //
     // 增量式是刻意的：渲染层把「这一段拖了多远」递过来，
@@ -926,6 +982,8 @@ app.whenReady().then(async () => {
       }
       // 总音量同理：拖滑块时音量要立刻变，落盘是 300ms 之后的事。
       if (typeof patch?.sound?.volume === 'number') pushVolume();
+      // 音色/台词/开关改了 → 池子的成分变了，渲染层要立刻知道。
+      if (patch?.tts || patch?.tapTalk) void pushTapVoice();
       return next;
     },
     // 语音状态：只回掩码，**绝不回明文 key**。
@@ -935,6 +993,10 @@ app.whenReady().then(async () => {
     },
     setTtsApiKey: async (key) => {
       const mask = await saveApiKey(app.getPath('userData'), key);
+      // Key 有没有，直接决定「点桌宠时能不能念台词」。
+      void pushTapVoice();
+      // 刚填上 Key：台词的语音现在才生成得出来。
+      assistant?.prewarmTapLines?.();
       return { ok: true, mask };
     },
     // 对话（LLM）的 key 状态：只回掩码，**绝不回明文 key**。
@@ -958,6 +1020,13 @@ app.whenReady().then(async () => {
     cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
     // 清除一个快捷键（= 不设它）。只有允许为空的槽位能清。
     clearHotkey: (slot) => system?.clearHotkey?.(slot) || false,
+    // —— 插件 ——
+    // 设置窗口的「插件」分区：列出全部插件、开关它们。
+    //
+    // 插件宿主是**后**建的（它要扫盘），所以这里取的是实时变量：
+    // 调用发生在宿主就绪之后，那时 plugins 已经不是 null 了。
+    listPlugins: () => plugins?.listAll() || [],
+    setPluginEnabled: (id, enabled) => plugins?.setEnabled(String(id || ''), Boolean(enabled)),
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
@@ -1086,13 +1155,31 @@ app.whenReady().then(async () => {
   // pushVolume 推不出东西，音量就停在渲染层的默认值 0.8 上，
   // 用户设的 0.3 永远传不过去。
   pushVolume();
+  // 「点桌宠时的声音」池子同理：助理没起来时推不出「能不能念台词」。
+  void pushTapVoice();
 
-  // 插件注册表：待办、提醒、番茄钟……都在这儿。
-  // 它读写的都是助理的状态——助理是唯一的状态来源。
-  plugins = createPluginRegistry({
+  // 插件宿主：扫 plugins/ 目录，把每个子目录读成一个插件。
+  // 待办、提醒、番茄钟……都在那儿；它们读写的都是助理的状态——
+  // 助理是唯一的状态来源。
+  plugins = await createPluginHost({
+    rootDir: ROOT,
+    userDataDir: app.getPath('userData'),
+    userPluginsDir: userPluginsDir(app.getPath('userData')),
     assistant,
     openSettings,
   });
+  await plugins.load();
+
+  // 插件的独立窗口与桌面小部件。
+  pluginWindows = createPluginWindowController({
+    rootDir: ROOT,
+    host: plugins,
+    getPetWindow: () => win,
+    getPetRect: () => petVisibleRect(),
+    getDisplays: () => currentDisplays(),
+  });
+  // 宿主负责找插件，窗口负责开窗：两者互相认识一下。
+  plugins.attachWindows(pluginWindows);
 
   // 本机程序索引：面板的搜索框要能搜到本机的程序。
   //
@@ -1123,6 +1210,10 @@ app.whenReady().then(async () => {
     getDisplays: () => currentDisplays(),
     plugins,
     apps,
+    // 内置功能（设置、聊天记录）要用：设置开的是设置窗口，
+    // 聊天记录读的是助理里的聊天记录。
+    assistant,
+    openSettings,
     // 输入框里的话直接发给桌宠（不走插件动作通道）。
     onChat: (text) => {
       // 一定要接住：chat() 里给气泡发消息的调用万一抛错，
@@ -1137,10 +1228,12 @@ app.whenReady().then(async () => {
   win.on('move', () => {
     bubble?.reposition();
     panel?.reposition();
+    pluginWindows?.reposition();
   });
   win.on('resize', () => {
     bubble?.reposition();
     panel?.reposition();
+    pluginWindows?.reposition();
   });
   // 桌宠被藏起来时，气泡与面板不该独自留在桌面上。
   win.on('hide', () => {
@@ -1157,6 +1250,17 @@ app.whenReady().then(async () => {
 });
 
 // 'activate' 是 macOS 专用事件，Windows 上永不触发——本项目只做 Windows，不留跨平台分支。
+
+/**
+ * 退出前把插件窗口收掉。
+ *
+ * 退出时不需要保留任何界面，先拆掉最省事：
+ * 它们的周期刷新计时器也跟着一起停了。
+ */
+app.on('before-quit', () => {
+  pluginWindows?.destroyAll?.();
+});
+
 // 退出前把待写入的设置落盘，否则用户在 300ms 防抖窗口内退出就会丢掉改动。
 app.on('before-quit', flushPendingSave);
 

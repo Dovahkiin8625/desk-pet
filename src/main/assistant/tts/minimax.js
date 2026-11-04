@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { TTS_HOSTS } from '../../../shared/assistant.js';
+import { writeFileAtomic } from '../../store.js';
 
 /**
  * MiniMax 语音合成（T2A v2）客户端。
@@ -226,8 +227,13 @@ export async function synthesizeCached(params, { cacheDir, fetchImpl = fetch, ho
     }
     const result = await synthesizeWithProbe(params, { fetchImpl, hosts });
     try {
-      await mkdir(cacheDir, { recursive: true });
-      await writeFile(file, result.audio);
+      // 原子写：先写临时文件再改名。
+      //
+      // 缓存文件被读走半截的后果很糟——半截的 mp3 会被当成有效缓存
+      // 一直用下去，桌宠那句话从此永远是哑的，而且没有任何地方会报错。
+      // 台词音频是**后台预生成**的，写的时候用户随时可能点桌宠：
+      // 那一次点击读到的正是正在写的那个文件。
+      await writeFileAtomic(cacheDir, `${key}.mp3`, result.audio);
       await pruneCache(cacheDir);
     } catch {
       // 缓存写不进去不影响合成结果——只是下次还要再合成一次。

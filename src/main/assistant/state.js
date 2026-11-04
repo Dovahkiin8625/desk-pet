@@ -2,12 +2,14 @@ import { readJson, writeJson } from '../store.js';
 import {
   DEFAULT_TTS,
   DEFAULT_LLM,
+  DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_MESSAGES,
   MAX_CHAT_FACTS,
 } from '../../shared/assistant.js';
 import { createPomodoroState } from './pomodoro.js';
 import { DEFAULT_VOLUME } from '../../shared/volume.js';
+import { MAX_TAP_LINES, MAX_TAP_LINE_LENGTH } from '../../shared/tapVoice.js';
 
 const FILE_NAME = 'assistant.json';
 
@@ -30,6 +32,13 @@ export const DEFAULT_ASSISTANT = Object.freeze({
   // sound.volume 是**总音量**：提示音与桌宠说话共用一个值。
   sound: { enabled: true, volume: DEFAULT_VOLUME },
   hotAlert: { enabled: true },
+  // 点桌宠时说的话。
+  // `modelSound` 默认**关**：模型自带的声音要用户自己点名才加进随机池。
+  tapTalk: {
+    enabled: true,
+    modelSound: false,
+    lines: [...DEFAULT_TAP_LINES],
+  },
   tts: { ...DEFAULT_TTS },
   llm: structuredClone(DEFAULT_LLM),
   chat: { messages: [], facts: [] },
@@ -113,6 +122,28 @@ export function sanitizeAssistant(raw) {
     };
   }
   if (isPlainObject(raw.hotAlert)) out.hotAlert = { enabled: Boolean(raw.hotAlert.enabled) };
+
+  if (isPlainObject(raw.tapTalk)) {
+    // 台词：类型不对就退回默认；太长的截断；重复的只留第一句。
+    const rawLines = Array.isArray(raw.tapTalk.lines) ? raw.tapTalk.lines : null;
+    const lines =
+      rawLines === null
+        ? [...DEFAULT_TAP_LINES]
+        : rawLines
+            .filter((l) => typeof l === 'string')
+            .map((l) => l.trim().slice(0, MAX_TAP_LINE_LENGTH))
+            .filter(Boolean)
+            .filter((l, i, arr) => arr.indexOf(l) === i)
+            .slice(0, MAX_TAP_LINES);
+    out.tapTalk = {
+      // 字段缺了（老版本写出来的文件）就沿用默认值——
+      // 「点桌宠时说话」默认是**开**的，Boolean(undefined) 会把它关掉。
+      enabled:
+        raw.tapTalk.enabled === undefined ? out.tapTalk.enabled : Boolean(raw.tapTalk.enabled),
+      modelSound: Boolean(raw.tapTalk.modelSound),
+      lines,
+    };
+  }
 
   if (isPlainObject(raw.tts)) {
     out.tts = {

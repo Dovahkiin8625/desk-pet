@@ -24,6 +24,49 @@
 export const ALPHA_MIN = 16;
 
 /**
+ * 在离屏渲染期间关掉**面剔除**。
+ *
+ * 为什么必须关掉：PIXI 的 extract 会用一个 Y 轴翻转的投影把舞台画进
+ * 离屏纹理（最后再翻回来，所以取出来的图看着是正的）。三角形绕序
+ * 随之反转——而 Live2D 的部件大多是**单面**的（双面的只占少数，
+ * Wanko 34 个部件里只有 1 个是双面的），于是被整个剔除掉：
+ * 量出来的掩膜缺一大块，有的模型（Wanko）整只都不剩，
+ * 结果是「这个形象的点击区域是空的」。
+ *
+ * 屏幕上的渲染不走这条路（它用的是屏幕的投影矩阵，绕序是对的），
+ * 所以这个毛病只在测量时出现。
+ *
+ * 关掉剔除只影响这一次离屏渲染：我们要的是 alpha 掩膜，
+ * 双面单面都得画出来。
+ */
+function withoutFaceCulling(renderer, fn) {
+  const gl = renderer?.gl;
+  if (!gl) return fn();
+  const originalEnable = gl.enable.bind(gl);
+  const originalDisable = gl.disable.bind(gl);
+  gl.enable = (cap) => {
+    if (cap !== gl.CULL_FACE) originalEnable(cap);
+  };
+  gl.disable = (cap) => {
+    if (cap !== gl.CULL_FACE) originalDisable(cap);
+  };
+  try {
+    return fn();
+  } finally {
+    gl.enable = originalEnable;
+    gl.disable = originalDisable;
+    // 恢复 PIXI 的默认状态（不剔除），并让 PIXI 的状态缓存失效：
+    // 刚才那一次渲染动过 GL 状态，缓存若还留着，下一帧可能画错。
+    try {
+      gl.disable(gl.CULL_FACE);
+      renderer.state?.reset?.();
+    } catch {
+      /* 恢复失败不影响功能：下一帧 Live2D 自己会重设状态 */
+    }
+  }
+}
+
+/**
  * 掩膜相对提取图像的缩小比例。
  *
  * 掩膜是逐点命中判定用的，1/2 意味着一个掩膜格覆盖 2×2 个画布像素：
@@ -82,7 +125,7 @@ export function createSilhouette({ app, refreshIntervalMs = DEFAULT_REFRESH_MS, 
       // 区域要按 PIXI 自己的算法算（generateTexture 内部也是这么算的），
       // 否则提取图像与区域的对应关系会差一个像素。
       region = { ...app.stage.getLocalBounds(null, true) };
-      el = extract.canvas(app.stage);
+      el = withoutFaceCulling(renderer, () => extract.canvas(app.stage));
     } catch (err) {
       console.warn('[desk-pet] 轮廓测量失败：', err?.message || err);
       return null;

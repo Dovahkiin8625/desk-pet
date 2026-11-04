@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>系统监控</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      overflow: hidden;
+      height: 100%;
+      font: 12px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      color: #2b2a26;
+    }
+    /* 卡片：窗口是透明的，小部件得自己带一块底。 */
+    #card {
+      box-sizing: border-box;
+      width: 100%;
+      height: 100%;
+      padding: 8px 10px;
+      background: rgba(255, 253, 248, 0.94);
+      border: 1px solid #d8d2c4;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(40, 34, 24, 0.18);
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      /* 整块都能拖：桌面小部件要能挪位置。 */
+      -webkit-app-region: drag;
+    }
+    #head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 11px;
+      color: #6d6558;
+    }
+    #head .spacer { flex: 1; }
+    #head button {
+      -webkit-app-region: no-drag;
+      border: none;
+      background: transparent;
+      color: #9a9384;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 5px;
+    }
+    #head button:hover { background: #efe6d2; color: #6d6558; }
+    .row { display: flex; align-items: center; gap: 6px; }
+    .row .name { width: 26px; color: #8a8272; flex: none; }
+    .bar {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: #ece6d8;
+      overflow: hidden;
+    }
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      border-radius: 3px;
+      background: #c9b98c;
+      transition: width 0.4s ease;
+    }
+    .bar.hot i { background: #d08a6a; }
+    .row .val { width: 34px; text-align: right; color: #6d6558; flex: none; font-variant-numeric: tabular-nums; }
+    #foot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #8a8272;
+      font-size: 11px;
+    }
+    #foot .spacer { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="card">
+    <div id="head">
+      <span>系统监控</span>
+      <span class="spacer"></span>
+      <button id="expand" title="变回独立窗口">▣</button>
+      <button id="close" title="收起来">✕</button>
+    </div>
+    <div class="row">
+      <span class="name">CPU</span>
+      <span class="bar"><i id="cpu-bar"></i></span>
+      <span class="val" id="cpu-val">—</span>
+    </div>
+    <div class="row">
+      <span class="name">内存</span>
+      <span class="bar"><i id="mem-bar"></i></span>
+      <span class="val" id="mem-val">—</span>
+    </div>
+    <div id="foot">
+      <span id="thermal">温度 —</span>
+      <span class="spacer"></span>
+      <span id="power"></span>
+    </div>
+  </div>
+
+  <script type="module" src="/plugins/system/widget.js"></script>
+</body>
+</html>

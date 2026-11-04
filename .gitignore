@@ -13,9 +13,8 @@ playwright-report/
 .playwright-mcp/
 
 # e2e 用例的临时目录：摆好的假模型与假 userData，跑完就删。
-.tmp-e2e-userdata/
-.tmp-e2e-src/
-.tmp-e2e-cubism2/
+# 每条用例用自己的一份（.tmp-e2e-<用例名>/），所以这里用通配。
+.tmp-e2e-*/
 
 # Superpowers 的 SDD 工作区（台账、任务简报、审查包）——是过程产物，不入库。
 .superpowers/
@@ -27,13 +26,15 @@ minimax-api-key
 *.key
 *.pem
 
-# Live2D 官方样例模型资源（约 9MB），由 `npm run setup` 下载，不入库。
+# Live2D 官方样例模型资源（每个约 9MB），由 `npm run setup` 下载，不入库。
 # 仅保留各模型的手写清单 pet.json。
-# 注意：不要写成 `assets/live2d/models/*`，那样会把模型目录整体排除，
-# git 不会进入被排除的目录，反向规则也就无法重新包含 pet.json。
-assets/live2d/models/haru/*
-!assets/live2d/models/haru/pet.json
-assets/live2d/models/natori/*
-!assets/live2d/models/natori/pet.json
-minimax-api-key
-assets/live2d/models/
+#
+# 注意：不要写成 `assets/live2d/models/*` 或 `assets/live2d/models/*/`，
+# 那样会把**模型目录**整体排除——git 不会进入被排除的目录，
+# 反向规则也就无法重新包含 pet.json。
+# 这里排除的是「模型目录里的东西」（往下两层）：模型文件、纹理目录、
+# 动作目录都在里面，而 pet.json 正好摆在模型目录的第一层，
+# 所以一条反向规则就能把各模型的清单重新包含进来——
+# 以后再加预制模型，不必回来改这个文件。
+assets/live2d/models/*/*
+!assets/live2d/models/*/pet.json

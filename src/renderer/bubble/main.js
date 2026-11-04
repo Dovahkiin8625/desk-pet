@@ -43,7 +43,7 @@ function sendSize(size) {
     clearTimeout(reportTimer);
     reportTimer = null;
   }
-  window.bubble?.reportSize?.(size.width, size.height);
+  window.bubble?.reportSize?.(size);
 }
 
 /**
@@ -56,8 +56,20 @@ function reportSize(force = false) {
   requestAnimationFrame(() => {
     const rect = bubble.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
-    // 加上 body 的内边距（阴影留白）。
-    const size = { width: Math.ceil(rect.width) + 12, height: Math.ceil(rect.height) + 12 };
+    // body 的内边距是「影子与小尾巴的留白」：它在窗口**里面**，
+    // 不是气泡的一部分——所以报尺寸时要分开报：
+    // 主进程拿本体去摆位（留白不算「离桌宠多远」），再把窗口撑大一圈。
+    //
+    // 数值从样式里读，别写死——改了 CSS 忘了改这里，气泡就会被切。
+    const style = getComputedStyle(document.body);
+    const size = {
+      width: Math.ceil(rect.width),
+      height: Math.ceil(rect.height),
+      paddingLeft: parseFloat(style.paddingLeft) || 0,
+      paddingRight: parseFloat(style.paddingRight) || 0,
+      paddingTop: parseFloat(style.paddingTop) || 0,
+      paddingBottom: parseFloat(style.paddingBottom) || 0,
+    };
     const changed =
       Math.abs(size.width - lastReported.width) >= MIN_SIZE_DELTA ||
       Math.abs(size.height - lastReported.height) >= MIN_SIZE_DELTA;

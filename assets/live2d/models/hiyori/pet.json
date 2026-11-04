@@ -1,0 +1,13 @@
+{
+  "id": "hiyori",
+  "name": "Hiyori",
+  "model3": "Hiyori.model3.json",
+  "viewport": { "width": 300, "height": 560 },
+  "fit": { "scale": 1.0, "anchor": [0.5, 1.0], "offset": [0, 0] },
+  "motions": {
+    "idle": { "group": "Idle", "index": 0 },
+    "tapHead": { "group": "TapBody", "index": 0 },
+    "tapBody": { "group": "TapBody", "index": 0 },
+    "drag": { "group": "TapBody", "index": 0 }
+  }
+}

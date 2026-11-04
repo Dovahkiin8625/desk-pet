@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('pet', {
   openSettings: () => ipcRenderer.invoke('pet:openSettings'),
   // 弹出插件面板：左键点桌宠时走这条路。
   openPanel: () => ipcRenderer.invoke('pet:openPanel'),
+  // 报告「桌宠被点了」：主进程据此决定要不要念一句台词。
+  //
+  // 单向通道（send）：点桌宠是最高频的交互，不能等回执。
+  reportTap: () => ipcRenderer.send('pet:tap'),
   // 增量移动窗口：传的是「相对上一次的位移」，不是绝对坐标。
   // 绝对坐标在混合 DPI / 多显示器下会漂移，累加增量才不会。
   moveWindowBy: (dx, dy) => ipcRenderer.invoke('pet:moveWindowBy', { dx, dy }),
@@ -86,6 +90,10 @@ contextBridge.exposeInMainWorld('pet', {
   onSoundEnabled: (cb) => {
     ipcRenderer.on('pet:soundEnabled', (_e, payload) => cb(payload?.enabled !== false));
   },
+  // 「点桌宠时的声音」池子的成分：能不能念台词、模型自带的声音在不在池里。
+  onTapVoice: (cb) => {
+    ipcRenderer.on('pet:tapVoice', (_e, payload) => cb(payload));
+  },
   // —— 系统级开关（第六部分）——
   getSystemState: () => ipcRenderer.invoke('pet:getSystemState'),
   // slot 指明是**哪一个**快捷键（'hotkey' / 'panelHotkey'）。
@@ -122,4 +130,8 @@ contextBridge.exposeInMainWorld('pet', {
   // 对话（LLM）的 key：留空表示沿用 MiniMax 的那个。
   getLlmStatus: () => ipcRenderer.invoke('pet:getLlmStatus'),
   setLlmApiKey: (key) => ipcRenderer.invoke('pet:setLlmApiKey', key),
+  // —— 插件 ——
+  // 设置窗口的「插件」分区：列出全部插件、开关它们。
+  listPlugins: () => ipcRenderer.invoke('pet:listPlugins'),
+  setPluginEnabled: (id, enabled) => ipcRenderer.invoke('pet:setPluginEnabled', id, enabled),
 });
