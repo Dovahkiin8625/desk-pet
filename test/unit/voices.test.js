@@ -32,6 +32,29 @@ test('默认音色在建议清单里', () => {
   assert.ok(ids.includes(DEFAULT_TTS.voiceId), `${DEFAULT_TTS.voiceId} 不在建议清单里`);
 });
 
+test('这张表只放好听的女声', () => {
+  // 桌宠的声音就该是好听的女性声音。
+  // 男声一条不留（清单外的 id 仍可以自己填，所以这是「不推荐」而不是「不能用」）。
+  //
+  // id 用 'female' 开头的是女声，所以 'male' 前面不能是 'fe'——
+  // 否则 'female' 自己也会被当成男声。
+  const maleish = SUGGESTED_VOICES.filter(
+    (v) => /(?<!fe)male|gentleman/i.test(v.id) || /男|绅士/.test(v.label)
+  );
+  assert.deepEqual(
+    maleish.map((v) => v.id),
+    [],
+    `清单里有男声：${maleish.map((v) => v.id).join('、')}`
+  );
+  // 老大妈一类的也不要。
+  const oldish = SUGGESTED_VOICES.filter((v) => /大婶|奶奶|大爷|老太/.test(v.label));
+  assert.deepEqual(
+    oldish.map((v) => v.id),
+    [],
+    `清单里有大婶/奶奶一类的：${oldish.map((v) => v.id).join('、')}`
+  );
+});
+
 test('voiceLabel：已知 id 给中文标签', () => {
   assert.equal(voiceLabel('female-shaonv'), '少女音色');
 });

@@ -1,5 +1,6 @@
 import { DEFAULT_VOLUME } from '../shared/volume.js';
 import { parseTapLines } from '../shared/tapVoice.js';
+import { resolveVoiceId, applyVoiceChoice } from '../shared/voiceChoice.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
@@ -22,8 +23,12 @@ const soundBox = document.getElementById('sound');
 
 // 语音
 const ttsEnabledBox = document.getElementById('ttsEnabled');
+// 音色有两个控件：下拉框选常用音色，输入框填清单以外的 id。
+// 哪个生效由 shared/voiceChoice.js 的 resolveVoiceId 说了算。
+const voiceSelect = document.getElementById('voiceSelect');
 const voiceInput = document.getElementById('voiceId');
 const voiceList = document.getElementById('voiceList');
+const voiceCurrent = document.getElementById('voiceCurrent');
 const speedInput = document.getElementById('speed');
 const speedVal = document.getElementById('speedVal');
 const volumeInput = document.getElementById('volume');
@@ -383,6 +388,17 @@ function updateVolume(v) {
 // 助理偏好
 // ---------------------------------------------------------------------------
 
+/** 下拉框里那些常用音色的 id。 */
+function knownVoiceIds() {
+  return Array.from(voiceSelect.options).map((o) => o.value);
+}
+
+/** 「当前生效」那一行：显示真正会被发去接口的那个 id。 */
+function updateVoiceCurrent() {
+  const id = resolveVoiceId(voiceInput.value, voiceSelect.value);
+  voiceCurrent.textContent = id || '—';
+}
+
 /** 把助理状态填进桌面助理/语音那一区的控件。 */
 function applyAssistantState(state) {
   if (!state) return;
@@ -390,7 +406,11 @@ function applyAssistantState(state) {
   greetingBox.checked = Boolean(state.greeting?.enabled);
   soundBox.checked = Boolean(state.sound?.enabled);
   ttsEnabledBox.checked = Boolean(state.tts?.enabled);
-  voiceInput.value = state.tts?.voiceId || '';
+  // 音色：清单里的走下拉框，清单外的填进自定义框。
+  const voice = applyVoiceChoice(state.tts?.voiceId || '', knownVoiceIds());
+  voiceSelect.value = voice.select;
+  voiceInput.value = voice.custom;
+  updateVoiceCurrent();
   speedInput.value = String(state.tts?.speed ?? 1);
   speedVal.textContent = Number(state.tts?.speed ?? 1).toFixed(2);
   setRangeFill(speedInput);
@@ -442,7 +462,7 @@ function assistantPatchFromControls() {
     // 这里写回一份旧值，用户在插件页面改过的设置就被覆盖了。
     tts: {
       enabled: ttsEnabledBox.checked,
-      voiceId: voiceInput.value.trim(),
+      voiceId: resolveVoiceId(voiceInput.value, voiceSelect.value),
       speed: Number(speedInput.value),
     },
     tapTalk: {
@@ -502,7 +522,17 @@ ttsEnabledBox.addEventListener('change', () => {
   persistAssistantPrefs();
 });
 
+// 音色：下拉框和自定义输入框都是「改了就存」。
+voiceSelect.addEventListener('change', () => {
+  // 选了清单里的音色，自定义框就该让位——
+  // 两个控件同时指着一个东西，用户会以为自己填的那串才是生效的。
+  voiceInput.value = '';
+  updateVoiceCurrent();
+  persistAssistantPrefs();
+});
+
 voiceInput.addEventListener('change', () => {
+  updateVoiceCurrent();
   persistAssistantPrefs();
 });
 
@@ -1072,12 +1102,21 @@ async function init() {
     opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
     modelSelect.appendChild(opt);
   }
-  // 音色建议表：来自主进程（那边有一份**验过**的清单）。
+  // 音色：下拉框选常用音色（中文名），datalist 让自定义框里能查到 id。
+  //
+  // 下拉框**不能**用 datalist 代替：datalist 的候选弹层会按输入框当前的
+  // 内容过滤，字段预填着当前音色 id 时，几十条里只显示前缀匹配的那几条——
+  // 看着就像「音色没加上」。
   for (const v of tts?.voices || []) {
     const opt = document.createElement('option');
     opt.value = v.id;
-    opt.label = v.label;
-    voiceList.appendChild(opt);
+    opt.textContent = v.label;
+    voiceSelect.appendChild(opt);
+
+    const item = document.createElement('option');
+    item.value = v.id;
+    item.label = v.label;
+    voiceList.appendChild(item);
   }
   // 选项填好了：广播里的值比 getSettings 的结果新，优先用它。
   const latest = { ...settings, ...(pending || {}) };
@@ -1086,6 +1125,9 @@ async function init() {
   updateScale(latest.scale);
   updateOpacity(latest.opacity);
   applyAssistantState(assistantState);
+  // 助理状态拉不到时 applyAssistantState 会直接返回，
+  // 音色那一栏就还是初始的样子——「当前生效」得照常显示。
+  updateVoiceCurrent();
   applySystemState(systemState);
   showKeyStatus(tts);
   showLlmKeyStatus(llm);

@@ -438,12 +438,23 @@
           </div>
 
           <div class="field">
-            <label for="voiceId">音色</label>
+            <label for="voiceSelect">音色</label>
             <div class="control">
-              <input type="text" id="voiceId" list="voiceList" placeholder="female-shaonv">
+              <select id="voiceSelect"></select>
+            </div>
+          </div>
+          <p class="hint">当前生效：<code id="voiceCurrent">—</code></p>
+
+          <div class="field">
+            <label for="voiceId">自定义音色 id</label>
+            <div class="control">
+              <input type="text" id="voiceId" list="voiceList" placeholder="留空则用上面选中的">
               <datalist id="voiceList"></datalist>
             </div>
           </div>
+          <p class="hint">
+            上面是验过的常用音色。想用清单以外的 id，直接填在这里——填了以它为准。
+          </p>
 
           <div class="field">
             <label for="speed">语速</label>
