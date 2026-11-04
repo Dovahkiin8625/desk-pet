@@ -6,12 +6,16 @@ export function registerIpc({
   saveSettings,
   listModels,
   switchModel,
+  importModel,
+  deleteModel,
   onOpenSettings,
   onShowContextMenu,
   onOpenPanel,
   onMoveBy,
   onDragStart,
   onDragEnd,
+  onVisibleRect,
+  onSetClickThrough,
   onRendererReady,
   onModelSwitchResult,
   onModelError,
@@ -25,11 +29,18 @@ export function registerIpc({
   getSystemState,
   recordHotkey,
   cancelHotkeyRecording,
+  clearHotkey,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
   ipcMain.handle('pet:listModels', () => listModels());
   ipcMain.handle('pet:switchModel', (_e, modelId) => switchModel(modelId));
+  // 导入 / 删除用户自己的 Live2D 模型。
+  //
+  // event 要透传给主进程：这两个动作会弹**原生**对话框，
+  // 主进程据此校验发起方是不是设置窗口（渲染层不是可信边界）。
+  ipcMain.handle('pet:importModel', (e) => importModel(e));
+  ipcMain.handle('pet:deleteModel', (e, modelId) => deleteModel(e, modelId));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
   // 左键点桌宠 → 弹出插件面板。
@@ -55,6 +66,15 @@ export function registerIpc({
   ipcMain.handle('pet:dragEnd', () => {
     onDragEnd();
   });
+  // 渲染层量出的可见矩形（桌宠本体在窗口里的哪一块）。
+  // 单向通道：主进程收下就行，不需要回执。
+  ipcMain.on('pet:visibleRect', (_e, rect) => {
+    onVisibleRect?.(rect);
+  });
+  // 「透明处不吃鼠标」：渲染层按光标位置告诉主进程要不要让开点击。
+  ipcMain.handle('pet:setClickThrough', (_e, payload) => {
+    onSetClickThrough?.(Boolean(payload?.enabled));
+  });
 
   // —— 桌面助理 ——
   // 助理状态：设置窗口用它显示与修改偏好（待办/提醒在插件面板里管）。
@@ -73,6 +93,10 @@ export function registerIpc({
   // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
   ipcMain.handle('pet:getSystemState', () => getSystemState());
   // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
-  ipcMain.handle('pet:recordHotkey', () => recordHotkey());
+  // slot 指明是**哪一个**快捷键（见 shared/hotkeys.js 的槽位清单）。
+  ipcMain.handle('pet:recordHotkey', (_e, slot) => recordHotkey(slot));
   ipcMain.handle('pet:cancelHotkeyRecording', () => cancelHotkeyRecording());
+  // 清除一个快捷键（= 不设它）：注销要由主进程做，
+  // 渲染层只负责把用户的意思递过来。
+  ipcMain.handle('pet:clearHotkey', (_e, slot) => clearHotkey(slot));
 }

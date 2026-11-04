@@ -12,6 +12,11 @@ test-results/
 playwright-report/
 .playwright-mcp/
 
+# e2e 用例的临时目录：摆好的假模型与假 userData，跑完就删。
+.tmp-e2e-userdata/
+.tmp-e2e-src/
+.tmp-e2e-cubism2/
+
 # Superpowers 的 SDD 工作区（台账、任务简报、审查包）——是过程产物，不入库。
 .superpowers/
 

@@ -19,6 +19,10 @@ export function createDragController({ threshold = DRAG_THRESHOLD, onTap, onDrag
     get dragging() {
       return dragging;
     },
+    /** 指针是不是还按着（没松开、没取消）。 */
+    get pressed() {
+      return down !== null;
+    },
     pointerDown(e) {
       if (e.button !== 0) return;
       // 已有拖拽在进行时，第二根手指的 pointerdown 不能打断它：

@@ -38,8 +38,14 @@ export function registerSchemePrivileges() {
   ]);
 }
 
-/** 必须在 app ready 之后调用。 */
-export function registerAppProtocol(rootDir) {
+/**
+ * 必须在 app ready 之后调用。
+ *
+ * virtualRoots：「URL 前缀 → 真实目录」的映射。用户导入的 Live2D 模型
+ * 存在 userData（安装目录可能没有写权限），于是给它一个虚拟根，
+ * 渲染层就能用和内置模型一样的 URL 形状去取它们。
+ */
+export function registerAppProtocol(rootDir, virtualRoots = null) {
   protocol.handle(SCHEME, async (request) => {
     const url = new URL(request.url);
     // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
@@ -67,7 +73,7 @@ export function registerAppProtocol(rootDir) {
     if (segments.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) {
       return new Response('Forbidden', { status: 403 });
     }
-    const resolved = resolveStaticFile(rootDir, url.pathname);
+    const resolved = resolveStaticFile(rootDir, url.pathname, virtualRoots);
     if (!resolved) return new Response('Not Found', { status: 404 });
     // 密钥类文件一律不提供：app:// 的根是整个项目目录，
     // 而根目录里可能躺着用户的 API Key（minimax-api-key）。

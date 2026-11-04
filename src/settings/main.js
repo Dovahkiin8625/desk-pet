@@ -1,6 +1,8 @@
 import { DEFAULT_VOLUME } from '../shared/volume.js';
 
 const modelSelect = document.getElementById('model');
+const importModelBtn = document.getElementById('importModel');
+const deleteModelBtn = document.getElementById('deleteModel');
 const scaleInput = document.getElementById('scale');
 const opacityInput = document.getElementById('opacity');
 const scaleVal = document.getElementById('scaleVal');
@@ -54,10 +56,35 @@ const autoLaunchBox = document.getElementById('autoLaunch');
 const clickThroughBox = document.getElementById('clickThrough');
 const edgeSnapBox = document.getElementById('edgeSnap');
 const dockEnabledBox = document.getElementById('dockEnabled');
-const hotkeyInput = document.getElementById('hotkeyValue');
-const recordHotkeyBtn = document.getElementById('recordHotkey');
-const hotkeyHint = document.getElementById('hotkeyHint');
 const systemError = document.getElementById('systemError');
+
+/**
+ * 两个全局快捷键在界面上的对应物。
+ *
+ * 键名与主进程的**槽位名**一一对应（见 src/shared/hotkeys.js）：
+ * 主进程推来的状态带着槽位名，界面据此知道说的是哪一个快捷键。
+ */
+const HOTKEY_FIELDS = {
+  hotkey: {
+    input: document.getElementById('hotkeyValue'),
+    button: document.getElementById('recordHotkey'),
+    hint: document.getElementById('hotkeyHint'),
+    setLabel: '重新录制',
+    // 「呼出/隐藏桌宠」永远有值（默认 Control+Shift+D），
+    // 所以未设置时也写着「重新录制」——按钮文案不会在加载时闪一下。
+    unsetLabel: '重新录制',
+    emptyHint: '呼出 / 隐藏桌宠。被别的程序占用时这里会写明。',
+  },
+  panelHotkey: {
+    input: document.getElementById('panelHotkeyValue'),
+    button: document.getElementById('recordPanelHotkey'),
+    clearButton: document.getElementById('clearPanelHotkey'),
+    hint: document.getElementById('panelHotkeyHint'),
+    setLabel: '重新录制',
+    unsetLabel: '录制',
+    emptyHint: '唤出输入框（面板的搜索框），可以直接打字。默认不设。',
+  },
+};
 
 /**
  * 状态栏。
@@ -226,10 +253,11 @@ function refreshNavSummaries() {
 
   setSummary('memory', `${llmFactsList.children.length} 条`);
 
-  // 系统：五项里开了几项（快捷键非空即算「开」）。
+  // 系统：六项里开了几项（快捷键非空即算「开」）。
   const systemFlags = [
     autoLaunchBox.checked,
-    Boolean(hotkeyInput.value.trim()),
+    Boolean(HOTKEY_FIELDS.hotkey.input.value.trim()),
+    Boolean(HOTKEY_FIELDS.panelHotkey.input.value.trim()),
     clickThroughBox.checked,
     edgeSnapBox.checked,
     dockEnabledBox.checked,
@@ -258,6 +286,56 @@ function setModel(id) {
   }
   const known = Array.from(modelSelect.options).some((o) => o.value === id);
   modelSelect.value = known ? id : modelSelect.options[0]?.value || '';
+  updateDeleteEnabled();
+}
+
+// 形象注册表（内置 + 用户导入的）。用来判断选中的是不是「导入的」——
+// 内置模型删不得，那是程序的一部分。
+let knownModels = [];
+
+/** 当前选中的形象能不能删：只有导入的能删。 */
+function updateDeleteEnabled() {
+  const id = modelSelect.value;
+  const entry = knownModels.find((m) => m.id === id);
+  const removable = entry?.source === 'user';
+  deleteModelBtn.disabled = !removable;
+  deleteModelBtn.title = removable
+    ? `删除「${entry.name}」`
+    : '内置模型不能删除——它是程序的一部分。';
+}
+
+/**
+ * 重建形象下拉框。
+ *
+ * 导入/删除之后必须重新拉注册表：新形象的 id 只有主进程知道，
+ * 渲染层这边还拿着旧的列表。
+ */
+async function refreshModelOptions(preferredId) {
+  let models = null;
+  try {
+    models = (await window.pet.listModels()) || [];
+  } catch (err) {
+    console.warn('[desk-pet] 形象列表刷新失败：', err?.message);
+    // 拉不到就别动下拉框：清空之后填不上，比继续显示旧列表糟得多。
+    return;
+  }
+  knownModels = models;
+
+  // 重建选项前先记住当前选中项：清空 select 会把 value 变成空串。
+  const keep = preferredId || modelSelect.value;
+  modelSelect.textContent = '';
+  for (const m of models) {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    // 导入的模型标一下：用户一眼能看出哪些是自己加的、哪些能删。
+    opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
+    modelSelect.appendChild(opt);
+  }
+  if (models.length > 0) {
+    const known = models.some((m) => m.id === keep);
+    modelSelect.value = known ? keep : models[0].id;
+  }
+  updateDeleteEnabled();
 }
 
 function updateScale(v) {
@@ -581,11 +659,14 @@ clearFactsBtn.addEventListener('click', async () => {
 // 状态显示出来，改动也只是转发过去。
 // ---------------------------------------------------------------------------
 
-/** 主进程报上来的快捷键状态。 */
-let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+/** 每个槽位一份状态：{ state, accelerator, error }。 */
+const hotkeyStatus = {
+  hotkey: { state: 'idle', accelerator: '', error: '' },
+  panelHotkey: { state: 'idle', accelerator: '', error: '' },
+};
 
 /**
- * 有没有收到过主进程推来的**带组合**的快捷键状态。
+ * 每个槽位有没有收到过主进程推来的**带组合**的快捷键状态。
  *
  * 快捷键状态有两个来源：主进程的推送（实时）与 getState() 的快照（初始读数）。
  * 快照是**发起拉取那一刻**的值，可能比刚到的推送旧——
@@ -594,7 +675,7 @@ let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
  * 只有**带组合**的推送才算数：那条推送才真的在更新快捷键状态。
  * 不带组合的推送若也置位，首个快照就再也写不进只读框了。
  */
-let hotkeyStatusFromPush = false;
+const hotkeyStatusFromPush = { hotkey: false, panelHotkey: false };
 
 /**
  * 用户改动开关的时刻。
@@ -621,13 +702,24 @@ function applySystemState(state, { keepToggles = false } = {}) {
   }
   // 还没收到过推送时，快照是快捷键的唯一来源；
   // 收到过之后，快照里的值可能比推送旧，就不再用它了。
-  if (!hotkeyStatusFromPush) {
+  if (!hotkeyStatusFromPush.hotkey) {
     if (typeof state.hotkey === 'string' && state.hotkey) {
-      hotkeyInput.value = state.hotkey;
+      HOTKEY_FIELDS.hotkey.input.value = state.hotkey;
     }
-    if (state.hotkeyStatus) hotkeyStatus = state.hotkeyStatus;
+    if (state.hotkeyStatus?.hotkey) hotkeyStatus.hotkey = state.hotkeyStatus.hotkey;
   }
-  applyHotkeyStatus();
+  // 「唤醒输入框」那个**可以是空的**（空 = 不设），
+  // 所以空串也要照写进去——否则清除之后框里还留着旧组合。
+  if (!hotkeyStatusFromPush.panelHotkey) {
+    if (typeof state.panelHotkey === 'string') {
+      HOTKEY_FIELDS.panelHotkey.input.value = state.panelHotkey;
+    }
+    if (state.hotkeyStatus?.panelHotkey) {
+      hotkeyStatus.panelHotkey = state.hotkeyStatus.panelHotkey;
+    }
+  }
+  applyHotkeyStatus('hotkey');
+  applyHotkeyStatus('panelHotkey');
   // 系统级失败的原因（开机自启写注册表失败之类）。
   // 「失败必须留痕 + 在界面上说得出来」那半的载体——只有终端日志用户看不见。
   if (state.lastError) {
@@ -659,16 +751,23 @@ async function refreshSystemState() {
   }
 }
 
-/** 快捷键那一行的文字：按钮文案 + 说明行。 */
-function applyHotkeyStatus() {
-  if (hotkeyStatus.state === 'recording') {
-    recordHotkeyBtn.textContent = '请按下组合键…（Esc 取消）';
-    hotkeyHint.textContent = '按下 Ctrl / Alt / Shift 加一个键。';
+/**
+ * 快捷键那一行的文字：按钮文案 + 说明行。
+ *
+ * 按槽位分别渲染：两个快捷键各说各的，状态也是各存各的。
+ */
+function applyHotkeyStatus(slotKey) {
+  const field = HOTKEY_FIELDS[slotKey];
+  const status = hotkeyStatus[slotKey];
+  if (!field || !status) return;
+  if (status.state === 'recording') {
+    field.button.textContent = '请按下组合键…（Esc 取消）';
+    field.hint.textContent = '按下 Ctrl / Alt / Shift 加一个键。';
     return;
   }
-  recordHotkeyBtn.textContent = '重新录制';
-  if (hotkeyStatus.state === 'error') {
-    const reason = hotkeyStatus.error || '这个组合不能用了';
+  field.button.textContent = status.accelerator ? field.setLabel : field.unsetLabel;
+  if (status.state === 'error') {
+    const reason = status.error || '这个组合不能用了';
     // 失败时要把「现在用的是哪个」一起写出来：
     // 只说失败不说保留了什么，用户得自己往上面那个框里找。
     //
@@ -676,37 +775,63 @@ function applyHotkeyStatus() {
     // state:'error' + 同一个组合，而那个组合根本没注册上——
     // 那样宣称「仍然有效」就是在骗人。
     // 「当前设置的组合」两种情形都成立（上面那个只读框显示的也是它）。
-    hotkeyHint.textContent = hotkeyStatus.accelerator
-      ? `${reason}。当前设置的组合：${hotkeyStatus.accelerator}`
+    field.hint.textContent = status.accelerator
+      ? `${reason}。当前设置的组合：${status.accelerator}`
       : `${reason}。`;
     return;
   }
-  if (hotkeyStatus.state === 'ok' && hotkeyStatus.accelerator) {
-    hotkeyHint.textContent = `已生效：${hotkeyStatus.accelerator}`;
+  if (status.state === 'ok' && status.accelerator) {
+    field.hint.textContent = `已生效：${status.accelerator}`;
     return;
   }
-  hotkeyHint.textContent = '呼出 / 隐藏桌宠。被别的程序占用时这里会写明。';
+  field.hint.textContent = field.emptyHint;
 }
 
-/** 录快捷键：主进程接管按键捕获（before-input-event）。 */
-recordHotkeyBtn.addEventListener('click', async () => {
-  if (hotkeyStatus.state === 'recording') {
-    try {
-      const cancelled = await window.pet.cancelHotkeyRecording?.();
-      // 主进程在系统控制器缺失时返回 false（**不抛**）：静默失败同样要说话。
-      if (!cancelled) show('取消失败：系统还没准备好', 'error');
-    } catch (err) {
-      show(`取消失败：${err?.message || err}`, 'error');
+/**
+ * 录快捷键：主进程接管按键捕获（before-input-event）。
+ *
+ * 两个快捷键共用这一个入口——一次只能录一个，
+ * 主进程那边靠槽位名区分（按键捕获是全局的，不能同时录两个）。
+ */
+for (const [slotKey, field] of Object.entries(HOTKEY_FIELDS)) {
+  field.button.addEventListener('click', async () => {
+    if (hotkeyStatus[slotKey].state === 'recording') {
+      try {
+        const cancelled = await window.pet.cancelHotkeyRecording?.();
+        // 主进程在系统控制器缺失时返回 false（**不抛**）：静默失败同样要说话。
+        if (!cancelled) show('取消失败：系统还没准备好', 'error');
+      } catch (err) {
+        show(`取消失败：${err?.message || err}`, 'error');
+      }
+      return;
     }
-    return;
-  }
+    try {
+      const started = await window.pet.recordHotkey?.(slotKey);
+      // 主进程在系统控制器缺失时返回 false（**不抛**）——
+      // 只在抛错时提示的话，点了没反应就是一次静默失败。
+      if (!started) show('录制失败：系统还没准备好', 'error');
+    } catch (err) {
+      show(`录制失败：${err?.message || err}`, 'error');
+    }
+  });
+}
+
+/**
+ * 清除「唤醒输入框」的快捷键（= 不设它）。
+ *
+ * 注销要由主进程做（渲染层碰不到全局快捷键），
+ * 所以这里只递一个「请清除」的意图过去。
+ */
+HOTKEY_FIELDS.panelHotkey.clearButton.addEventListener('click', async () => {
   try {
-    const started = await window.pet.recordHotkey?.();
-    // 主进程在系统控制器缺失时返回 false（**不抛**）——
-    // 只在抛错时提示的话，点了没反应就是一次静默失败。
-    if (!started) show('录制失败：系统还没准备好', 'error');
+    const ok = await window.pet.clearHotkey?.('panelHotkey');
+    if (!ok) {
+      show('清除失败：主进程拒绝了这次清除', 'error');
+      return;
+    }
+    show('已清除输入框快捷键');
   } catch (err) {
-    show(`录制失败：${err?.message || err}`, 'error');
+    show(`清除失败：${err?.message || err}`, 'error');
   }
 });
 
@@ -765,9 +890,19 @@ async function init() {
   });
 
   // 快捷键状态：录制中 / 成功 / 失败。
+  //
+  // 推送带着**槽位名**：两个快捷键的状态从同一条通道上来，
+  // 不知道说的是哪一个就会张冠李戴。
   window.pet.onHotkeyStatus?.((status) => {
     if (!status) return;
-    hotkeyStatus = status;
+    const slotKey = status.slot;
+    const field = HOTKEY_FIELDS[slotKey];
+    if (!field) return;
+    hotkeyStatus[slotKey] = {
+      state: status.state,
+      accelerator: status.accelerator || '',
+      error: status.error || '',
+    };
     if (status.accelerator) {
       // 闩**只在推送带着组合时**才置位：
       // 推送是快捷键状态的实时通道，收到过之后 getState() 的快照
@@ -776,13 +911,18 @@ async function init() {
       // 但一条**不带组合**的推送（比如刚进录制态、还没录出组合）
       // 并没有在更新快捷键状态——它若也把闩置位，
       // 首个快照就永远写不进只读框，框会一直停在占位符「未设置」。
-      hotkeyStatusFromPush = true;
+      hotkeyStatusFromPush[slotKey] = true;
       // 上面那个只读框显示的是「当前生效的组合」。
       // 推送里的 accelerator 就是当前生效的那一个——
       // 录制成功时旧的此刻已经被注销了，框里还留着它就是骗人。
-      hotkeyInput.value = status.accelerator;
+      field.input.value = status.accelerator;
+    } else if (status.state === 'idle') {
+      // 「空闲」且没有组合 = 这个快捷键被清除了。
+      // 这时框里的旧组合必须抹掉：它已经不生效了。
+      hotkeyStatusFromPush[slotKey] = false;
+      field.input.value = '';
     }
-    applyHotkeyStatus();
+    applyHotkeyStatus(slotKey);
     refreshNavSummaries();
   });
 
@@ -802,10 +942,12 @@ async function init() {
   // 下拉框照填不误——它所在的分区是不是当前分区，与填充无关。
   // （改成「切到外观分区才填」会让 setModel 的竞态兜底失效，
   //   也会让 e2e 里那条「广播先于下拉框填充到达」的用例失守。）
-  for (const m of models) {
+  knownModels = models || [];
+  for (const m of knownModels) {
     const opt = document.createElement('option');
     opt.value = m.id;
-    opt.textContent = m.name;
+    // 导入的模型标一下：用户一眼能看出哪些是自己加的、哪些能删。
+    opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
     modelSelect.appendChild(opt);
   }
   // 音色建议表：来自主进程（那边有一份**验过**的清单）。
@@ -835,6 +977,8 @@ modelSelect.addEventListener('change', async () => {
   // 先给一个「进行中」的反馈：切换要等渲染层回执（最长 12 秒），
   // 期间状态栏不能是空的。
   showPending('切换中…');
+  // 选中项变了：「删除」能不能点取决于它是不是导入的模型。
+  updateDeleteEnabled();
   // 下拉框已经变了，摘要要跟着变。
   refreshNavSummaries();
   let result;
@@ -865,6 +1009,101 @@ modelSelect.addEventListener('change', async () => {
   const label = modelSelect.options[modelSelect.selectedIndex]?.text || requested;
   refreshNavSummaries();
   show(`已切换到 ${label}`);
+});
+
+/**
+ * 导入一个 Live2D 模型。
+ *
+ * 复制模型文件是 IO 密集的（几十 MB 的贴图），期间必须有反馈：
+ * 没有进度提示的话，界面看起来就像卡死了。
+ */
+importModelBtn.addEventListener('click', async () => {
+  importModelBtn.disabled = true;
+  showPending('导入中…');
+  let result;
+  try {
+    result = await window.pet.importModel();
+  } catch (err) {
+    show(`导入失败：${err?.message || err}`, 'error');
+    importModelBtn.disabled = false;
+    return;
+  }
+  importModelBtn.disabled = false;
+
+  // 用户在文件夹选择器里点了取消：不是错误，别弹红色提示。
+  if (result?.canceled) {
+    show('');
+    return;
+  }
+  if (!result || result.ok !== true) {
+    show(`导入失败：${result?.error || '未知原因'}`, 'error');
+    return;
+  }
+  // 注册表变了：重新拉一次，下拉框里才有新形象。
+  await refreshModelOptions(result.model?.id);
+  refreshNavSummaries();
+  if (result.switched === false) {
+    // 模型已经在库里，只是没切过去——这与「导入失败」是两件事，
+    // 说混了会让用户去重复导入一遍。
+    show(`已导入 ${result.model?.name || ''}，但切换失败：${result.error || '未知原因'}`, 'error');
+    return;
+  }
+  show(`已导入并切换到 ${result.model?.name || ''}`);
+});
+
+/**
+ * 删除一个导入的模型。
+ *
+ * 确认框在主进程弹（原生）：模型文件从用户数据目录里消失之后没法撤销，
+ * 一次点击不该就删掉。
+ */
+deleteModelBtn.addEventListener('click', async () => {
+  const id = modelSelect.value;
+  const entry = knownModels.find((m) => m.id === id);
+  if (!entry || entry.source !== 'user') {
+    show('只有导入的模型可以删除。', 'error');
+    return;
+  }
+  deleteModelBtn.disabled = true;
+  let result;
+  try {
+    result = await window.pet.deleteModel(id);
+  } catch (err) {
+    show(`删除失败：${err?.message || err}`, 'error');
+    updateDeleteEnabled();
+    return;
+  }
+  if (result?.canceled) {
+    updateDeleteEnabled();
+    return;
+  }
+  if (!result || result.ok !== true) {
+    show(`删除失败：${result?.error || '未知原因'}`, 'error');
+    updateDeleteEnabled();
+    return;
+  }
+  // 列表变了：重新拉。删掉的形象可能正是当前在用的那个，
+  // 主进程已经把它切走了——它把现在该选哪个一并带回来了。
+  await refreshModelOptions(result.modelId);
+  refreshNavSummaries();
+  show(`已删除 ${result.name || ''}`);
+});
+
+// 主进程导入/删除之后会通知：设置窗口据此刷新下拉框。
+// 少了这一步，新导入的形象不会出现在列表里——
+// 而主进程已经切过去了，用户看到的是「桌宠换了，列表里没有它」。
+//
+// 通知里带着「刷新后该选哪个」：刷新是异步的，而设置广播可能先到
+// 也可能后到，把该选哪个一并告诉它，两条消息到达的先后就无所谓了。
+window.pet.onModelsChanged?.((modelId) => {
+  refreshModelOptions(modelId).catch(() => {});
+});
+
+// 导入进度：复制几十 MB 的贴图要一会儿，没有进度就像卡死了。
+window.pet.onImportProgress?.((p) => {
+  if (!p || p.phase !== 'copy') return;
+  const pct = p.total > 0 ? Math.round((p.copied / p.total) * 100) : 0;
+  showPending(`导入中… ${pct}%（${p.copied}/${p.total}）`);
 });
 
 scaleInput.addEventListener('input', async () => {

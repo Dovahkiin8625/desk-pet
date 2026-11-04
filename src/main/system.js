@@ -8,6 +8,8 @@ import {
   chooseDockSide,
 } from './edgeDock.js';
 import { clampToDisplays, displayForPoint } from './display.js';
+import { HOTKEY_SLOTS, getHotkeySlot } from '../shared/hotkeys.js';
+import { visibleRectOnScreen, windowRectForVisible } from '../shared/petRect.js';
 
 /**
  * 键盘上带 Shift 时会变成的符号 → 基础键。
@@ -74,6 +76,10 @@ export function buildAccelerator(input) {
 /**
  * 系统级开关的控制器：开机自启、全局快捷键、鼠标穿透、边缘吸附与贴边停靠。
  *
+ * 全局快捷键有**两个**（见 shared/hotkeys.js 的槽位清单）：
+ * 一个呼出/隐藏桌宠，一个唤醒输入框。它们共用同一套录制与注册流程，
+ * 差别只在按下去之后做什么——由 `hotkeyActions` 按槽位名注入。
+ *
  * **这个文件以及它的依赖（edgeDock.js / display.js）都不得 import Electron**：
  * 本仓库的单元测试用 `node --test` 跑，没有 Electron 环境。
  * 依赖也不许 import——将来 Task 7 让 edgeDock.js 引入 electron 时，
@@ -89,7 +95,7 @@ export function createSystemController({
   getDisplays,
   getSettings,
   applySettings,
-  onHotkeyAction,
+  hotkeyActions,
   onStateChanged,
   onHotkeyStatus,
   loginItem,
@@ -118,17 +124,44 @@ export function createSystemController({
   let autoLaunchRollback = false;
   // 当前停靠在哪条边（null = 没停靠）。
   let dock = null;
+  // 桌宠**本体**的可见矩形（窗口内坐标）：窗口里真正画着形象的那一块。
+  //
+  // 桌宠窗口是一块固定大小的画布，Live2D 贴图四周通常有透明留白。
+  // 夹紧、吸附、停靠一律按**本体**算：小模型的上半截窗口是空的，
+  // 按窗口算的话它永远差一截才贴得到屏幕边，往上拖也拖不到顶。
+  //
+  // null = 还没量出来（模型刚加载）：那时退回整块窗口（最保守）。
+  let visibleRect = null;
+  // 「透明处不吃鼠标」：渲染层按光标位置发过来的。
+  //
+  // 与设置里的「鼠标穿透」不是一回事：
+  //   - 设置里那个是**整个窗口**不吃点击（用户主动开的）；
+  //   - 这个是**只在形象的透明留白上**不吃点击。
+  // 两者取或——设置里开着时整个窗口都不吃点击。
+  let pixelClickThrough = false;
   // 本次拖拽的期望位置（未夹紧）与净位移。
+  //
+  // 期望位置记的是**本体**的左上角（不是窗口的）：
+  // 夹紧与吸附算的都是本体，窗口位置是最后一步换算出来的。
   let desired = null;
   let netDelta = { dx: 0, dy: 0 };
-  // 快捷键录制中。
-  let recording = false;
-  let hotkeyStatus = { state: 'idle', accelerator: '', error: '' };
+  // 正在录制的槽位（null = 没在录制）。
+  //
+  // 一次只录一个：按键捕获是全局的（before-input-event），
+  // 两个槽位同时录会互相抢键。
+  let recordingSlot = null;
+  // 每个槽位一份状态：{ [槽位名]: { state, accelerator, error } }。
+  let hotkeyStatus = Object.fromEntries(
+    HOTKEY_SLOTS.map((s) => [s.key, { state: 'idle', accelerator: '', error: '' }])
+  );
 
   // 主进程 → 设置窗口的快捷键状态通知。
   // 设置窗口是 index.js 管的，所以通知由外部注入。
-  const notifyHotkeyStatus = () => {
-    onHotkeyStatus?.({ ...hotkeyStatus });
+  //
+  // 载荷里带着**槽位名**：设置窗口有两个快捷键，
+  // 不知道这条状态说的是哪一个，界面就会张冠李戴。
+  const notifyHotkeyStatus = (slotKey) => {
+    onHotkeyStatus?.({ slot: slotKey, ...hotkeyStatus[slotKey] });
   };
 
   // 最近一次失败的说明。空串 = 没有失败。
@@ -142,10 +175,94 @@ export function createSystemController({
 
   /** 停靠所在显示器的工作区。找不到就返回 null（退化成普通夹紧）。 */
   function dockWorkArea() {
+    const vis = currentVisibleRect();
+    if (!vis) return null;
+    return displayForPoint(vis.x, vis.y, getDisplays())?.workArea || null;
+  }
+
+  /**
+   * 设置窗口位置。
+   *
+   * **必须取整**：Electron 的 setPosition 只吃整数，
+   * 传小数会抛 "Error processing argument at index 1, conversion failure"。
+   *
+   * 这不是洁癖：可见矩形的偏移是浮点数（渲染出来的亚像素位置），
+   * 减出来的窗口坐标自然也不是整数——不取整的话，**每一次拖拽都会抛**。
+   * （拖拽增量本身也可能是小数：混合 DPI 下光标坐标不是整数。）
+   */
+  function setWindowPosition(win, x, y) {
+    win.setPosition(Math.round(x), Math.round(y));
+  }
+
+  /**
+   * 桌宠**本体**在屏幕上的位置与大小。
+   *
+   * 量不出可见矩形时（模型刚加载、还没量过）退回整块窗口：
+   * 那是最保守的做法（与旧行为一致），只是拖不到那么贴边。
+   */
+  function currentVisibleRect() {
     const win = getWindow();
     if (!win || win.isDestroyed()) return null;
     const [x, y] = win.getPosition();
-    return displayForPoint(x, y, getDisplays())?.workArea || null;
+    const [w, h] = win.getSize();
+    return visibleRectOnScreen({ x, y, width: w, height: h }, visibleRect);
+  }
+
+  /**
+   * 渲染层报来的可见矩形（窗口内坐标）。
+   *
+   * 收到之后，夹紧、吸附、停靠就都按**本体**算了。
+   */
+  function setVisibleRect(rect) {
+    if (
+      !rect ||
+      !Number.isFinite(rect.x) ||
+      !Number.isFinite(rect.y) ||
+      !Number.isFinite(rect.width) ||
+      !Number.isFinite(rect.height) ||
+      rect.width <= 0 ||
+      rect.height <= 0
+    ) {
+      return;
+    }
+    const prev = visibleRect;
+    const next = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    if (
+      prev &&
+      prev.x === next.x &&
+      prev.y === next.y &&
+      prev.width === next.width &&
+      prev.height === next.height
+    ) {
+      return;
+    }
+    visibleRect = next;
+    // 停靠中的桌宠要按新的本体矩形重新摆一次：
+    // 藏起来的是**形象**，不是那块画布。
+    // （拖拽进行中不重摆——那会把用户正在拖的东西挪走。）
+    if (dock && !desired) {
+      const win = getWindow();
+      const vis = currentVisibleRect();
+      const wa = dockWorkArea();
+      if (win && !win.isDestroyed() && vis && wa) {
+        const target = dockPosition(dock, vis.x, vis.y, vis.width, vis.height, wa);
+        const targetWin = windowRectForVisible(target, visibleRect);
+        setWindowPosition(win, targetWin.x, targetWin.y);
+      }
+    }
+  }
+
+  /**
+   * 渲染层说「光标现在落在形象的透明处」。
+   *
+   * 只记状态；实际生效由 applyClickThrough 统一施加，
+   * 这样设置里的「鼠标穿透」与它不会互相覆盖。
+   */
+  function setPixelClickThrough(enabled) {
+    const next = Boolean(enabled);
+    if (next === pixelClickThrough) return;
+    pixelClickThrough = next;
+    applyClickThrough(applied?.clickThrough);
   }
 
   /** 取消停靠：把桌宠放回完全可见的贴齐位。 */
@@ -155,13 +272,13 @@ export function createSystemController({
     const side = dock;
     dock = null;
     if (win && !win.isDestroyed()) {
-      const [x, y] = win.getPosition();
-      const [w, h] = win.getSize();
+      const vis = currentVisibleRect();
       const wa = dockWorkArea();
-      if (wa) {
-        const target = flushPosition(side, x, y, w, h, wa);
-        win.setPosition(target.x, target.y);
-        applySettings({ position: { x: Math.round(target.x), y: Math.round(target.y) } });
+      if (vis && wa) {
+        const target = flushPosition(side, vis.x, vis.y, vis.width, vis.height, wa);
+        const targetWin = windowRectForVisible(target, visibleRect);
+        setWindowPosition(win, targetWin.x, targetWin.y);
+        applySettings({ position: { x: Math.round(targetWin.x), y: Math.round(targetWin.y) } });
       }
     }
     applySettings({ dock: null });
@@ -183,21 +300,20 @@ export function createSystemController({
     if (!side) return;
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
-    const [x, y] = win.getPosition();
-    const [w, h] = win.getSize();
+    const vis = currentVisibleRect();
     const wa = dockWorkArea();
-    if (!wa) return;
+    if (!vis || !wa) return;
     dock = side;
-    const target = dockPosition(side, x, y, w, h, wa);
-    win.setPosition(target.x, target.y);
+    const target = dockPosition(side, vis.x, vis.y, vis.width, vis.height, wa);
+    const targetWin = windowRectForVisible(target, visibleRect);
+    setWindowPosition(win, targetWin.x, targetWin.y);
   }
 
   /** 新一次拖拽开始：期望位置重置为当前真实位置。 */
   function dragStart() {
-    const win = getWindow();
-    if (!win || win.isDestroyed()) return;
-    const [x, y] = win.getPosition();
-    desired = { x, y };
+    const vis = currentVisibleRect();
+    if (!vis) return;
+    desired = { x: vis.x, y: vis.y };
     netDelta = { dx: 0, dy: 0 };
   }
 
@@ -206,14 +322,19 @@ export function createSystemController({
    *
    * 停靠时沿停靠轴放宽（否则藏不到屏幕外）；
    * free 时在夹紧之后做吸附（推近了磁过去）。
+   *
+   * 累加与夹紧用的都是**本体**的矩形：本体才是用户看得见的东西，
+   * 按整块画布算的话小模型永远差一截才贴得到边。
    */
   function moveBy(dx, dy) {
     const win = getWindow();
     if (!win || win.isDestroyed()) return null;
-    const [w, h] = win.getSize();
+    const vis = currentVisibleRect();
+    if (!vis) return null;
+    const w = vis.width;
+    const h = vis.height;
     if (!desired) {
-      const [x, y] = win.getPosition();
-      desired = { x, y };
+      desired = { x: vis.x, y: vis.y };
       netDelta = { dx: 0, dy: 0 };
     }
     desired.x += dx;
@@ -252,7 +373,9 @@ export function createSystemController({
         }
       }
     }
-    win.setPosition(applied.x, applied.y);
+    // 本体的位置 → 窗口左上角。
+    const winPos = windowRectForVisible(applied, visibleRect);
+    setWindowPosition(win, winPos.x, winPos.y);
     persistPosition(applied, w, h);
     return applied;
   }
@@ -262,19 +385,23 @@ export function createSystemController({
    *
    * 停靠时存的是「完全可见的贴齐位」——真实位置在屏幕外，
    * 重启时会被 restorePosition 判定为「不在任何显示器内」而回落到主显示器右下角。
+   *
+   * 存的是**窗口**的位置：下次启动要按窗口位置还原。
    */
   function persistPosition(applied, w, h) {
+    const winPos = windowRectForVisible(applied, visibleRect);
     if (!dock) {
-      applySettings({ position: { x: Math.round(applied.x), y: Math.round(applied.y) } });
+      applySettings({ position: { x: Math.round(winPos.x), y: Math.round(winPos.y) } });
       return;
     }
     const wa = dockWorkArea();
     if (!wa) {
-      applySettings({ position: { x: Math.round(applied.x), y: Math.round(applied.y) } });
+      applySettings({ position: { x: Math.round(winPos.x), y: Math.round(winPos.y) } });
       return;
     }
     const flush = flushPosition(dock, applied.x, applied.y, w, h, wa);
-    applySettings({ position: { x: Math.round(flush.x), y: Math.round(flush.y) } });
+    const flushWin = windowRectForVisible(flush, visibleRect);
+    applySettings({ position: { x: Math.round(flushWin.x), y: Math.round(flushWin.y) } });
   }
 
   /**
@@ -283,8 +410,12 @@ export function createSystemController({
   function dragEnd() {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
-    const [x, y] = win.getPosition();
-    const [w, h] = win.getSize();
+    const vis = currentVisibleRect();
+    if (!vis) return;
+    const x = vis.x;
+    const y = vis.y;
+    const w = vis.width;
+    const h = vis.height;
     const displays = getDisplays();
     const wasDocked = dock;
     const net = { ...netDelta };
@@ -302,17 +433,18 @@ export function createSystemController({
       }
       // 被拽出来了：取消停靠，**并把位置夹回工作区内**。
       //
-      // 不夹的话会存下一个在屏幕外的坐标——窗口还有一大半在屏幕外，
+      // 不夹的话会存下一个在屏幕外的坐标——桌宠还有一大半在屏幕外，
       // 而重启时 restorePosition 会判定它「不在任何显示器内」，
       // 悄悄回落到主显示器右下角。用户上次把桌宠放在哪就丢了。
       //
       // 夹回去之后桌宠是「完整可见、贴着那条边」的状态——
       // 也就是「完整滑回」，与预览里那条一致。
       const pulled = clampToDisplays(x, y, w, h, getDisplays());
-      win.setPosition(pulled.x, pulled.y);
+      const pulledWin = windowRectForVisible(pulled, visibleRect);
+      setWindowPosition(win, pulledWin.x, pulledWin.y);
       dock = null;
       applySettings({ dock: null });
-      applySettings({ position: { x: Math.round(pulled.x), y: Math.round(pulled.y) } });
+      applySettings({ position: { x: Math.round(pulledWin.x), y: Math.round(pulledWin.y) } });
       onStateChanged?.();
       return;
     }
@@ -321,13 +453,14 @@ export function createSystemController({
     const wa = displayForPoint(x, y, displays)?.workArea;
     if (!wa) return;
     const gaps = edgeGaps(x, y, w, h, wa);
-    // 净位移用**期望位置**的：窗口贴边后就被夹住不动了，
+    // 净位移用**期望位置**的：桌宠贴边后就被夹住不动了，
     // 实际位移恒为 0，表达不了「我往右推」这个意图。
     const side = chooseDockSide(gaps, net);
     if (!side) return;
     dock = side;
     const target = dockPosition(side, x, y, w, h, wa);
-    win.setPosition(target.x, target.y);
+    const targetWin = windowRectForVisible(target, visibleRect);
+    setWindowPosition(win, targetWin.x, targetWin.y);
     applySettings({ dock: side });
     onStateChanged?.();
   }
@@ -397,9 +530,16 @@ export function createSystemController({
    * 「被占用」要他去换个组合；「这个组合不能用」是设置本身写错了
    * （比如从磁盘上读进来一个手改坏的字符串）。混成一句话等于让用户瞎猜。
    */
-  function registerShortcut(accelerator) {
+  function registerShortcut(slotKey, accelerator) {
+    const action = hotkeyActions?.[slotKey];
+    if (typeof action !== 'function') {
+      // 没有动作可绑定：注册了也白注册（按下去什么也不发生）。
+      // 这是接线漏了，不是用户能改的东西——所以只留痕，不报给用户。
+      console.error('[desk-pet] 快捷键没有对应的动作：', slotKey);
+      return 'invalid';
+    }
     try {
-      if (shortcuts.register(accelerator, onHotkeyAction)) return 'ok';
+      if (shortcuts.register(accelerator, action)) return 'ok';
       // taken 也要留痕：被别的程序占用时 register **不抛错**，
       // 不留痕的话终端里什么都没有，用户只看到界面上一句提示。
       console.warn('[desk-pet] 快捷键注册失败：', shortcutErrorText('taken'));
@@ -415,9 +555,11 @@ export function createSystemController({
     return result === 'invalid' ? '这个组合不能用' : '该组合已被其他程序占用';
   }
 
-  function setHotkeyStatus(next) {
-    hotkeyStatus = { ...hotkeyStatus, ...next };
-    notifyHotkeyStatus();
+  /** 更新某个槽位的状态，并把它推给设置窗口。 */
+  function setHotkeyStatus(slotKey, next) {
+    const current = hotkeyStatus[slotKey] || { state: 'idle', accelerator: '', error: '' };
+    hotkeyStatus = { ...hotkeyStatus, [slotKey]: { ...current, ...next } };
+    notifyHotkeyStatus(slotKey);
   }
 
   /** 加速键串里至少要有一个修饰键。 */
@@ -426,20 +568,33 @@ export function createSystemController({
   }
 
   /**
+   * 这个组合是不是还被**别的槽位**用着。
+   *
+   * 用它来决定注销旧组合时会不会把另一个快捷键一起搭进去：
+   * 两个槽位指向同一个组合时（手改 settings.json 才会出现），
+   * 注销其中一个就等于把另一个也弄没了。
+   */
+  function usedByOtherSlot(slotKey, accelerator) {
+    return HOTKEY_SLOTS.some((s) => s.key !== slotKey && getSettings()[s.key] === accelerator);
+  }
+
+  /**
    * 换一组快捷键。
    *
    * **先注册新的、成功了再注销旧的**——反过来的话，失败时连原来的组合也丢了，
    * 用户会发现自己连原来那个能用的快捷键都按不动了。
    */
-  function setHotkey(accelerator) {
+  function setHotkey(slotKey, accelerator) {
+    const slot = getHotkeySlot(slotKey);
+    if (!slot) return false;
     if (typeof accelerator !== 'string' || accelerator === '') return false;
-    const current = getSettings().hotkey;
+    const current = getSettings()[slot.key];
     // 必须至少一个修饰键：裸键注册是全局的，会劫持用户的字母键
     // （规格 §4.3①）。buildAccelerator 已经保证过，这里再挡一道——
     // 因为 setHotkey 可能被别的通道直接调用。
     if (!hasModifier(accelerator)) {
-      recording = false;
-      setHotkeyStatus({
+      recordingSlot = null;
+      setHotkeyStatus(slot.key, {
         state: 'error',
         accelerator: current,
         error: '这个组合不能用：至少要带一个修饰键（Ctrl / Alt / Shift）',
@@ -451,14 +606,29 @@ export function createSystemController({
     // 但**没注册着**时不能就这么算成功——启动时注册失败（被别的程序占用）
     // 的情况下，用户再录一次同一个组合会被当成成功，而快捷键根本没生效。
     if (accelerator === current && shortcuts.isRegistered?.(current)) {
-      recording = false;
-      setHotkeyStatus({ state: 'ok', accelerator, error: '' });
+      recordingSlot = null;
+      setHotkeyStatus(slot.key, { state: 'ok', accelerator, error: '' });
       return true;
     }
-    const result = registerShortcut(accelerator);
+    // 与**另一个槽位**撞了：说清楚是被本应用自己的另一个快捷键占了。
+    // 不先挡这一道的话，注册会失败成「该组合已被其他程序占用」——
+    // 用户会去找别的程序，而真正占着它的是本应用自己。
+    const clash = HOTKEY_SLOTS.find(
+      (s) => s.key !== slot.key && getSettings()[s.key] === accelerator
+    );
+    if (clash) {
+      recordingSlot = null;
+      setHotkeyStatus(slot.key, {
+        state: 'error',
+        accelerator: current,
+        error: `这个组合已经被「${clash.label}」用了`,
+      });
+      return false;
+    }
+    const result = registerShortcut(slot.key, accelerator);
     if (result !== 'ok') {
-      recording = false;
-      setHotkeyStatus({
+      recordingSlot = null;
+      setHotkeyStatus(slot.key, {
         state: 'error',
         accelerator: current,
         error: shortcutErrorText(result),
@@ -467,7 +637,7 @@ export function createSystemController({
     }
     // 注销旧的。**同一个组合不注销**——刚注册上的就是它自己，
     // 注销等于把新组合也一起搭进去。
-    if (current && current !== accelerator) {
+    if (current && current !== accelerator && !usedByOtherSlot(slot.key, current)) {
       try {
         shortcuts.unregister(current);
       } catch (err) {
@@ -476,26 +646,67 @@ export function createSystemController({
         console.warn('[desk-pet] 旧快捷键注销失败：', err?.message || err);
       }
     }
-    applySettings({ hotkey: accelerator });
-    recording = false;
-    setHotkeyStatus({ state: 'ok', accelerator, error: '' });
+    applySettings({ [slot.key]: accelerator });
+    recordingSlot = null;
+    setHotkeyStatus(slot.key, { state: 'ok', accelerator, error: '' });
     return true;
   }
 
-  function startRecording() {
-    recording = true;
-    setHotkeyStatus({ state: 'recording', error: '' });
+  /**
+   * 清除一个快捷键（= 不设它）。
+   *
+   * 只有允许为空的槽位能清：「呼出/隐藏桌宠」那个空了就没有召回手段，
+   * 界面上也不给「清除」按钮。
+   */
+  function clearHotkey(slotKey) {
+    const slot = getHotkeySlot(slotKey);
+    if (!slot || !slot.allowEmpty) return false;
+    const current = getSettings()[slot.key];
+    if (current) {
+      try {
+        shortcuts.unregister(current);
+      } catch (err) {
+        // 注销失败也要往下走：设置必须改成「不设」，
+        // 否则界面上写着已清除，重启后那个组合又回来了。
+        console.warn('[desk-pet] 快捷键注销失败：', err?.message || err);
+      }
+    }
+    applySettings({ [slot.key]: '' });
+    recordingSlot = null;
+    // accelerator 清空：这一条推送要能表达「现在没有组合了」。
+    setHotkeyStatus(slot.key, { state: 'idle', accelerator: '', error: '' });
+    return true;
+  }
+
+  function startRecording(slotKey) {
+    const slot = getHotkeySlot(slotKey);
+    if (!slot) return false;
+    // 一次只能录一个（按键捕获是全局的）。
+    // 别的槽位若还停在「录制中」，那是不该有的残留状态
+    // （用户直接点了另一个的录制按钮）——把它收回「空闲」，
+    // 否则界面上那一行会一直写着「请按下组合键…」。
+    for (const other of HOTKEY_SLOTS) {
+      if (other.key === slot.key) continue;
+      if (hotkeyStatus[other.key]?.state === 'recording') {
+        setHotkeyStatus(other.key, { state: 'idle' });
+      }
+    }
+    recordingSlot = slot.key;
+    setHotkeyStatus(slot.key, { state: 'recording', error: '' });
     return true;
   }
 
   function cancelRecording() {
-    recording = false;
-    setHotkeyStatus({ state: 'idle', error: '' });
+    if (recordingSlot) {
+      const slot = recordingSlot;
+      recordingSlot = null;
+      setHotkeyStatus(slot, { state: 'idle', error: '' });
+    }
     return true;
   }
 
   function isRecording() {
-    return recording;
+    return recordingSlot !== null;
   }
 
   /**
@@ -504,14 +715,14 @@ export function createSystemController({
    * **返回值不代表成功**：注册成功与否看 `hotkeyStatus`。
    */
   function handleInput(input) {
-    if (!recording) return null;
+    if (!recordingSlot) return null;
     if (input?.key === 'Escape') {
       cancelRecording();
       return null;
     }
     const acc = buildAccelerator(input);
     if (!acc) return null;
-    setHotkey(acc);
+    setHotkey(recordingSlot, acc);
     return acc;
   }
 
@@ -525,9 +736,14 @@ export function createSystemController({
       // 与 autoLaunch 不一致 = 磁盘与 Windows 登录项对不上（见 init）。
       autoLaunchActive: Boolean(applied?.autoLaunch),
       hotkey: settings.hotkey,
+      panelHotkey: settings.panelHotkey,
+      // 每个槽位一份状态：{ hotkey: {...}, panelHotkey: {...} }。
       hotkeyStatus: { ...hotkeyStatus },
       clickThrough: Boolean(settings.clickThrough),
       clickThroughActive: Boolean(applied?.clickThrough),
+      // 「光标在形象的透明处」：那块空白不吃点击。
+      // 与上面那个不是一回事：上面是整个窗口不吃点击。
+      pixelClickThrough: Boolean(pixelClickThrough),
       edgeSnap: settings.edgeSnap !== false,
       dockEnabled: Boolean(settings.dockEnabled),
       dock,
@@ -579,29 +795,32 @@ export function createSystemController({
     // 停靠：把窗口挪到藏起来的位置（settings.dock 记着上次藏在哪条边）。
     applyDockAtStartup();
     // 快捷键：启动时就注册。失败只留痕 + 在设置窗口显示状态，不阻断启动。
-    if (settings.hotkey) {
-      if (!hasModifier(settings.hotkey)) {
+    for (const slot of HOTKEY_SLOTS) {
+      const value = settings[slot.key];
+      // 空 = 不设这个快捷键（唤醒输入框那个默认就是空的）。
+      if (!value) continue;
+      if (!hasModifier(value)) {
         // 磁盘上的组合没有修饰键：注册它会劫持用户的字母键。
         // 宁可先不注册，也不能把用户的键抢走。
-        console.warn('[desk-pet] 设置里的快捷键没有修饰键，已跳过注册：', settings.hotkey);
-        setHotkeyStatus({
+        console.warn('[desk-pet] 设置里的快捷键没有修饰键，已跳过注册：', value);
+        setHotkeyStatus(slot.key, {
           state: 'error',
-          accelerator: settings.hotkey,
+          accelerator: value,
           error: '这个组合不能用：至少要带一个修饰键（Ctrl / Alt / Shift）',
         });
+        continue;
+      }
+      const result = registerShortcut(slot.key, value);
+      if (result === 'ok') {
+        setHotkeyStatus(slot.key, { state: 'ok', accelerator: value, error: '' });
       } else {
-        const result = registerShortcut(settings.hotkey);
-        if (result === 'ok') {
-          setHotkeyStatus({ state: 'ok', accelerator: settings.hotkey, error: '' });
-        } else {
-          // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
-          // 而终端里什么也没有。registerShortcut 已经留过痕了，这里不再重复 warn。
-          setHotkeyStatus({
-            state: 'error',
-            accelerator: settings.hotkey,
-            error: shortcutErrorText(result),
-          });
-        }
+        // 启动就失败要留痕：否则用户以为快捷键设好了，按下去没反应，
+        // 而终端里什么也没有。registerShortcut 已经留过痕了，这里不再重复 warn。
+        setHotkeyStatus(slot.key, {
+          state: 'error',
+          accelerator: value,
+          error: shortcutErrorText(result),
+        });
       }
     }
   }
@@ -609,9 +828,16 @@ export function createSystemController({
   function applyClickThrough(enabled) {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
+    // 两个来源取或：
+    //   - 设置里的「鼠标穿透」：整个窗口不吃点击（用户主动开的）；
+    //   - 渲染层报的「光标在形象的透明处」：只有那块空白不吃点击。
+    //
+    // 设置里开着时，透明处的判定是多余的（整窗都不吃），
+    // 但取或的结果一样，不会打架。
+    //
     // forward: true 让 mousemove 继续送到渲染层——
     // 桌宠仍然能跟着光标转头，但点击落到桌面上。
-    if (enabled) win.setIgnoreMouseEvents(true, { forward: true });
+    if (enabled || pixelClickThrough) win.setIgnoreMouseEvents(true, { forward: true });
     else win.setIgnoreMouseEvents(false);
   }
 
@@ -727,11 +953,18 @@ export function createSystemController({
     dragEnd,
     retrievePet,
     undock,
+    // —— 桌宠本体的可见矩形 ——
+    // 渲染层量出来的：窗口里真正画着形象的那一块。
+    // 夹紧、吸附、停靠都按它算（见 setVisibleRect）。
+    setVisibleRect,
     // —— 鼠标穿透 ——
     toggleClickThrough,
+    // 「光标在形象的透明处」：那块空白不吃点击。
+    setPixelClickThrough,
     // —— 全局快捷键 ——
     setHotkey,
     startRecording,
+    clearHotkey,
     cancelRecording,
     isRecording,
     handleInput,

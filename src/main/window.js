@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { restorePosition, clampToDisplays, displayForPoint } from './display.js';
 import { fitWindowSize, anchoredPosition } from '../shared/viewport.js';
+import { scaleVisibleRect, windowRectForVisible } from '../shared/petRect.js';
 
 /**
  * 桌宠窗口的尺寸：按用户缩放放大，并夹到所在显示器的可见工作区内。
@@ -23,17 +24,24 @@ export function createPetWindow({ rootDir, settings, displays }) {
       ? settings.position
       : { x: wa0?.x ?? 0, y: wa0?.y ?? 0 };
   const size = petWindowSize(settings.scale, ref.x, ref.y, displays);
+  // 桌宠本体的可见矩形（窗口内坐标）：上次运行时量出来的，落盘了。
+  //
+  // 有了它，恢复位置时按**本体**判：窗口有一部分在屏幕外是正常状态
+  // （角色被拖到了屏幕顶，模型上方那块透明留白自然就在屏幕外）。
+  const visible = settings.visibleRect || null;
   // 用 restorePosition 而不是 clampToDisplays：启动恢复时若保存位置所在的显示器
   // 已被拔掉，应回落到主显示器右下角（spec §5.5），而不是停在原坐标的可见边缘。
-  const pos = restorePosition(settings.position, size.width, size.height, displays);
+  const pos = restorePosition(settings.position, size.width, size.height, displays, visible);
   // 尺寸被屏幕夹小之后，restorePosition 给的位置可能让窗口超出屏幕，再夹一次位置。
-  const placed = clampToDisplays(pos.x, pos.y, size.width, size.height, displays);
+  const placed = clampToDisplays(pos.x, pos.y, size.width, size.height, displays, visible);
 
   const win = new BrowserWindow({
     width: size.width,
     height: size.height,
-    x: placed.x,
-    y: placed.y,
+    // 取整：可见矩形的偏移是浮点数，减出来的坐标不是整数。
+    // （Electron 的 setPosition/setBounds 只吃整数，不取整会抛。）
+    x: Math.round(placed.x),
+    y: Math.round(placed.y),
     show: false,
     transparent: true,
     frame: false,
@@ -77,10 +85,14 @@ export function createPetWindow({ rootDir, settings, displays }) {
  * 放大时脚下的位置不动，个头往上长——否则每放大一次，
  * 宠物就会在桌面上「长歪」一截。
  *
+ * `visible` 是桌宠本体的可见矩形（窗口内坐标，上一次量出来的）。
+ * 给了它，夹紧就按本体算：角色被拖到屏幕顶时放大，
+ * 不会因为「窗口有一部分在屏幕外」而被推回屏幕里。
+ *
  * 返回新的边界；调用方要把它落盘：窗口尺寸变了，
  * 保存的左上角坐标就不再指向同一个位置。
  */
-export function applyScaleToWindow(win, scale, displays) {
+export function applyScaleToWindow(win, scale, displays, visible = null) {
   if (!win || win.isDestroyed()) return null;
   const [x, y] = win.getPosition();
   const [w, h] = win.getSize();
@@ -90,9 +102,31 @@ export function applyScaleToWindow(win, scale, displays) {
     return { x, y, width: w, height: h };
   }
   const anchor = anchoredPosition(x, y, w, h, size);
-  const placed = clampToDisplays(anchor.x, anchor.y, size.width, size.height, displays);
-  win.setBounds({ x: placed.x, y: placed.y, width: size.width, height: size.height });
-  return { x: placed.x, y: placed.y, width: size.width, height: size.height };
+  // 可见矩形按新旧尺寸的比例缩放：模型在新窗口里的位置要重新适配，
+  // 但那要等渲染层量完；先按比例估一个，够夹紧用了。
+  const scaled = scaleVisibleRect(visible, size.width / w, size.height / h);
+  const placed =
+    scaled && scaled.width > 0 && scaled.height > 0
+      ? (() => {
+          // 夹本体 → 反算窗口位置。
+          const clamped = clampToDisplays(
+            anchor.x + scaled.x,
+            anchor.y + scaled.y,
+            scaled.width,
+            scaled.height,
+            displays
+          );
+          const winPos = windowRectForVisible(clamped, scaled);
+          return { x: winPos.x, y: winPos.y };
+        })()
+      : clampToDisplays(anchor.x, anchor.y, size.width, size.height, displays);
+  win.setBounds({
+    x: Math.round(placed.x),
+    y: Math.round(placed.y),
+    width: size.width,
+    height: size.height,
+  });
+  return { x: Math.round(placed.x), y: Math.round(placed.y), width: size.width, height: size.height };
 }
 
 export function applySettingsToWindow(win, settings) {

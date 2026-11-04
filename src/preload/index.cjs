@@ -7,6 +7,21 @@ contextBridge.exposeInMainWorld('pet', {
   saveSettings: (patch) => ipcRenderer.invoke('pet:saveSettings', patch),
   listModels: () => ipcRenderer.invoke('pet:listModels'),
   switchModel: (id) => ipcRenderer.invoke('pet:switchModel', id),
+  // 导入用户自己的 Live2D 模型：主进程弹原生文件夹选择器，
+  // 复制到用户数据目录、校验、注册，并切到新模型。
+  importModel: () => ipcRenderer.invoke('pet:importModel'),
+  // 删除导入的模型（内置模型删不得）。主进程会弹原生确认框。
+  deleteModel: (id) => ipcRenderer.invoke('pet:deleteModel', id),
+  // 形象列表变了（导入或删除之后）：设置窗口据此刷新下拉框。
+  // 载荷是刷新后应当选中的形象 id——刷新是异步的，
+  // 而设置广播可能先到也可能后到，把该选哪个一并告诉它才不会打架。
+  onModelsChanged: (cb) => {
+    ipcRenderer.on('pet:modelsChanged', (_e, modelId) => cb(modelId));
+  },
+  // 导入进度：复制模型文件是 IO 密集的，没有进度条界面会像卡死了。
+  onImportProgress: (cb) => {
+    ipcRenderer.on('pet:importProgress', (_e, payload) => cb(payload));
+  },
   showContextMenu: () => ipcRenderer.invoke('pet:showContextMenu'),
   openSettings: () => ipcRenderer.invoke('pet:openSettings'),
   // 弹出插件面板：左键点桌宠时走这条路。
@@ -18,6 +33,15 @@ contextBridge.exposeInMainWorld('pet', {
   dragStart: () => ipcRenderer.invoke('pet:dragStart'),
   // 拖拽结束：主进程清掉累加器，不依赖 dragStart 一定送达。
   dragEnd: () => ipcRenderer.invoke('pet:dragEnd'),
+  // 报告形象的**可见矩形**（窗口内坐标）：桌宠窗口里真正画着角色的那一块。
+  //
+  // 主进程拿它夹紧位置、贴边停靠、给气泡找位置。
+  // 按整块窗口算的话，Live2D 贴图四周的透明留白会占着地方——
+  // 小模型就永远差一截才贴得到屏幕边，往上拖也拖不到顶。
+  reportVisibleRect: (rect) => ipcRenderer.send('pet:visibleRect', rect),
+  // 「透明处不吃鼠标」：光标落在形象的透明留白上时，
+  // 让窗口别把桌面的点击吃掉（光标移回形象上时恢复）。
+  setClickThrough: (enabled) => ipcRenderer.invoke('pet:setClickThrough', { enabled }),
   onModelSwitchRequest: (cb) => {
     ipcRenderer.on('pet:modelSwitchRequest', (_e, payload) => {
       // 载荷是 { requestId, modelId }：requestId 用来把渲染层的回执
@@ -64,8 +88,11 @@ contextBridge.exposeInMainWorld('pet', {
   },
   // —— 系统级开关（第六部分）——
   getSystemState: () => ipcRenderer.invoke('pet:getSystemState'),
-  recordHotkey: () => ipcRenderer.invoke('pet:recordHotkey'),
+  // slot 指明是**哪一个**快捷键（'hotkey' / 'panelHotkey'）。
+  recordHotkey: (slot) => ipcRenderer.invoke('pet:recordHotkey', slot),
   cancelHotkeyRecording: () => ipcRenderer.invoke('pet:cancelHotkeyRecording'),
+  // 清除一个快捷键（= 不设它）。
+  clearHotkey: (slot) => ipcRenderer.invoke('pet:clearHotkey', slot),
   onHotkeyStatus: (cb) => {
     ipcRenderer.on('pet:hotkeyStatus', (_e, payload) => cb(payload));
   },

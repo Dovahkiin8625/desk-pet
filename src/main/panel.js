@@ -40,7 +40,15 @@ const MIN_HEIGHT = 160;
 /** 失焦后多久才收起来：躲开「刚弹出时的假失焦」。 */
 const BLUR_GRACE_MS = 300;
 
-export function createPanelController({ rootDir, getPetWindow, getDisplays, plugins, apps, onChat }) {
+export function createPanelController({
+  rootDir,
+  getPetWindow,
+  getPetRect,
+  getDisplays,
+  plugins,
+  apps,
+  onChat,
+}) {
   let win = null;
   let ready = false;
   // 页面还没就绪时要发的第一个视图（null = 还没有要发的）。
@@ -72,6 +80,9 @@ export function createPanelController({ rootDir, getPetWindow, getDisplays, plug
     const [w, h] = win.getSize();
     const chosen = placeBesidePet({
       petWindow: getPetWindow(),
+      // 贴着桌宠**本体**：桌宠窗口上半截常常是空的，
+      // 按窗口摆面板会浮在角色头顶老高的地方。
+      petRect: getPetRect?.(),
       displays: getDisplays(),
       width: w,
       height: h,

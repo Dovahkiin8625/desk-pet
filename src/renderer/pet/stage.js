@@ -1,4 +1,4 @@
-export function createStage(container) {
+export function createStage(container, { onFit } = {}) {
   const PIXI = window.PIXI;
   const app = new PIXI.Application({
     backgroundAlpha: 0,
@@ -46,6 +46,10 @@ export function createStage(container) {
       viewH * (anchor[1] === 1 ? 1 : 0.5) + offset[1] * viewH,
     );
     fitted = { model, manifest };
+    // 每次重新适配都要通知外面：形象在画布里的**可见范围**变了，
+    // 而可见范围决定着「哪里点得到桌宠」与「桌宠能拖到哪」。
+    // （见 pet/silhouette.js 与主进程的可见矩形。）
+    onFit?.(model, manifest);
     return { naturalWidth: nw, naturalHeight: nh, scale: model.scale.x };
   }
 

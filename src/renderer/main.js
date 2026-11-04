@@ -3,6 +3,7 @@ import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
 import { attachInteraction } from './pet/interaction.js';
+import { createSilhouette } from './pet/silhouette.js';
 import { idleReaction } from './pet/behavior.js';
 import {
   EVENT,
@@ -76,11 +77,37 @@ window.__pet = {
   // 最近一次的口型幅度（0..1）：证明 beforeModelUpdate 钩子真的在驱动参数，
   // 而不只是「播放了一个音频」。
   mouthAmplitude: 0,
+  // 形象的**可见矩形**（窗口内坐标）：窗口里真正画着角色的那一块。
+  //
+  // 桌宠窗口是固定大小的画布，Live2D 贴图四周有透明留白，
+  // 于是小模型的上半截窗口是空的。可见矩形告诉主进程
+  // 「桌宠本体在哪」——夹紧位置、贴边停靠、气泡摆位都按它算，
+  // 而不是按整块窗口算：小模型按窗口算就永远拖不到屏幕顶。
+  contentRect: null,
+  // 轮廓是否已经量出来（false = 还没量，判定一律退回旧行为）。
+  silhouetteReady: false,
+  // 「透明处不吃鼠标」当前是否生效。
+  clickThrough: false,
+  // 这个点在不在形象上（null = 还没量出轮廓）。
+  // 既是诊断面，也是测试的探针：可点击区域完全由它决定。
+  isOnFigure: (x, y) => (silhouette ? silhouette.contains(x, y) : null),
 };
 
 let stage = null;
 let currentModel = null;
 let currentManifest = null;
+// 可见轮廓测量器：把舞台离屏渲染一遍，读回 alpha，量出形象真正占的范围。
+let silhouette = null;
+// 轮廓刷新已经排队（同一帧只排一次）。
+let silhouetteRefreshQueued = false;
+// 「透明处不吃鼠标」当前是否生效。
+let clickThroughActive = false;
+// 正在拖拽：拖拽期间不改穿透状态（改了会把拖拽断掉）。
+let isDragging = false;
+// 指针还按着：按下到松开之间同样不改穿透状态。
+let isPointerDown = false;
+// 最近一次已知的指针位置（画布坐标）：拖拽结束后据此恢复穿透状态。
+let lastPointer = null;
 let userScale = 1;
 // 滚轮缩放的待落盘值与「已排队」标记。
 //
@@ -179,6 +206,128 @@ function showEmotion(emotion) {
 /** 记录一次用户互动：重置「多久没人理」的计时。 */
 function markInteraction() {
   emotionState = touch(emotionState);
+}
+
+/**
+ * 画布在窗口里的偏移（CSS 像素）。
+ *
+ * 画布铺满窗口时它是 (0,0)，但不假设这一点：
+ * 可见矩形要报给主进程，主进程拿它当**窗口内**坐标用。
+ */
+function canvasOffset() {
+  const canvas = stage?.app?.view;
+  if (!canvas) return { x: 0, y: 0 };
+  const rect = canvas.getBoundingClientRect();
+  return { x: rect.left || 0, y: rect.top || 0 };
+}
+
+/**
+ * 重新量一次可见轮廓，并把结果报给主进程。
+ *
+ * 量的是**渲染结果**里不透明的像素范围（见 pet/silhouette.js）：
+ * 模型的自然包围盒把贴图四周的透明留白也算进去了，
+ * 拿它当「桌宠有多大」就会一直差一截。
+ */
+function refreshSilhouette(rect = null) {
+  if (!silhouette) return null;
+  const measured = rect || silhouette.refresh();
+  if (!measured) return null;
+  const offset = canvasOffset();
+  const visible = {
+    x: measured.x + offset.x,
+    y: measured.y + offset.y,
+    width: measured.width,
+    height: measured.height,
+  };
+  const prev = window.__pet.contentRect;
+  window.__pet.contentRect = visible;
+  window.__pet.silhouetteReady = true;
+  // 只在**真的变了**的时候报给主进程：轮廓是定时刷新的，
+  // 每次都报的话主进程会跟着反复落盘。
+  //
+  // 阈值取 2px：待机动画会让轮廓抖一两个像素，
+  // 按亚像素报等于每三秒写一次磁盘。
+  const changed =
+    !prev ||
+    Math.abs(prev.x - visible.x) > 2 ||
+    Math.abs(prev.y - visible.y) > 2 ||
+    Math.abs(prev.width - visible.width) > 2 ||
+    Math.abs(prev.height - visible.height) > 2;
+  if (changed) {
+    // 报给主进程：它要拿这个矩形夹紧位置、贴边停靠、给气泡找位置。
+    window.pet.reportVisibleRect?.(visible)?.catch?.(() => {});
+  }
+  return visible;
+}
+
+/**
+ * 排一次轮廓刷新。
+ *
+ * 排到下一帧：离屏渲染不能插在 PIXI 自己的渲染循环中间，
+ * 否则那一帧会花掉两次。
+ */
+function scheduleSilhouetteRefresh() {
+  if (silhouetteRefreshQueued) return;
+  silhouetteRefreshQueued = true;
+  requestAnimationFrame(() => {
+    silhouetteRefreshQueued = false;
+    refreshSilhouette();
+  });
+  scheduleSettleRefreshes();
+}
+
+/**
+ * 模型刚挂上时，参数还在从**静止姿势**淡入（Cubism 的淡入约一秒），
+ * 那段时间量出来的轮廓是静止姿势的——比真正显示出来的宽得多
+ * （ Haru 的静止姿势双手是张开的，比抱臂的显示姿势宽一倍）。
+ *
+ * 所以挂载后连着量几次，让轮廓跟上真正的姿势；
+ * 之后交给定时刷新（模型待机时会小幅呼吸，轮廓会跟着挪）。
+ */
+const SETTLE_DELAYS_MS = [150, 400, 900, 1600];
+
+let settleTimers = [];
+
+function scheduleSettleRefreshes() {
+  for (const timer of settleTimers) clearTimeout(timer);
+  settleTimers = SETTLE_DELAYS_MS.map((delay) =>
+    setTimeout(() => {
+      refreshSilhouette();
+    }, delay)
+  );
+}
+
+/**
+ * 「透明处不吃鼠标」的开关。
+ *
+ * 桌宠窗口是一整块矩形，而 Windows 没有逐像素命中测试：
+ * 形象上方那片透明留白照样把桌面的点击吃了。
+ * 光标在透明处时把窗口设成「不吃鼠标事件」；
+ * forward: true 让 mousemove 继续送进来，桌宠仍然能跟着光标转头，
+ * 光标移回形象上时又能立刻恢复。
+ */
+function setClickThrough(next) {
+  if (clickThroughActive === next) return;
+  clickThroughActive = next;
+  window.__pet.clickThrough = next;
+  window.pet.setClickThrough?.(next)?.catch?.(() => {});
+}
+
+/**
+ * 按指针位置更新穿透状态。
+ *
+ * @param {number} x 画布坐标
+ * @param {number} y 画布坐标
+ */
+function updateClickThrough(x, y) {
+  // 按着/拖拽期间不改：中途把窗口变成不吃鼠标事件的窗口，
+  // 这一趟交互（点击与拖拽）会当场断掉。
+  if (isDragging || isPointerDown) return;
+  // 量不出轮廓就别乱来——宁可保持旧行为，也不要把桌宠变成点不动。
+  if (!silhouette?.isReady()) return;
+  const onFigure = silhouette.contains(x, y);
+  if (onFigure === null) return;
+  setClickThrough(!onFigure);
 }
 
 /**
@@ -293,6 +442,7 @@ async function doMountModel(modelId, token) {
   // 还没开始就已经被更新的请求顶掉了：什么都不用做。
   if (token !== switchSeq) return null;
 
+  // 注册表每次挂载都重读（loadManifest 内部做的事）：用户可能刚导入了一个新模型。
   const manifest = await loadManifest(modelId);
 
   // 切换到**当前已挂载的同一个形象**时直接返回。
@@ -310,7 +460,7 @@ async function doMountModel(modelId, token) {
     // 加载失败时旧模型仍挂在舞台上，用户不会看到桌宠凭空消失。
     // 但失败的加载可能已经把纹理塞进了全局缓存，必须清掉，
     // 否则反复失败的切换会不断堆积显存。
-    disposeTexturesUnderPath(`/assets/live2d/models/${manifest.id}/`);
+    disposeTexturesUnderPath(`${manifest.base || '/assets/live2d/models'}/${manifest.id}/`);
     throw err;
   }
 
@@ -561,7 +711,15 @@ function registerChannels() {
     const x = p.x - rect.left;
     const y = p.y - rect.top;
     const inside = x >= 0 && x <= rect.width && y >= 0 && y <= rect.height;
-    if (inside) return;
+    if (inside) {
+      // 光标在窗口里：按它落在形象上还是透明处，决定窗口吃不吃鼠标事件。
+      //
+      // 这条路径是「透明处穿透」的**兜底**：窗口不吃鼠标事件时，
+      // 指针事件可能收不到，但主进程的光标轮询照样在跑，
+      // 于是桌宠不会出现「点不动」。
+      updateClickThrough(x, y);
+      return;
+    }
     if (!currentModel?.focus) return;
     try {
       // model.focus 吃的是画布/世界坐标，与指针路径传的是同一个空间。
@@ -574,8 +732,18 @@ function registerChannels() {
 
 async function boot() {
   const container = document.getElementById('stage');
-  stage = createStage(container);
+  // 每次重新适配模型都要重新量可见轮廓：形象在画布里的位置变了，
+  // 「哪里点得到桌宠」「桌宠能拖到哪」也跟着变。
+  stage = createStage(container, { onFit: () => scheduleSilhouetteRefresh() });
   window.__pet.stage = stage;
+  // 可见轮廓测量器：量出形象真正占的范围（贴图四周的透明留白不算）。
+  // 定时刷新之后要把新结果报给主进程——轮廓变了，夹紧位置也得跟着变。
+  silhouette = createSilhouette({
+    app: stage.app,
+    onRefresh: (rect) => refreshSilhouette(rect),
+  });
+  // 轮廓会随待机动画微微变化，定期刷新一次。
+  silhouette.startAutoRefresh();
 
   // 监听器先注册、ready 信号先发：启动期间主进程推过来的东西不能丢。
   registerChannels();
@@ -727,6 +895,16 @@ async function boot() {
     canvas,
     getModel: () => currentModel,
     getManifest: () => currentManifest,
+    // 可点击区域由形象决定：点在透明留白上不算点到桌宠。
+    // 量不出来时返回 null，交互层会退回旧行为。
+    isOnFigure: (x, y) => (silhouette ? silhouette.contains(x, y) : null),
+    // 拖拽状态：按下与拖拽期间不能改「透明处穿透」，
+    // 松手后按指针位置恢复。
+    onDragStateChange: (dragging, pressed) => {
+      isDragging = dragging;
+      isPointerDown = pressed;
+      if (!dragging && !pressed && lastPointer) updateClickThrough(lastPointer.x, lastPointer.y);
+    },
     onInteract: () => {
       // 空闲计时（spec §5.1）与「多久没人理」是两件事：
       // 前者决定什么时候播 idle 动作，后者决定什么时候露出无聊/困倦的脸。
@@ -772,6 +950,9 @@ async function boot() {
     },
     onHover: (x, y) => {
       window.__pet.focusPoint = { x, y };
+      lastPointer = { x, y };
+      // 光标在形象的透明处时，让窗口不吃鼠标事件（桌面照常点得到）。
+      updateClickThrough(x, y);
       if (currentModel?.focus) {
         try {
           currentModel.focus(x, y);

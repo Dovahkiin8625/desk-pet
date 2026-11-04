@@ -39,7 +39,7 @@ const MAX_WIDTH = 360;
 /** 流式消息定稿后的存活时长（毫秒）：比一句话长——回复要读完。 */
 const CHAT_TTL_MS = 15000;
 
-export function createBubbleController({ rootDir, getPetWindow, getDisplays }) {
+export function createBubbleController({ rootDir, getPetWindow, getPetRect, getDisplays }) {
   let win = null;
   let ready = false;
   // 还没准备好时收到的消息：等页面就绪后按顺序补发。
@@ -109,6 +109,9 @@ export function createBubbleController({ rootDir, getPetWindow, getDisplays }) {
       : undefined;
     const chosen = placeBesidePet({
       petWindow: getPetWindow(),
+      // 贴着桌宠**本体**：桌宠窗口上半截常常是空的，
+      // 按窗口摆气泡会浮在角色头顶老高的地方。
+      petRect: getPetRect?.(),
       displays: getDisplays(),
       width,
       height,

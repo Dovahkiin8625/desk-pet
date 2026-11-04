@@ -39,8 +39,13 @@ export function isDeniedResource(filePath) {
 /**
  * 把 app:// 请求的 URL 路径解析为项目内的真实文件路径。
  * 任何越界（目录穿越）一律返回 null。
+ *
+ * virtualRoots 是「URL 前缀 → 真实目录」的映射：用户导入的 Live2D 模型
+ * 存在 userData 里，不在项目目录中，于是给它一个虚拟根
+ * （如 `/__models__` → `<userData>/live2d/models`）。
+ * 虚拟根同样受越界检查约束——它能提供的只有那个目录里的东西。
  */
-export function resolveStaticFile(rootDir, urlPath) {
+export function resolveStaticFile(rootDir, urlPath, virtualRoots = null) {
   let decoded;
   try {
     decoded = decodeURIComponent(urlPath || '/');
@@ -51,6 +56,23 @@ export function resolveStaticFile(rootDir, urlPath) {
   // 统一为 POSIX 风格分隔符后再处理
   const normalized = decoded.replace(/\\/g, '/');
   if (!normalized.startsWith('/')) return null;
+
+  // 虚拟根优先匹配。前缀必须**整段**对上（`/__models__/x` 命中，
+  // `/__models__evil/x` 不命中），否则 `/__models__evil` 会被
+  // 当成 `/__models__` 的子路径而越界到虚拟根之外。
+  if (virtualRoots) {
+    for (const [prefix, dir] of Object.entries(virtualRoots)) {
+      if (!prefix.startsWith('/')) continue;
+      if (normalized !== prefix && !normalized.startsWith(prefix + '/')) continue;
+      const sub = normalized.slice(prefix.length) || '/';
+      const vroot = resolve(dir);
+      // join 而不是 resolve：join 保留 vroot 作为基准，
+      // 再由下面的越界检查兜住 '..'。
+      const vtarget = resolve(join(vroot, sub));
+      if (vtarget !== vroot && !vtarget.startsWith(vroot + sep)) return null;
+      return { filePath: vtarget };
+    }
+  }
 
   const root = resolve(rootDir);
   const target = resolve(join(root, normalized));

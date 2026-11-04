@@ -10,7 +10,10 @@ export default defineConfig({
   // 否则 settings.spec.js 的「按标签精确选中」断言会跟着漂。
   workers: 1,
   fullyParallel: false,
-  // 全局 teardown：把被中断的运行留下的脏注册表还原（见 global-teardown.js）。
+  // 全局 setup/teardown：给内置注册表拍快照、结束时还原。
+  // 还原的是**运行前的快照**而不是 git HEAD 的版本——
+  // 直接 `git checkout --` 会把用户跑测试之前自己改过的内容一起丢掉。
+  globalSetup: './test/e2e/global-setup.js',
   globalTeardown: './test/e2e/global-teardown.js',
   reporter: [['list']],
 });

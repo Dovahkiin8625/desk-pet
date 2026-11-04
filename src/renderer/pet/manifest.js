@@ -1,11 +1,21 @@
-function pickExpression(model3) {
-  const list = model3?.FileReferences?.Expressions;
+import { detectCubismVersion } from '../../shared/live2d.js';
+
+// 格式判别规则在 src/shared/live2d.js：主进程与渲染层共用同一份，
+// 否则会出现「导入时认得是 Cubism 2，加载时当成 Cubism 4」。
+export { detectCubismVersion };
+
+/** 模型自己的表情名列表（Cubism 4 是 Name，Cubism 2 是 name）。 */
+function pickExpression(settings, version) {
+  const list = version === 2 ? settings?.expressions : settings?.FileReferences?.Expressions;
   if (!Array.isArray(list)) return [];
-  return list.map((e) => e.Name).filter((n) => typeof n === 'string' && n !== '');
+  return list
+    .map((e) => (version === 2 ? e?.name : e?.Name))
+    .filter((n) => typeof n === 'string' && n !== '');
 }
 
-function pickMotionGroups(model3) {
-  const groups = model3?.FileReferences?.Motions;
+/** 动作组 → 该组动作数（Cubism 4 在 FileReferences 里，Cubism 2 在顶层）。 */
+function pickMotionGroups(settings, version) {
+  const groups = version === 2 ? settings?.motions : settings?.FileReferences?.Motions;
   if (!groups || typeof groups !== 'object') return {};
   const out = {};
   for (const [group, entries] of Object.entries(groups)) {
@@ -15,12 +25,13 @@ function pickMotionGroups(model3) {
 }
 
 /**
- * 从 model3.json 探测模型能力，生成兜底清单。
+ * 从设置文件探测模型能力，生成兜底清单。
  * 缺失任何能力都只影响对应功能，不抛错。
  */
-export function deriveManifest(model3, opts = {}) {
-  const expressions = pickExpression(model3);
-  const motionGroups = pickMotionGroups(model3);
+export function deriveManifest(settings, opts = {}) {
+  const version = detectCubismVersion(settings);
+  const expressions = pickExpression(settings, version);
+  const motionGroups = pickMotionGroups(settings, version);
 
   // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
   // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
@@ -29,7 +40,13 @@ export function deriveManifest(model3, opts = {}) {
   const groupNames = Object.keys(motionGroups);
   const motions = {};
   if (groupNames.length > 0) {
-    motions.idle = { group: groupNames[0], index: 0 };
+    // 待机组优先挑名字里带 idle 的那一个。
+    //
+    // 之前是直接取第一个组——那对 Haru 成立（它的第一个组就叫 Idle），
+    // 但 Cubism 2 的模型（DSR50）第一个组是 tap，直接拿会把点击动作
+    // 当成待机动作播。
+    const idleGroup = groupNames.find((g) => /idle/i.test(g)) || groupNames[0];
+    motions.idle = { group: idleGroup, index: 0 };
     const tapGroup = groupNames.find((g) => /tap|body|hit/i.test(g)) || groupNames[0];
     motions.tapHead = { group: tapGroup, index: 0 };
     motions.tapBody = { group: tapGroup, index: Math.min(1, motionGroups[tapGroup] - 1) };
@@ -39,7 +56,11 @@ export function deriveManifest(model3, opts = {}) {
   return {
     id: opts.id || 'unknown',
     name: opts.name || opts.id || 'unknown',
-    model3: opts.model3 || '',
+    // 设置文件名（Cubism 4 是 .model3.json，Cubism 2 是 .model.json 之类）。
+    // 加载模型时用它拼 URL。
+    modelFile: opts.modelFile || '',
+    // 这个模型是哪一代 Cubism：4 或 2。
+    cubismVersion: version,
     viewport: opts.viewport || { width: 300, height: 560 },
     fit: opts.fit || { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
     // 探测阶段永远不猜语义：表情映射保持为空。
@@ -119,64 +140,114 @@ export function resolveMotionSpec(manifest, key) {
   return { group: spec.group, index };
 }
 
-/** 读取形象注册表与清单；清单缺失时回退到探测。 */
-export async function loadManifest(modelId) {
-  // 注册表读不出来时不能直接崩掉整个 boot——降级成空列表并让调用方拿到
-  // 一个明确的错误，而不是一个未捕获的 fetch 异常。
-  let registry = { models: [] };
+/** 内置模型的 URL 前缀（相对 app:// 根）。 */
+const BUNDLED_MODELS_BASE = '/assets/live2d/models';
+
+/**
+ * 读取形象注册表。
+ *
+ * 优先用主进程给的**合并**注册表（内置 + 用户导入的）：只有主进程知道
+ * 用户数据目录在哪，渲染层自己读不到导入的模型。
+ *
+ * 拿不到就退回只读内置的 index.json——至少内置形象还能用，
+ * 而「一个形象都加载不出来」比「导入的形象暂时不可用」糟糕得多。
+ */
+async function fetchRegistry() {
+  try {
+    const list = await window.pet?.listModels?.();
+    if (Array.isArray(list) && list.length > 0) return list;
+  } catch (err) {
+    console.warn('[desk-pet] 形象注册表读取失败（IPC）：', err?.message);
+  }
   try {
     const registryRes = await fetch('/assets/live2d/index.json');
     if (!registryRes.ok) throw new Error(`HTTP ${registryRes.status}`);
-    registry = await registryRes.json();
+    const registry = await registryRes.json();
+    const list = Array.isArray(registry.models) ? registry.models : [];
+    // 退回路径拿不到主进程补好的 base/source，这里自己补上，
+    // 好让后面的拼 URL 逻辑只有一套。
+    return list.map((m) => ({ ...m, base: BUNDLED_MODELS_BASE, source: 'bundled' }));
   } catch (err) {
     console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
+    return [];
   }
-  const models = Array.isArray(registry.models) ? registry.models : [];
+}
+
+/**
+ * 读取形象注册表与清单；清单缺失时回退到探测。
+ *
+ * registry 可以由调用方传入（主进程给的合并注册表），
+ * 不传就自己取——见 fetchRegistry。
+ */
+export async function loadManifest(modelId, registry) {
+  // 注册表读不出来时不能直接崩掉整个 boot——降级成空列表并让调用方拿到
+  // 一个明确的错误，而不是一个未捕获的 fetch 异常。
+  const models = (Array.isArray(registry) ? registry : await fetchRegistry()).filter(
+    (m) => m && typeof m.id === 'string' && m.id.trim() !== ''
+  );
   // id 两边都要 trim：主进程读注册表时会 trim（entry.id 是规整后的值），
   // 渲染层若拿原始的 m.id 去比，两边就对不上同一个形象。
   const wanted = typeof modelId === 'string' ? modelId.trim() : '';
-  const entry =
-    models.find(
-      (m) => typeof m?.id === 'string' && m.id.trim() !== '' && m.id.trim() === wanted
-    ) || models[0];
+  const entry = models.find((m) => m.id.trim() === wanted) || models[0];
   if (!entry) throw new Error(`未找到形象: ${modelId}`);
-  const entryId = typeof entry.id === 'string' ? entry.id.trim() : '';
+  const entryId = entry.id.trim();
+
+  // base 是形象所在位置的 URL 前缀：内置的在项目目录里，
+  // 用户导入的在用户数据目录里（由 protocol.js 的虚拟根提供）。
+  // 两种形象因此能用同一段代码拼 URL。
+  const urlBase = typeof entry.base === 'string' && entry.base !== '' ? entry.base : BUNDLED_MODELS_BASE;
 
   // 注册表条目缺 manifest 时按与主进程**完全相同**的规则推导：`<id>/pet.json`。
   // 直接把 entry.manifest 拼进 URL 会得到 `…/undefined/pet.json` → 404 →
   // 模型静默降级成「没有语义映射」的样子，而用户完全看不出发生了什么。
   const manifestPath = entry.manifest || `${entryId}/pet.json`;
-  const manifestUrl = `/assets/live2d/models/${manifestPath}`;
-  let base = null;
+  const manifestUrl = `${urlBase}/${manifestPath}`;
+  let manifestJson = null;
   try {
     const res = await fetch(manifestUrl);
-    if (res.ok) base = await res.json();
+    if (res.ok) manifestJson = await res.json();
   } catch {
-    base = null;
+    manifestJson = null;
   }
 
-  const model3Name = base?.model3 || entry.model3 || `${entryId}.model3.json`;
-  const model3Url = `/assets/live2d/models/${entryId}/${model3Name}`;
-  let model3 = null;
+  // 设置文件名（Cubism 4 是 .model3.json，Cubism 2 是 .model.json 之类）。
+  //
+  // **注册表条目决定是哪一代**：有条目有 model2 就是 Cubism 2。
+  // pet.json 只能在同一代里改文件名（与 model3 的既有优先级一致）——
+  // 让 pet.json 跨代改格式会让加载的模型与清单说的对不上。
+  const isCubism2 = typeof entry.model2 === 'string' && entry.model2 !== '';
+  const settingsName = isCubism2
+    ? manifestJson?.model2 || entry.model2
+    : manifestJson?.model3 || entry.model3 || `${entryId}.model3.json`;
+  const settingsUrl = `${urlBase}/${entryId}/${settingsName}`;
+  let settings = null;
   try {
-    const res = await fetch(model3Url);
-    if (res.ok) model3 = await res.json();
+    const res = await fetch(settingsUrl);
+    if (res.ok) settings = await res.json();
   } catch {
-    model3 = null;
+    settings = null;
   }
 
-  const derived = deriveManifest(model3, {
+  const derived = deriveManifest(settings, {
     id: entryId,
     name: entry.name,
-    model3: model3Name,
-    viewport: base?.viewport,
-    fit: base?.fit,
+    modelFile: settingsName,
+    viewport: manifestJson?.viewport,
+    fit: manifestJson?.fit,
   });
-  const merged = mergeManifest(base, derived);
-  // 即使没有 pet.json，也要保证 model3 有值，否则模型无法加载
-  merged.model3 = model3Name;
+  const merged = mergeManifest(manifestJson, derived);
+  // 即使没有 pet.json，也要保证设置文件名有值，否则模型无法加载
+  merged.modelFile = settingsName;
+  // 用哪一代运行时由**注册表**说了算（不是探测结果）：
+  // 探测依赖设置文件读得到，读不到时探测值是 0，
+  // 而注册表里的 model2 / model3 是权威的。
+  merged.cubismVersion = isCubism2 ? 2 : 4;
   // id 以注册表为准：pet.json 里的 id 若与注册表不一致，
   // 用它拼 URL 会 404，而且没有回退到已知可用的 entry.id。
   merged.id = entryId;
+  // 资源基址与来源随清单一起传下去：加载模型、失败时清理纹理
+  // 都要按它拼路径，内置与导入的模型用的是不同的根。
+  merged.base = urlBase;
+  merged.source = entry.source || 'bundled';
   return merged;
 }

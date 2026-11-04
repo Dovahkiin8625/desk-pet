@@ -1,4 +1,5 @@
 import { displayForPoint } from './display.js';
+import { hasVisibleRect } from '../shared/petRect.js';
 
 /**
  * 「贴在桌宠旁边」的摆位算法。
@@ -16,6 +17,7 @@ export const DEFAULT_SIDES = Object.freeze(['top', 'bottom', 'left', 'right']);
 
 export function placeBesidePet({
   petWindow,
+  petRect,
   displays,
   width,
   height,
@@ -27,14 +29,34 @@ export function placeBesidePet({
   }
   const [px, py] = petWindow.getPosition();
   const [pw, ph] = petWindow.getSize();
-  const display = displayForPoint(px + pw / 2, py + ph / 2, displays);
+  // 贴着的是桌宠**本体**，不是那块画布。
+  //
+  // 桌宠窗口的上半截常常是空的（Live2D 贴图四周的透明留白），
+  // 按窗口摆的话气泡会浮在角色头顶几百像素的地方，
+  // 甚至直接被顶到屏幕外。
+  const rect = hasVisibleRect(petRect)
+    ? { x: petRect.x, y: petRect.y, width: petRect.width, height: petRect.height }
+    : { x: px, y: py, width: pw, height: ph };
+  const display = displayForPoint(rect.x + rect.width / 2, rect.y + rect.height / 2, displays);
   const wa = display?.workArea;
 
   const candidates = {
-    top: { placement: 'top', x: px + pw / 2 - width / 2, y: py - height - gap },
-    bottom: { placement: 'bottom', x: px + pw / 2 - width / 2, y: py + ph + gap },
-    left: { placement: 'left', x: px - width - gap, y: py + ph / 2 - height / 2 },
-    right: { placement: 'right', x: px + pw + gap, y: py + ph / 2 - height / 2 },
+    top: { placement: 'top', x: rect.x + rect.width / 2 - width / 2, y: rect.y - height - gap },
+    bottom: {
+      placement: 'bottom',
+      x: rect.x + rect.width / 2 - width / 2,
+      y: rect.y + rect.height + gap,
+    },
+    left: {
+      placement: 'left',
+      x: rect.x - width - gap,
+      y: rect.y + rect.height / 2 - height / 2,
+    },
+    right: {
+      placement: 'right',
+      x: rect.x + rect.width + gap,
+      y: rect.y + rect.height / 2 - height / 2,
+    },
   };
 
   // `preferred` 允许调用方指定优先顺序。
@@ -54,8 +76,8 @@ export function placeBesidePet({
   }
 
   // 一个都放不下（屏幕太小）：夹进工作区，别让窗口跑到屏幕外面去。
-  const x = wa ? px + pw / 2 - width / 2 : px;
-  const y = wa ? py - height - gap : py;
+  const x = wa ? rect.x + rect.width / 2 - width / 2 : rect.x;
+  const y = wa ? rect.y - height - gap : rect.y;
   if (!wa) return { placement: 'top', x: Math.round(x), y: Math.round(y) };
   return {
     placement: 'top',

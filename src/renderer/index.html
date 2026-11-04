@@ -12,6 +12,18 @@
   <div id="stage"></div>
   <script src="/node_modules/pixi.js/dist/browser/pixi.js"></script>
   <script src="/node_modules/live2dcubismcore/live2dcubismcore.min.js"></script>
+
+  <!-- Cubism 2（老格式模型，如 DSR50）需要两样东西：
+       live2d.min.js 是老 SDK（Live2D 2.1），提供 Live2DModelWebGL /
+       Live2DMotion——老模型的动作文件是**文本**格式，只有它认得；
+       cubism2.min.js 提供对应的显示层运行时。
+       必须排在 cubism4 之前：两个 bundle 各带一整套自己的基类，
+       后加载的会整体覆盖前一个的导出。先把 Cubism 2 那份存下来，
+       老模型加载时直接用它（见 live2dRuntime.js）。 -->
+  <script src="/node_modules/live2dcubismcore/live2d.min.js"></script>
+  <script src="/node_modules/pixi-live2d-display/dist/cubism2.min.js"></script>
+  <script>window.__live2dCubism2 = { Live2DModel: PIXI.live2d.Live2DModel };</script>
+
   <script src="/node_modules/pixi-live2d-display/dist/cubism4.min.js"></script>
   <script type="module" src="/src/renderer/main.js"></script>
 </body>

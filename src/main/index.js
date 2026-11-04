@@ -1,9 +1,16 @@
 import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
+import {
+  USER_MODELS_URL_PREFIX,
+  userModelsDir,
+  readMergedRegistry,
+  importModelDir,
+  deleteImportedModel,
+} from './live2dModels.js';
 import { createPetWindow, applySettingsToWindow, applyScaleToWindow } from './window.js';
 import { createTray } from './tray.js';
 import { buildContextMenu, buildTrayMenu } from './menu.js';
@@ -15,6 +22,7 @@ import { createPluginRegistry } from './plugins/index.js';
 import { createAppIndex } from './apps.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
+import { visibleRectOnScreen } from '../shared/petRect.js';
 import { makeHotkeyCapture } from './hotkeyCapture.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
@@ -54,6 +62,12 @@ let settingsWin = null;
 let pendingWrite = null;
 // 系统级开关的控制器（第六部分）。
 let system = null;
+// 桌宠**本体**的可见矩形（窗口内坐标）：渲染层量出来，主进程据此夹紧位置。
+//
+// 桌宠窗口是一块固定大小的画布，Live2D 贴图四周有透明留白，
+// 于是小模型的上半截窗口是空的。夹紧、吸附、停靠、气泡摆位
+// 全部按本体算——否则小模型永远差一截才贴得到屏幕边。
+let visibleRect = null;
 // E2E 下的「Windows 登录项」替身：记住最后一次写进去的值。
 // 真实实现读的是注册表，E2E 不碰注册表（见下面 loginItem 的注释），
 // 但 `get()` 仍要有个东西可返回——否则「磁盘与系统登录项是否一致」
@@ -63,6 +77,16 @@ let system = null;
 // 所以「磁盘写着 true、重启后登录项却是 false」在 E2E 里会出现——
 // 那是替身不持久，不是缺陷。
 let e2eLoginItem = { openAtLogin: false };
+
+// E2E 下登记的全局快捷键：accelerator → 回调。
+//
+// 系统级的快捷键**按不了**（Playwright 的合成按键不经过系统层），
+// 所以 E2E 不真的注册它们——但把回调记在这里，
+// 测试就能「按一下」：globalThis.__e2eShortcuts.get('Control+Shift+F')()。
+let e2eShortcuts = new Map();
+if (IS_E2E) {
+  globalThis.__e2eShortcuts = e2eShortcuts;
+}
 
 // 显示器列表缓存：拖拽时每一帧都要用它夹紧窗口（60Hz），
 // 而 getPrimaryDisplay()/getAllDisplays() 每次都是同步的跨进程查询——
@@ -118,43 +142,14 @@ function startCursorTracking() {
 }
 
 /**
- * 读取形象注册表，并把条目**规整**成可用形状。
+ * 读取形象注册表（内置 + 用户导入），并把条目**规整**成可用形状。
  *
- * 原始 JSON 是用户手写的：漏字段就直接用会让下拉框出现
- * 「undefined」这样的条目名，或让模型指向不存在的文件。
- * 这里的默认值与渲染层 loadManifest 的回退规则**必须一致**
- * （manifest → `<id>/pet.json`，model3 → `<id>.model3.json`），
- * 否则设置窗口显示的形象与桌面上跑的对不上。
+ * 实现在 src/main/live2dModels.js：内置的读 assets/live2d/index.json，
+ * 导入的读 userData/live2d/registry.json，两边合成同一个形状
+ * （都带 base / source），渲染层于是不必关心某个形象是哪来的。
  */
 async function readModelRegistry() {
-  try {
-    const text = await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8');
-    const parsed = JSON.parse(text);
-    const list = Array.isArray(parsed.models) ? parsed.models : [];
-    const out = [];
-    for (const entry of list) {
-      if (!entry || typeof entry.id !== 'string' || entry.id.trim() === '') {
-        // 没有 id 的条目无法被选中，也无法生成回退路径：直接丢掉，但留痕。
-        console.warn('[desk-pet] 形象注册表条目缺少 id，已忽略：', JSON.stringify(entry));
-        continue;
-      }
-      const id = entry.id.trim();
-      out.push({
-        ...entry,
-        id,
-        // 名字缺失时退回 id：下拉框里出现「undefined」比显示 id 更糟。
-        name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
-        manifest: entry.manifest || `${id}/pet.json`,
-        model3: entry.model3 || `${id}.model3.json`,
-      });
-    }
-    return out;
-  } catch (err) {
-    // 注册表损坏或读不到时静默返回空列表，会让「形象列表是空的」这件事无从排查——
-    // 与 settings 损坏同理，必须留痕。
-    console.warn('[desk-pet] 形象注册表读取失败：', err?.message);
-    return [];
-  }
+  return readMergedRegistry(ROOT, app.getPath('userData'));
 }
 
 function persist(patch) {
@@ -169,7 +164,7 @@ function persist(patch) {
   // 窗口不变而模型放大，模型的上半身就被窗口边界切掉了。
   // 尺寸的事必须在这里做：落盘是 300ms 之后的事，生效是现在。
   if (settings.scale !== prevScale) {
-    const bounds = applyScaleToWindow(win, settings.scale, currentDisplays());
+    const bounds = applyScaleToWindow(win, settings.scale, currentDisplays(), visibleRect);
     // 窗口尺寸变了，保存的左上角也不再指向同一个锚点：跟着更新。
     if (bounds) settings.position = { x: Math.round(bounds.x), y: Math.round(bounds.y) };
   }
@@ -206,6 +201,64 @@ function broadcastSettings(next) {
   for (const w of targets) {
     w.webContents.send('pet:settingsChanged', next);
   }
+}
+
+/**
+ * 记下桌宠本体的可见矩形（并落盘）。
+ *
+ * 为什么要落盘：窗口有一部分在屏幕外是**正常状态**
+ * （用户把角色拖到了屏幕顶，模型上方那块透明留白自然就在屏幕外）。
+ * 下次启动要按本体判定位置是否有效——按窗口判会把「拖到顶」
+ * 判成「显示器被拔掉了」，悄悄把桌宠挪回右下角。
+ *
+ * 不广播：渲染层不需要知道这个值，广播只会让每个窗口都白跑一趟。
+ */
+function persistVisibleRect(rect) {
+  if (
+    !rect ||
+    !Number.isFinite(rect.x) ||
+    !Number.isFinite(rect.y) ||
+    !Number.isFinite(rect.width) ||
+    !Number.isFinite(rect.height) ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return;
+  }
+  const next = {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+  const prev = settings?.visibleRect;
+  if (
+    prev &&
+    prev.x === next.x &&
+    prev.y === next.y &&
+    prev.width === next.width &&
+    prev.height === next.height
+  ) {
+    return;
+  }
+  settings = sanitizeSettings({ ...settings, visibleRect: next });
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    writeSettings();
+  }, 300);
+}
+
+/**
+ * 桌宠本体在屏幕上的矩形（气泡与面板摆在它旁边）。
+ *
+ * 量不出来时返回 null：调用方会退回整块窗口。
+ */
+function petVisibleRect() {
+  if (!win || win.isDestroyed()) return null;
+  const [x, y] = win.getPosition();
+  const [w, h] = win.getSize();
+  return visibleRectOnScreen({ x, y, width: w, height: h }, visibleRect);
 }
 
 /**
@@ -293,6 +346,229 @@ function onModelSwitchResult(result) {
   const entry = pendingSwitches.get(result?.requestId);
   if (!entry) return;
   entry.resolve(result);
+}
+
+/**
+ * 切换到某个形象：等渲染层回执，**确认上屏了**才落盘。
+ *
+ * 「切换形象」和「导入模型后自动切换」共用这一条路径——两条路径的
+ * 失败语义必须一样，否则会出现「导入成功了但桌宠没换」或者
+ * 「磁盘上的 id 指向一个没上屏的形象」。
+ */
+async function switchModelTo(modelId) {
+  // 空 id（''/undefined/null）不是「切换到某个形象」，而是「没有指定」。
+  //
+  // resolveModelId 会把任何不认识的 id 都映射到 models[0].id，
+  // 于是 switchModelTo('') 会把一个存得好好的 modelId 覆盖成第一个形象——
+  // 原来的 persist({ modelId }) 原样落盘，反而不会动它。
+  // 所以这里必须把「没有 id」当成「不变」：返回当前 id，什么都不持久化。
+  if (typeof modelId !== 'string' || modelId === '') {
+    return { ok: true, modelId: settings.modelId };
+  }
+  // 先按注册表解析：请求了不存在的 id 时落地的其实是回退后的那个。
+  // 落盘与广播都用解析后的 id，设置窗口的下拉框才不会与桌面上跑的形象脱节。
+  const models = await readModelRegistry();
+  const resolved = resolveModelId(models, modelId);
+  // 等渲染层回执再决定落盘什么：**不能**先落盘——
+  // 加载失败时磁盘上的 id 会指向一个没上屏的形象（spec §4.5 第 4 步）。
+  const ack = await requestModelSwitch(resolved);
+  if (!ack) {
+    // 超时：渲染层没有回执。磁盘上的 modelId 保持不变——
+    // 它至少还指向「上一次成功上屏」的那个形象。
+    return { ok: false, modelId: settings.modelId, error: '渲染层未在超时时间内回应切换请求' };
+  }
+  if (ack.ok) {
+    // 成功：落盘渲染层**真正上屏**的 id（渲染层可能回退到别的形象）。
+    persist({ modelId: ack.modelId || resolved });
+    broadcastSettings(settings);
+    return { ok: true, modelId: settings.modelId };
+  }
+  // 被后来的请求顶掉：什么都不落盘，由那一次请求的结果决定。
+  // superseded 标记让设置窗口**不弹失败提示**——这只是一次正常的抢占，
+  // 后面那次请求的结论才是用户该看到的（否则会先看到一条假的失败）。
+  if (ack.superseded) {
+    return {
+      ok: false,
+      superseded: true,
+      modelId: settings.modelId,
+      error: '该切换请求已被更新的请求取代',
+    };
+  }
+  // 失败：回滚。磁盘上的 modelId 必须回到**屏幕上那个**形象。
+  // 失败必须留痕：否则用户看到的只是「桌宠没换」，却没有任何线索。
+  console.warn('[desk-pet] 形象切换失败：', ack.error || '未知原因');
+  const onScreen = typeof ack.modelId === 'string' && ack.modelId !== '' ? ack.modelId : null;
+  if (onScreen) {
+    persist({ modelId: onScreen });
+  } else {
+    // 屏幕上什么都没有（连启动时的模型都没上屏）：把 id 回退到注册表首项，
+    // 否则下次启动会再次加载同一个坏模型，桌宠永久空白。
+    const fallback = models[0]?.id;
+    if (fallback) persist({ modelId: fallback });
+  }
+  broadcastSettings(settings);
+  return { ok: false, modelId: settings.modelId, error: ack.error || '模型加载失败' };
+}
+
+/**
+ * 这个 IPC 是不是设置窗口发来的。
+ *
+ * 导入/删除会弹出**原生**对话框，属于用户可见的动作：不能让桌宠窗口
+ * （或者任何别的渲染层）把它拉起来。渲染层不是可信边界。
+ */
+function isSettingsSender(event) {
+  if (!settingsWin || settingsWin.isDestroyed()) return false;
+  return event?.sender === settingsWin.webContents;
+}
+
+/**
+ * 形象列表变了：通知设置窗口重新拉取注册表、刷新下拉框。
+ *
+ * modelId 是**刷新后应当选中的**那个形象：刷新是异步的，
+ * 而设置广播可能先到也可能后到，两条消息各说各的就会打架。
+ * 把该选哪个一并告诉设置窗口，两条消息到达的先后就无所谓了。
+ */
+function notifyModelsChanged(modelId) {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('pet:modelsChanged', modelId);
+  }
+}
+
+/**
+ * 导入一个 Live2D 模型目录。
+ *
+ * 流程：选文件夹 → 复制到 userData → 校验 → 注册 → 切过去。
+ * 导入完直接切到新模型：让用户立刻看到效果，而不是「导入成功但桌宠没变」。
+ */
+async function importModel(event) {
+  if (!isSettingsSender(event)) {
+    return { ok: false, error: '只有设置窗口可以导入模型' };
+  }
+  const parent = settingsWin && !settingsWin.isDestroyed() ? settingsWin : undefined;
+  const options = {
+    title: '选择 Live2D 模型文件夹',
+    // 只要文件夹：Live2D 模型是以「一个目录」的形式分发的
+    // （model3.json + moc3 + 纹理 + 动作 + 表情），选单个文件必然缺零件。
+    properties: ['openDirectory'],
+  };
+  let picked;
+  try {
+    const result = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
+    picked = result.filePaths[0];
+  } catch (err) {
+    return { ok: false, error: `无法打开文件夹选择器：${err?.message || err}` };
+  }
+
+  let model;
+  try {
+    model = await importModelDir({
+      sourceDir: picked,
+      rootDir: ROOT,
+      userDataDir: app.getPath('userData'),
+      onProgress: (p) => {
+        if (settingsWin && !settingsWin.isDestroyed()) {
+          settingsWin.webContents.send('pet:importProgress', p);
+        }
+      },
+    });
+  } catch (err) {
+    // 导入失败必须留痕：否则用户只看到一句「导入失败」，无从排查。
+    console.warn('[desk-pet] 模型导入失败：', err?.message);
+    return { ok: false, error: err?.message || String(err) };
+  }
+
+  // 注册表变了：设置窗口的下拉框要重新填（它不知道新形象的 id）。
+  // 选中新形象：导入完就该跑它。
+  notifyModelsChanged(model.id);
+
+  const switched = await switchModelTo(model.id);
+  if (!switched.ok) {
+    // 模型**已经在库里**了，只是没切过去：这不是导入失败，
+    // 要分开说，否则用户会去重复导入一遍。
+    return {
+      ok: true,
+      model,
+      switched: false,
+      error: `模型已导入，但切换失败：${switched.error || '未知原因'}`,
+    };
+  }
+  return { ok: true, model, switched: true };
+}
+
+/**
+ * 删除一个导入的模型。
+ *
+ * 内置模型删不得——它是程序的一部分。删除前要原生确认：
+ * 文件从 userData 里消失之后没法撤销，一次点击不该就删掉。
+ */
+async function deleteModel(event, modelId) {
+  if (!isSettingsSender(event)) {
+    return { ok: false, error: '只有设置窗口可以删除模型' };
+  }
+  const models = await readModelRegistry();
+  const entry = models.find((m) => m.id === modelId);
+  if (!entry) {
+    return { ok: false, error: `未找到形象：${modelId}` };
+  }
+  if (entry.source !== 'user') {
+    return { ok: false, error: '内置模型不能删除——它是程序的一部分。' };
+  }
+
+  const parent = settingsWin && !settingsWin.isDestroyed() ? settingsWin : undefined;
+  const options = {
+    type: 'warning',
+    title: '删除模型',
+    message: `确定删除「${entry.name}」吗？`,
+    detail: '模型文件会从用户数据目录中移除，无法撤销。',
+    buttons: ['取消', '删除'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  let confirmed;
+  try {
+    const result = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    confirmed = result.response === 1;
+  } catch (err) {
+    return { ok: false, error: `无法显示确认框：${err?.message || err}` };
+  }
+  if (!confirmed) return { ok: false, canceled: true };
+
+  // 正在用的是它：先切走再删。
+  // 反过来的话桌宠还挂在那个已经被删掉的模型上——纹理已经在显存里，
+  // 暂时看不出问题，但下次重载或切换就会失败。
+  if (settings.modelId === entry.id) {
+    const fallback = models.find((m) => m.source === 'bundled')?.id || models[0]?.id;
+    if (!fallback) {
+      return { ok: false, error: '没有可以切换过去的其它模型，删除已取消。' };
+    }
+    const switched = await switchModelTo(fallback);
+    if (!switched.ok) {
+      return {
+        ok: false,
+        error: `切换到备用模型失败，删除已取消：${switched.error || '未知原因'}`,
+      };
+    }
+  }
+
+  try {
+    await deleteImportedModel({ id: entry.id, userDataDir: app.getPath('userData') });
+  } catch (err) {
+    console.warn('[desk-pet] 模型删除失败：', err?.message);
+    return { ok: false, error: err?.message || String(err) };
+  }
+  // 删掉的形象可能正是当前在用的那个，主进程已经把它切走了——
+  // 告诉设置窗口现在该选哪个。
+  notifyModelsChanged(settings.modelId);
+  broadcastSettings(settings);
+  // modelId 一并带回去：设置窗口刷新下拉框时据此决定选中项，
+  // 不必自己猜「删完之后桌宠跑的是哪个」。
+  return { ok: true, id: entry.id, name: entry.name, modelId: settings.modelId };
 }
 
 /**
@@ -438,6 +714,23 @@ function toggleVisible() {
   persist({ visible: next });
 }
 
+/**
+ * 唤醒输入框：把插件面板叫出来，焦点落在它的输入框上。
+ *
+ * 桌宠被藏着时先把它请出来——面板是摆在桌宠旁边的，
+ * 桌宠不在的话用户看到的是一块悬空的输入框。
+ */
+function openInputBox() {
+  if (win && !win.isDestroyed() && !win.isVisible()) {
+    // 召唤桌宠 = 想看见它：停靠中的桌宠先取回来，
+    // 否则用户召唤来的是一条 24px 的窄边。
+    system?.retrievePet?.();
+    win.showInactive();
+    persist({ visible: true });
+  }
+  openPanel();
+}
+
 function openSettings() {
   // 设置窗口是单例：重复打开只聚焦已有窗口。
   if (settingsWin && !settingsWin.isDestroyed()) {
@@ -559,7 +852,11 @@ function formatBytes(bytes) {
 }
 
 app.whenReady().then(async () => {
-  registerAppProtocol(ROOT);
+  // 用户导入的 Live2D 模型存在 userData 里（安装目录可能没有写权限），
+  // 给它一个虚拟根：渲染层就能用和内置模型一样的 URL 形状去取它们。
+  registerAppProtocol(ROOT, {
+    [USER_MODELS_URL_PREFIX]: userModelsDir(app.getPath('userData')),
+  });
   settings = await loadSettings(app.getPath('userData'));
   // 没有保存过位置时不需要在这里补默认值：createPetWindow 的 restorePosition
   // 会用真实视口尺寸算出主显示器右下角，避免这里写死 300×560 与清单脱节。
@@ -575,60 +872,11 @@ app.whenReady().then(async () => {
       return next;
     },
     listModels: readModelRegistry,
-    switchModel: async (modelId) => {
-      // 空 id（''/undefined/null）不是「切换到某个形象」，而是「没有指定」。
-      //
-      // resolveModelId 会把任何不认识的 id 都映射到 models[0].id，
-      // 于是 switchModel('') 会把一个存得好好的 modelId 覆盖成第一个形象——
-      // 原来的 persist({ modelId }) 原样落盘，反而不会动它。
-      // 所以这里必须把「没有 id」当成「不变」：返回当前 id，什么都不持久化。
-      if (typeof modelId !== 'string' || modelId === '') {
-        return { ok: true, modelId: settings.modelId };
-      }
-      // 先按注册表解析：请求了不存在的 id 时落地的其实是回退后的那个。
-      // 落盘与广播都用解析后的 id，设置窗口的下拉框才不会与桌面上跑的形象脱节。
-      const models = await readModelRegistry();
-      const resolved = resolveModelId(models, modelId);
-      // 等渲染层回执再决定落盘什么：**不能**先落盘——
-      // 加载失败时磁盘上的 id 会指向一个没上屏的形象（spec §4.5 第 4 步）。
-      const ack = await requestModelSwitch(resolved);
-      if (!ack) {
-        // 超时：渲染层没有回执。磁盘上的 modelId 保持不变——
-        // 它至少还指向「上一次成功上屏」的那个形象。
-        return { ok: false, modelId: settings.modelId, error: '渲染层未在超时时间内回应切换请求' };
-      }
-      if (ack.ok) {
-        // 成功：落盘渲染层**真正上屏**的 id（渲染层可能回退到别的形象）。
-        persist({ modelId: ack.modelId || resolved });
-        broadcastSettings(settings);
-        return { ok: true, modelId: settings.modelId };
-      }
-      // 被后来的请求顶掉：什么都不落盘，由那一次请求的结果决定。
-      // superseded 标记让设置窗口**不弹失败提示**——这只是一次正常的抢占，
-      // 后面那次请求的结论才是用户该看到的（否则会先看到一条假的失败）。
-      if (ack.superseded) {
-        return {
-          ok: false,
-          superseded: true,
-          modelId: settings.modelId,
-          error: '该切换请求已被更新的请求取代',
-        };
-      }
-      // 失败：回滚。磁盘上的 modelId 必须回到**屏幕上那个**形象。
-      // 失败必须留痕：否则用户看到的只是「桌宠没换」，却没有任何线索。
-      console.warn('[desk-pet] 形象切换失败：', ack.error || '未知原因');
-      const onScreen = typeof ack.modelId === 'string' && ack.modelId !== '' ? ack.modelId : null;
-      if (onScreen) {
-        persist({ modelId: onScreen });
-      } else {
-        // 屏幕上什么都没有（连启动时的模型都没上屏）：把 id 回退到注册表首项，
-        // 否则下次启动会再次加载同一个坏模型，桌宠永久空白。
-        const fallback = models[0]?.id;
-        if (fallback) persist({ modelId: fallback });
-      }
-      broadcastSettings(settings);
-      return { ok: false, modelId: settings.modelId, error: ack.error || '模型加载失败' };
-    },
+    switchModel: (modelId) => switchModelTo(modelId),
+    // 导入 / 删除用户自己的 Live2D 模型。两者都要弹原生对话框，
+    // 所以主进程会校验发起方是不是设置窗口。
+    importModel: (event) => importModel(event),
+    deleteModel: (event, modelId) => deleteModel(event, modelId),
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
     // 左键点桌宠：弹出插件面板。
@@ -650,6 +898,16 @@ app.whenReady().then(async () => {
     // 因为下一次 dragStart 会重新对齐。
     onDragEnd: () => {
       system?.dragEnd?.();
+    },
+    // 渲染层量出的可见矩形（桌宠本体在窗口里的哪一块）。
+    onVisibleRect: (rect) => {
+      visibleRect = rect || null;
+      system?.setVisibleRect?.(rect);
+      persistVisibleRect(rect);
+    },
+    // 「光标落在形象的透明处」：那块空白不吃点击。
+    onSetClickThrough: (enabled) => {
+      system?.setPixelClickThrough?.(enabled);
     },
     // 渲染层注册好推送频道的监听器了。
     onRendererReady,
@@ -695,8 +953,11 @@ app.whenReady().then(async () => {
     // 设置窗口要读当前状态（勾选框、快捷键、停靠边）。
     getSystemState: () => system?.getState?.() || null,
     // 开始/取消录制快捷键。真正的按键捕获在主进程（before-input-event）。
-    recordHotkey: () => system?.startRecording?.() || false,
+    // slot 指的是**哪一个**快捷键（见 shared/hotkeys.js 的槽位清单）。
+    recordHotkey: (slot) => system?.startRecording?.(slot) || false,
     cancelHotkeyRecording: () => system?.cancelRecording?.() || false,
+    // 清除一个快捷键（= 不设它）。只有允许为空的槽位能清。
+    clearHotkey: (slot) => system?.clearHotkey?.(slot) || false,
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
@@ -714,7 +975,13 @@ app.whenReady().then(async () => {
     getDisplays: () => currentDisplays(),
     getSettings: () => settings,
     applySettings: (patch) => persist(patch),
-    onHotkeyAction: () => toggleVisible(),
+    // 每个快捷键槽位按下之后做什么（槽位名见 shared/hotkeys.js）。
+    hotkeyActions: {
+      // 呼出 / 隐藏桌宠。
+      hotkey: () => toggleVisible(),
+      // 唤醒输入框：把插件面板叫出来，焦点落在它的输入框上。
+      panelHotkey: () => openInputBox(),
+    },
     onStateChanged: () => {
       refreshTrayMenu();
       // 设置窗口也要跟着变：用户可能是在**托盘菜单**里改的穿透，
@@ -748,18 +1015,30 @@ app.whenReady().then(async () => {
       register: (acc, cb) => {
         // E2E 不占用系统级快捷键：注册是真的全局生效，
         // 跑测试的那几分钟里用户按这个组合会被应用吃掉。
-        if (IS_E2E) return true;
+        if (IS_E2E) {
+          // 但**记下回调**：测试可以按它，模拟「用户按了这个键」。
+          // 这样「按下 → 输入框被唤醒」这条链也能自动化
+          // （真正按系统级快捷键是不能自动化做的，见 README 的已知限制）。
+          e2eShortcuts.set(acc, cb);
+          return true;
+        }
         return globalShortcut.register(acc, cb);
       },
       unregister: (acc) => {
-        if (IS_E2E) return;
+        if (IS_E2E) {
+          e2eShortcuts.delete(acc);
+          return;
+        }
         globalShortcut.unregister(acc);
       },
       unregisterAll: () => {
-        if (IS_E2E) return;
+        if (IS_E2E) {
+          e2eShortcuts.clear();
+          return;
+        }
         globalShortcut.unregisterAll();
       },
-      isRegistered: (acc) => globalShortcut.isRegistered(acc),
+      isRegistered: (acc) => (IS_E2E ? e2eShortcuts.has(acc) : globalShortcut.isRegistered(acc)),
     },
     getAppPath: () => app.getAppPath(),
     isPackaged: app.isPackaged,
@@ -772,6 +1051,7 @@ app.whenReady().then(async () => {
   bubble = createBubbleController({
     rootDir: ROOT,
     getPetWindow: () => win,
+    getPetRect: () => petVisibleRect(),
     getDisplays: () => currentDisplays(),
   });
 
@@ -839,6 +1119,7 @@ app.whenReady().then(async () => {
   panel = createPanelController({
     rootDir: ROOT,
     getPetWindow: () => win,
+    getPetRect: () => petVisibleRect(),
     getDisplays: () => currentDisplays(),
     plugins,
     apps,

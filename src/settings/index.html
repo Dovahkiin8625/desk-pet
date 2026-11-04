@@ -132,6 +132,10 @@
     /* width:auto 是必须的：控件默认 width:100%，在 flex 行里会被当成
        flex-basis 的基准，把整行撑到换行——「保存」和「清除」就分家了。 */
     .inline input { flex: 1 1 140px; min-width: 0; width: auto; }
+    /* 下拉框同理：它默认也是 width:100%，放进 .inline 会独占整行，
+       把旁边的按钮挤到下一行去。flex:0 1 auto 让它按内容宽度占位，
+       空间不够时再收缩。 */
+    .inline select { flex: 0 1 auto; width: auto; min-width: 0; }
     .range {
       display: grid; grid-template-columns: minmax(0, 1fr) 58px;
       align-items: center; gap: 10px;
@@ -331,9 +335,20 @@
           <h1>外观</h1>
           <p class="panel-sub">桌宠长什么样，在桌面上占多大。</p>
 
-          <div class="field">
+          <div class="field stack">
             <label for="model">形象</label>
-            <div class="control"><select id="model"></select></div>
+            <div class="control">
+              <div class="inline">
+                <select id="model"></select>
+                <button type="button" class="btn" id="importModel">导入模型…</button>
+                <button type="button" class="btn danger" id="deleteModel" disabled>删除</button>
+              </div>
+            </div>
+            <p class="hint">
+              「导入模型…」会把你自己的 Live2D 模型文件夹复制到用户数据目录，
+              重启后依然在列表里。Cubism 4（.model3.json + .moc3）与
+              Cubism 2（.model.json + .moc）都支持。
+            </p>
           </div>
 
           <div class="field">
@@ -571,6 +586,16 @@
               <button type="button" id="recordHotkey" class="btn">重新录制</button>
             </div>
             <p class="hint" id="hotkeyHint">呼出 / 隐藏桌宠。被别的程序占用时这里会写明。</p>
+          </div>
+
+          <div class="field stack">
+            <label for="panelHotkeyValue">输入框快捷键</label>
+            <div class="control inline">
+              <input type="text" id="panelHotkeyValue" readonly placeholder="未设置">
+              <button type="button" id="recordPanelHotkey" class="btn">录制</button>
+              <button type="button" id="clearPanelHotkey" class="btn">清除</button>
+            </div>
+            <p class="hint" id="panelHotkeyHint">唤出输入框（面板的搜索框），可以直接打字。默认不设。</p>
           </div>
 
           <div class="toggle solo">

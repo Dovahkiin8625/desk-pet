@@ -22,6 +22,13 @@ export function attachInteraction({
   onContextMenu,
   onInteract,
   onZoom,
+  // 「这一点在不在形象上」。返回 false = 明确不在（这次点击不算），
+  // 返回 null/undefined = 不知道（退回旧行为）。
+  isOnFigure,
+  // 拖拽状态变化时回调一次（true = 正在拖，第二个参数 = 指针还按着）。
+  // 用来在按下/拖拽期间关掉「透明处穿透」——半路把窗口变成
+  // 不吃鼠标事件的窗口，拖拽会当场断掉。
+  onDragStateChange,
 }) {
   const local = (clientX, clientY) => {
     // hitTest / focus 的入参是**世界坐标**（库内部用 worldTransform.applyInverse 换算）。
@@ -37,6 +44,13 @@ export function attachInteraction({
       const manifest = getManifest();
       if (!model || !manifest) return;
       const { x, y } = local(clientX, clientY);
+      // 可点击区域由**形象**决定：点在形象的透明留白上不算点到桌宠。
+      //
+      // 判定用渲染结果的 alpha（见 pet/silhouette.js），不是包围盒——
+      // 包围盒里也有一大片透明。返回 null 表示「量不出来」，
+      // 那时按旧行为处理，不能因为测量失败就让桌宠点不动。
+      const onFigure = isOnFigure?.(x, y);
+      if (onFigure === false) return;
       const zone = hitZoneAt(model, x, y);
       const reaction = reactionFor(manifest, zone);
       onInteract?.();
@@ -54,8 +68,19 @@ export function attachInteraction({
     },
   });
 
+  // 拖拽状态的变化只往外说一次：正在拖 / 按着不放 / 都没发生。
+  let lastDragging = false;
+  let lastPressed = false;
+  const reportDragState = () => {
+    if (drag.dragging === lastDragging && drag.pressed === lastPressed) return;
+    lastDragging = drag.dragging;
+    lastPressed = drag.pressed;
+    onDragStateChange?.(lastDragging, lastPressed);
+  };
+
   const handleMove = (e) => {
     drag.pointerMove(e);
+    reportDragState();
     const { x, y } = local(e.clientX, e.clientY);
     // 悬停也算交互：空闲动画是给「用户走开了」的场景准备的，
     // 鼠标还在桌宠身上动的时候，桌宠正被看着，不该自说自话。
@@ -99,11 +124,18 @@ export function attachInteraction({
       );
     }
     drag.pointerDown(e);
+    reportDragState();
   };
 
-  const handleUp = (e) => drag.pointerUp(e);
+  const handleUp = (e) => {
+    drag.pointerUp(e);
+    reportDragState();
+  };
 
-  const handleCancel = () => drag.pointerCancel();
+  const handleCancel = () => {
+    drag.pointerCancel();
+    reportDragState();
+  };
 
   canvas.addEventListener('pointerdown', handleDown);
   canvas.addEventListener('pointermove', handleMove);
