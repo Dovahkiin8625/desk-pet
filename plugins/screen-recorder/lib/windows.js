@@ -1,0 +1,163 @@
+// plugins/screen-recorder/lib/windows.js
+import { BrowserWindow } from 'electron';
+import { join } from 'node:path';
+
+/**
+ * 插件自建的几个窗口。
+ *
+ * 不用宿主那套「一个插件一个窗口、window 与 widget 互斥」的机制：
+ * 工作台与控制条要**同时开着**（录着屏还得能改设置）。
+ *
+ * 页面用 file:// 加载：file:// 在 Chromium 里是 secure context，
+ * navigator.mediaDevices 才能用（已实测）。
+ */
+export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
+  /** webContents.id → 窗口的角色。 */
+  const roles = new Map();
+  const windows = { capture: null, picker: null, control: null, workbench: null };
+
+  function track(win, role) {
+    roles.set(win.webContents.id, role);
+    win.on('closed', () => {
+      roles.delete(win.webContents.id);
+    });
+    return win;
+  }
+
+  /** 捕获页：隐藏着，真正干活的地方。 */
+  function createCapture() {
+    if (windows.capture && !windows.capture.isDestroyed()) return windows.capture;
+    const win = new BrowserWindow({
+      show: false,
+      width: 640,
+      height: 480,
+      webPreferences: {
+        // 独立的 session 分区：displayMedia 的 handler 装在这里，
+        // 不会影响桌宠本体的 defaultSession。
+        partition: 'persist:screen-recorder',
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // 隐藏窗口的定时器会被节流，录制靠它逐帧取像——必须关掉节流。
+        backgroundThrottling: false,
+      },
+    });
+    win.on('closed', () => {
+      windows.capture = null;
+    });
+    win.loadFile(join(pluginDir, 'pages', 'recorder.html'));
+    windows.capture = track(win, 'capture');
+    return win;
+  }
+
+  function destroyCapture() {
+    if (windows.capture && !windows.capture.isDestroyed()) windows.capture.destroy();
+    windows.capture = null;
+  }
+
+  /** 控制条：置顶的小浮窗。 */
+  function showControl() {
+    if (windows.control && !windows.control.isDestroyed()) {
+      windows.control.focus();
+      return windows.control;
+    }
+    const win = new BrowserWindow({
+      width: 240,
+      height: 64,
+      frame: false,
+      transparent: true,
+      hasShadow: false,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+    win.setAlwaysOnTop(true, 'floating');
+    win.loadFile(join(pluginDir, 'pages', 'control.html'));
+    windows.control = track(win, 'control');
+    return win;
+  }
+
+  function hideControl() {
+    if (windows.control && !windows.control.isDestroyed()) windows.control.destroy();
+    windows.control = null;
+  }
+
+  /** 工作台：设置与快捷键。 */
+  function openWorkbench() {
+    if (windows.workbench && !windows.workbench.isDestroyed()) {
+      windows.workbench.focus();
+      return windows.workbench;
+    }
+    const win = new BrowserWindow({
+      width: 460,
+      height: 560,
+      title: '录屏设置',
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+    win.on('closed', () => {
+      windows.workbench = null;
+      onWorkbenchChanged?.(false);
+    });
+    win.loadFile(join(pluginDir, 'pages', 'workbench.html'));
+    windows.workbench = track(win, 'workbench');
+    onWorkbenchChanged?.(true);
+    return win;
+  }
+
+  function closeWorkbench() {
+    if (windows.workbench && !windows.workbench.isDestroyed()) windows.workbench.destroy();
+    windows.workbench = null;
+    onWorkbenchChanged?.(false);
+  }
+
+  function isWorkbenchOpen() {
+    return Boolean(windows.workbench && !windows.workbench.isDestroyed());
+  }
+
+  /**
+   * 退出前把窗口全拆掉。
+   *
+   * Electron 正常的 app.quit() 流程遇到还有窗口活着会**卡住**——
+   * 宿主的 destroyAll() 就是为这个存在的（见 src/main/plugins/window.js）。
+   */
+  function destroyAll() {
+    for (const key of Object.keys(windows)) {
+      const win = windows[key];
+      if (win && !win.isDestroyed()) win.destroy();
+      windows[key] = null;
+    }
+    roles.clear();
+  }
+
+  return {
+    createCapture,
+    destroyCapture,
+    captureWindow: () => windows.capture,
+    showControl,
+    hideControl,
+    openWorkbench,
+    closeWorkbench,
+    isWorkbenchOpen,
+    destroyAll,
+    roleOf: (contentsId) => roles.get(contentsId) || '',
+  };
+}
