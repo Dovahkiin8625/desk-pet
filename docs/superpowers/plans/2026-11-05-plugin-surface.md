@@ -217,10 +217,18 @@ export function defaultWindowSpec(manifest) {
  *   是插件自己该决定的事，不该由宿主替它决定。
  */
 export function resolveWindowSpec(manifest, mode) {
+  // 声明出来的那一段**再归一化一次**：这个导出函数的返回形状
+  // 不该取决于调用方有没有先跑过 `validateManifest`。
+  //
+  // 「合成」的那一份**不归一化**——`normalizeWindowSpec` 的 alwaysOnTop
+  // 默认是 true，归一化会把合成规格从 false 翻成 true，
+  // 弄丢「没声明过 window 段的插件不压在别人窗口上」这条规则。
   if (mode === PLUGIN_WINDOW_MODE.WIDGET) {
-    return manifest?.widget ? manifest.widget : null;
+    if (!manifest?.widget) return null;
+    return normalizeWindowSpec(manifest.widget, PLUGIN_WINDOW_MODE.WIDGET);
   }
-  return manifest?.window || defaultWindowSpec(manifest);
+  if (!manifest?.window) return defaultWindowSpec(manifest);
+  return normalizeWindowSpec(manifest.window, PLUGIN_WINDOW_MODE.WINDOW);
 }
 ```
 

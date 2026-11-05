@@ -89,6 +89,12 @@
 - 新增 `resolveWindowSpec(manifest, mode)`：`mode === 'widget'` 时取 `manifest.widget`
   （**没有就是没有**，小部件仍然自愿）；`mode === 'window'` 时取
   `manifest.window ?? defaultWindowSpec(manifest)`。
+  声明出来的那一段**在函数内部再走一次 `normalizeWindowSpec`**，
+  这样这个导出函数的返回形状不依赖调用方有没有先跑过 `validateManifest`
+  ——同一个函数不该有两种返回形状。
+  **但「合成」的那一份不归一化**：`normalizeWindowSpec` 的 `alwaysOnTop` 默认是 `true`，
+  归一化会把合成规格的 `alwaysOnTop` 从 `false` 翻成 `true`，
+  弄丢「没声明过 `window` 段的插件不压在别人窗口上」这条规则。
 - `canDetach(manifest)` 改为恒 `true`（插件恒真）。内置功能不走这条路，
   它们在 `src/main/builtins.js` 里自己写 `canDetach: false`。
 
