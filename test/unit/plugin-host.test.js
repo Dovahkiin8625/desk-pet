@@ -9,6 +9,7 @@ import {
   isSafeRelativePath,
   PLUGIN_ID_RE,
   PLUGIN_WINDOW_MODE,
+  PLUGIN_WINDOW_LIMITS,
 } from '../../src/shared/plugin.js';
 import { discoverPlugins, loadPluginFactory } from '../../src/main/plugins/loader.js';
 import { createPluginHost } from '../../src/main/plugins/host.js';
@@ -313,6 +314,81 @@ test('宿主：插件自己的数据（窗口/小部件用）与动作', async (
     assert.equal(spec.page, 'widget.html');
     assert.equal(spec.refreshMs, 1000);
     assert.ok(spec.width > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：没写 window 段的插件也能拿到一份窗口规格', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'bare',
+      { id: 'bare', name: '光秃秃' },
+      'export default () => ({ page: () => null });'
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    // 独立窗口是所有插件都有的能力：清单没写，宿主合成一份。
+    const spec = host.spec('bare', PLUGIN_WINDOW_MODE.WINDOW);
+    assert.equal(spec.title, '光秃秃');
+    assert.equal(spec.width, PLUGIN_WINDOW_LIMITS.width);
+    assert.equal(spec.height, PLUGIN_WINDOW_LIMITS.height);
+    assert.equal(spec.alwaysOnTop, false);
+
+    // 小部件仍然要插件自己声明：没写就是没有。
+    assert.equal(host.spec('bare', PLUGIN_WINDOW_MODE.WIDGET), null);
+    // 没有这个插件：什么都没有。
+    assert.equal(host.spec('nope', PLUGIN_WINDOW_MODE.WINDOW), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：自带页面的 URL——页面在磁盘上才给，否则给空串', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    const dir = await makePlugin(
+      root,
+      'paged',
+      { id: 'paged', name: '带页面', window: { title: '带页面', page: 'index.html' } },
+      'export default () => ({ page: () => null });'
+    );
+    // 清单里写的页面**确实存在**：给完整 URL。
+    await writeFile(join(dir, 'index.html'), '<!doctype html><title>插件</title>', 'utf8');
+    // 另一个插件：清单里写了页面，磁盘上却没有——不能开白窗口。
+    await makePlugin(
+      root,
+      'ghost',
+      { id: 'ghost', name: '页面没了', window: { title: '页面没了', page: 'missing.html' } },
+      'export default () => ({ page: () => null });'
+    );
+
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const url = host.pageUrl('paged');
+    assert.match(url, /^app:\/\/bundle\/plugins\/paged\/index\.html\?plugin=paged$/);
+    // 页面不在磁盘上：空串——调用方据此退回积木界面。
+    assert.equal(host.pageUrl('ghost'), '');
+    // 没有自带页面的插件：也是空串。
+    assert.equal(host.pageUrl('nope'), '');
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(userData, { recursive: true, force: true });

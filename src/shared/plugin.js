@@ -102,6 +102,43 @@ export function normalizeWindowSpec(raw, mode) {
 }
 
 /**
+ * 合成一份**默认**的窗口规格。
+ *
+ * 插件清单里没写 `window` 段，**不代表它不能开独立窗口**——
+ * 「在新窗口打开」是桌宠给所有插件的能力，不是插件的特权
+ * （见 README「独立窗口与桌面小部件」）。
+ *
+ * 合成的这份刻意「朴素」：不置顶、不自动刷新，
+ * 用户想置顶可以点标题栏的 📌。
+ */
+export function defaultWindowSpec(manifest) {
+  return {
+    mode: PLUGIN_WINDOW_MODE.WINDOW,
+    page: '',
+    title: str(manifest?.name).trim(),
+    width: PLUGIN_WINDOW_LIMITS.width,
+    height: PLUGIN_WINDOW_LIMITS.height,
+    refreshMs: 0,
+    alwaysOnTop: false,
+  };
+}
+
+/**
+ * 某个形态**实际生效**的窗口规格。
+ *
+ * - `window`：清单里写了就用清单的，没写就合成一份默认的
+ *   ——**每个插件都能开独立窗口**。
+ * - `widget`：**没有就是没有**。小部件要占着用户的桌面，
+ *   是插件自己该决定的事，不该由宿主替它决定。
+ */
+export function resolveWindowSpec(manifest, mode) {
+  if (mode === PLUGIN_WINDOW_MODE.WIDGET) {
+    return manifest?.widget ? manifest.widget : null;
+  }
+  return manifest?.window || defaultWindowSpec(manifest);
+}
+
+/**
  * 校验并规整一份插件清单。
  *
  * 校验失败**不抛错**，而是把问题列出来：宿主要把原因写进日志，
@@ -167,11 +204,14 @@ function isPlainObject(value) {
 /**
  * 这个插件能不能「分离成独立窗口」。
  *
- * 面板上的「在新窗口打开」按钮据此出现与否：
- * 没有 `window` 段的插件就只能待在面板里。
+ * **恒为 true**：能开独立窗口是桌宠给所有插件的能力，
+ * 清单里没写 `window` 段，宿主会合成一份默认规格出来。
+ *
+ * 内置功能（设置、聊天记录）不是插件，它们不走这条路——
+ * 它们的元数据里 `canDetach` 是显式的 false（见 src/main/builtins.js）。
  */
 export function canDetach(manifest) {
-  return Boolean(manifest?.window);
+  return true;
 }
 
 /** 这个插件有没有小部件形态。 */

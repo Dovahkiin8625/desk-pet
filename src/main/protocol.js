@@ -1,10 +1,23 @@
-import { protocol } from 'electron';
+import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { resolveStaticFile, isDeniedResource } from './staticFiles.js';
 
 const SCHEME = 'app';
 const HOST = 'bundle';
+
+/**
+ * electron 的 protocol 模块。
+ *
+ * 这里用 require 而不是 `import { protocol } from 'electron'`：
+ * 具名导入**只在 Electron 里成立**（普通 Node 里 electron 只是个启动器路径），
+ * 而本模块还要被插件宿主（src/main/plugins/host.js）import——
+ * 宿主的单元测试跑在普通 Node 里。
+ */
+const requireElectron = createRequire(import.meta.url);
+function electronProtocol() {
+  return requireElectron('electron').protocol;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -24,7 +37,7 @@ const MIME = {
 
 /** 必须在 app ready 之前调用。 */
 export function registerSchemePrivileges() {
-  protocol.registerSchemesAsPrivileged([
+  electronProtocol().registerSchemesAsPrivileged([
     {
       scheme: SCHEME,
       privileges: {
@@ -46,7 +59,7 @@ export function registerSchemePrivileges() {
  * 渲染层就能用和内置模型一样的 URL 形状去取它们。
  */
 export function registerAppProtocol(rootDir, virtualRoots = null) {
-  protocol.handle(SCHEME, async (request) => {
+  electronProtocol().handle(SCHEME, async (request) => {
     const url = new URL(request.url);
     // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
     // app:// 的根是整个项目目录，渲染层不需要这些内容，

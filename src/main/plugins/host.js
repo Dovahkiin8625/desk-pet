@@ -1,5 +1,6 @@
 import { readJson, writeJson } from '../store.js';
 import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   makePage,
@@ -11,7 +12,8 @@ import {
   emptyBlock,
   messagesBlock,
 } from '../../shared/panel.js';
-import { canDetach, hasWidget, PLUGIN_WINDOW_MODE } from '../../shared/plugin.js';
+import { canDetach, hasWidget, resolveWindowSpec } from '../../shared/plugin.js';
+import { appUrl } from '../protocol.js';
 import { discoverPlugins, loadPluginFactory } from './loader.js';
 import { bundledPluginsDir, userPluginsDir as userPluginsPath } from './paths.js';
 
@@ -251,6 +253,24 @@ export async function createPluginHost({
   }
 
   /**
+   * 插件自带的那个页面，它**在不在**。
+   *
+   * 清单里写的路径可能指向一个不存在的文件（作者写错了、或者文件被删了）。
+   * 这种情况**不能白屏**：宿主要退回积木界面，插件照样能用。
+   *
+   * 查的是磁盘上的真实路径（`record.dir` + 相对路径）——
+   * 内置插件与用户插件都适用（用户插件的目录在 userData 里，也是真实路径）。
+   */
+  function pageExists(record, page) {
+    if (!record || !page) return false;
+    try {
+      return statSync(join(record.dir, page)).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * 让用户插件目录里的 `.js` 按 **ESM** 解析。
    *
    * userData 下没有 package.json，Node 会把 `.js` 当成 CommonJS——
@@ -343,12 +363,29 @@ export async function createPluginHost({
     attachWindows: (opener) => {
       windowOpener = opener;
     },
-    /** 窗口/小部件的规格（尺寸、刷新间隔……）。 */
+    /**
+     * 某个形态实际生效的窗口规格（尺寸、刷新间隔……）。
+     *
+     * 已经**解析**过了：清单里没写 `window` 段也会合成出一份默认的
+     * ——「在新窗口打开」是所有插件都有的能力。
+     */
     spec: (id, mode) => {
       const record = records.get(id);
       if (!record) return null;
-      const m = record.manifest;
-      return mode === PLUGIN_WINDOW_MODE.WIDGET ? m.widget : m.window;
+      return resolveWindowSpec(record.manifest, mode);
+    },
+    /**
+     * 插件自带的页面的完整 URL。
+     *
+     * 页面**不存在**时返回空串——调用方（窗口控制器、面板元数据）
+     * 据此退回积木界面，而不是开一个白窗口。
+     */
+    pageUrl: (id) => {
+      const record = records.get(id);
+      if (!record) return '';
+      const page = record.manifest.window?.page;
+      if (!page || !pageExists(record, page)) return '';
+      return appUrl(`${baseUrl(id)}/${page}?plugin=${encodeURIComponent(id)}`);
     },
   };
 }
