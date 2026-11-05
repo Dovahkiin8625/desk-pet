@@ -1996,6 +1996,78 @@ import { PLUGIN_WINDOW_MODE } from '../shared/plugin.js';
 
 （`broadcast` 自己会包成 `{ pluginId, data }` ✓）
 
+**⚠️ 必须同时拆掉 `window.js` 自己的那套定时器**——否则**两份 tick 会同时推**：
+
+`window.js` 现在自己管着一个 `entry.timer`（`onReady()` 里
+`setInterval(() => { void refresh(pluginId); }, spec.refreshMs)`），
+而 `surface.js` 的定时器**也**会推同样的东西。两边都活着的话：
+插件窗口会收到**两份** tick（一份是旧的未包过的裸数据，一份是包过的），
+既白费力气，又让「线上格式统一包成 `{pluginId, data}`」这条约定当场破掉。
+
+所以 Task 7 里，`src/main/plugins/window.js` 要做三件事：
+
+1. **删掉 `entry.timer` 这个字段**（以及 `'closed'` 回调里 `clearInterval(entry.timer)` 那行）。
+2. **删掉 `refresh()` 这个函数**——周期刷新由 `surface.js` 的定时器统一管。
+3. **`onReady()` 改成把窗口挂成一个 surface**，首份数据走 `broadcast`：
+
+```js
+    entry.ready = true;
+
+    // 窗口这个界面落点：数据由 surface 路由推过来。
+    surfaces?.attach(pluginId, {
+      kind: 'window',
+      deliver(kind, payload) {
+        const win = entryOf(pluginId)?.win;
+        if (!win || win.isDestroyed()) return;
+        const channel = kind === 'data' ? 'plugin:data'
+          : kind === 'tick' ? 'plugin:tick'
+          : 'plugin:page';
+        // **不拆包**：宿主推来的统一是 `{ pluginId, data }`，
+        // 拆包的是壳（plugin-window/main.js）与插件页面助手。
+        win.webContents.send(channel, payload);
+      },
+    });
+
+    if (spec?.page) {
+      // 自定义页面：插件自己管界面，宿主只负责喂数据。
+      const data = await host.data(pluginId);
+      surfaces?.broadcast(pluginId, 'data', data);
+    } else {
+      // 通用界面：画插件的声明式页面。
+      const page = await host.open(pluginId, null);
+      surfaces?.broadcast(pluginId, 'page', page);
+    }
+```
+
+**注意**：`broadcast` 会推给**所有**挂着的 surface，
+所以独立窗口的首份数据也会同时送到面板那边（如果面板也开着这个插件）——
+这正是要的：**两处看到的数据必须一致**。
+
+**窗口关掉时要把 surface 摘掉**（否则 tick 定时器会一直跑到窗口销毁为止）。
+在 `window.js` 的 `'closed'` 回调里加：
+
+```js
+    win.on('closed', () => {
+      byContents.delete(contentsId);
+      surfaces?.detach(pluginId, windowSurface);
+      if (windows.get(pluginId) === entry) windows.delete(pluginId);
+    });
+```
+
+（`windowSurface` 是那个 surface 对象本身——要把它存起来，
+比如挂在 `entry` 上：`entry.surface = surface`。）
+
+**注意**：`createWindow()` 里也要 `surfaces?.attach(pluginId, surface)`——
+但 attach 应该在**页面就绪**之后（`onReady`）做，
+否则数据推过去时页面还没挂上监听，会被丢掉。
+
+**`send()` 那个辅助函数**：如果 `onReady` 改用 `broadcast` 之后
+`send()` 就没有调用方了，删掉它（以及 `entry.timer` 的清理）。
+
+**这一段与 Task 6 的关系**：Task 6 已经把 `pageUrl()` 改成「壳 + iframe」，
+所以 Task 7 落地时 `spec.page` 存在 → 走 `plugin:data` 那条；
+Task 6 的壳里 `render(payload)` 会拆包 ✓。
+
 - [ ] **Step 4: 面板 HTML 加 iframe**
 
 `src/renderer/panel/index.html` 的插件视图那块（`#plugin-body` 附近）加：
@@ -2127,7 +2199,10 @@ import { createSurfaceController } from './plugins/surface.js';
 
 （`pluginSurfaces` 变量的声明要放在其它 `let` 一起的地方。）
 
-然后把 `createPanelController({...})` 的参数里加上 `surfaces: pluginSurfaces`。
+然后把 `createPanelController({...})` 的参数里加上 `surfaces: pluginSurfaces`，
+**`createPluginWindowController({...})` 的参数里也要加上 `surfaces: pluginSurfaces`**——
+独立窗口也是一个界面落点，它的 tick 也由 surface 控制器统一推
+（见 Step 3 里那段「必须同时拆掉 `window.js` 自己的那套定时器」）。
 
 **顺序**：surface 控制器要先建好（它要 `host.spec`），再传给面板控制器与窗口控制器。
 
