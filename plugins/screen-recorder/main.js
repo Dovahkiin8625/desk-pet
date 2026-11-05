@@ -1,11 +1,12 @@
 // plugins/screen-recorder/main.js
-import { app, dialog } from 'electron';
+import { app, dialog, shell } from 'electron';
 import { join } from 'node:path';
 import { readConfig, writeConfig } from './lib/config.js';
 import { buildPanelPage } from './lib/page.js';
 import { createWindows } from './lib/windows.js';
 import { createCaptureSession } from './lib/capture.js';
 import { registerIpc } from './lib/ipc.js';
+import { registerHotkey, unregisterHotkey } from './lib/hotkey.js';
 
 /**
  * 录屏插件。
@@ -23,6 +24,8 @@ export default function createScreenRecorderPlugin(ctx) {
   let recording = false;
   /** 附注（目标没了、没有麦克风……），存好文件时一起显示。 */
   let note = '';
+  /** 快捷键注册不成功的理由（工作台上显示）。 */
+  let hotkeyError = '';
   /**
    * 刷新面板的回调。
    *
@@ -36,6 +39,12 @@ export default function createScreenRecorderPlugin(ctx) {
   const windows = createWindows({
     pluginDir,
     preloadPath: join(pluginDir, 'preload', 'rec.cjs'),
+    // 工作台开了才注册快捷键，关了就注销。
+    onWorkbenchChanged: (open) => {
+      if (!open) unregisterHotkey();
+      else void syncHotkey();
+      pushWorkbenchState();
+    },
   });
 
   const capture = createCaptureSession({
@@ -51,17 +60,51 @@ export default function createScreenRecorderPlugin(ctx) {
         status = note ? `${note}；已保存：${state.file}` : `已保存：${state.file}`;
       }
       if (state.error) status = `出错了：${state.error}`;
+      // 控制条上显示录制时长。
+      windows.sendTo('control', {
+        type: 'state',
+        payload: { recording, elapsedMs: state.elapsedMs || 0 },
+      });
       update(buildPanelPage(ctx.ui, { config, targets, recording, status }));
+      pushWorkbenchState();
     },
   });
+
+  /** 往工作台推一份状态。 */
+  function pushWorkbenchState() {
+    windows.sendTo('workbench', {
+      type: 'workbench',
+      payload: { config, recording, status, hotkeyError },
+    });
+  }
+
+  /**
+   * 工作台开着的时候，快捷键才生效。
+   *
+   * 关掉工作台就把这个组合键让回给别的程序——一个常驻抢键的
+   * 录屏插件是很讨人厌的。
+   */
+  async function syncHotkey() {
+    if (!windows.isWorkbenchOpen()) {
+      unregisterHotkey();
+      return;
+    }
+    const cfg = await ensureConfig();
+    const ok = registerHotkey(cfg.hotkey, () => {
+      if (capture.isRecording()) capture.stop();
+      else void startRecording();
+    });
+    hotkeyError = ok ? '' : `快捷键 ${cfg.hotkey} 注册不了——可能已经被别的程序占着了`;
+  }
 
   // 退出前拆掉捕获窗：它一直留着（录完也不拆，拆了会把主进程堵住一两分钟），
   // 退出时整个应用都要收了，这时候多等一会儿也无所谓。
   app.on('before-quit', () => {
     capture.dispose();
+    unregisterHotkey();
   });
 
-  registerIpc((message, event) => {
+  registerIpc(async (message, event) => {
     const role = windows.roleOf(event?.sender?.id);
     if (message?.type === 'ready') {
       capture.notifyReady();
@@ -85,6 +128,21 @@ export default function createScreenRecorderPlugin(ctx) {
       windows.resolvePicker(null);
     } else if (message?.type === 'stop' && role === 'control') {
       capture.stop();
+    } else if (role === 'workbench' && message?.type === 'hotkey') {
+      await save({ hotkey: message.payload?.accel || '' });
+      await syncHotkey();
+      pushWorkbenchState();
+    } else if (role === 'workbench' && message?.type === 'workbench-set') {
+      await save(message.payload || {});
+      pushWorkbenchState();
+    } else if (role === 'workbench' && message?.type === 'workbench-pick-dir') {
+      const dir = await pickDirectory();
+      if (dir) {
+        await save({ outputDir: dir });
+        pushWorkbenchState();
+      }
+    } else if (role === 'workbench' && message?.type === 'workbench-open-dir') {
+      await shell.openPath((config?.outputDir || '').trim() || app.getPath('videos'));
     }
   });
 
@@ -225,6 +283,11 @@ export default function createScreenRecorderPlugin(ctx) {
       await startRecordingInner();
     } else if (actionId === 'stop') {
       capture.stop();
+    } else if (actionId === 'open-workbench') {
+      // 打开工作台：快捷键从这一刻起生效。
+      windows.openWorkbench();
+      await syncHotkey();
+      pushWorkbenchState();
     } else {
       status = '';
     }

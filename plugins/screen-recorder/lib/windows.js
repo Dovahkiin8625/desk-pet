@@ -1,5 +1,5 @@
 // plugins/screen-recorder/lib/windows.js
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, webContents } from 'electron';
 import { join } from 'node:path';
 
 /**
@@ -19,9 +19,13 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
   let pickerResolve = null;
 
   function track(win, role) {
-    roles.set(win.webContents.id, role);
+    // **webContents.id 要提前存下来**：窗口销毁之后再读
+    // `win.webContents` 会把主进程整个冻住（读一个已销毁对象的属性，
+    // 轻则抛错、重则卡死）。宿主也有同样的坑，见 src/main/plugins/window.js。
+    const contentsId = win.webContents.id;
+    roles.set(contentsId, role);
     win.on('closed', () => {
-      roles.delete(win.webContents.id);
+      roles.delete(contentsId);
     });
     return win;
   }
@@ -113,8 +117,7 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     });
   }
 
-  /** 遮罩选完了：把结果交给等它的人。 */
-  function resolvePicker(result) {
+  /** 遮罩选完了：把结果交给等它的人。 */  function resolvePicker(result) {
     const resolve = pickerResolve;
     pickerResolve = null;
     if (resolve) resolve(result);
@@ -124,6 +127,17 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
   function closePicker() {
     if (windows.picker && !windows.picker.isDestroyed()) windows.picker.destroy();
     windows.picker = null;
+  }
+
+  /** 给某个角色的窗口发消息。 */
+  function sendTo(role, message) {
+    for (const [contentsId, r] of roles) {
+      if (r !== role) continue;
+      const contents = webContents.fromId(contentsId);
+      if (contents && !contents.isDestroyed()) {
+        contents.send('rec:screen-recorder:message', message);
+      }
+    }
   }
 
   /** 控制条：置顶的小浮窗。 */
@@ -189,7 +203,11 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     });
     win.loadFile(join(pluginDir, 'pages', 'workbench.html'));
     windows.workbench = track(win, 'workbench');
-    onWorkbenchChanged?.(true);
+    // **等页面加载完再通知**：页面加载完才会挂上消息监听，
+    // 通知早了它就听不见（快捷键也就没注册上）。
+    win.webContents.on('did-finish-load', () => {
+      onWorkbenchChanged?.(true);
+    });
     return win;
   }
 
@@ -225,6 +243,7 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     openPicker,
     resolvePicker,
     closePicker,
+    sendTo,
     showControl,
     hideControl,
     openWorkbench,

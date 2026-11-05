@@ -4,6 +4,7 @@
 // 这套用例**需要一块真的屏幕**：抓屏在无显示器的机器上跑不起来。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { rm, mkdir, readFile, readdir, stat } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseMp4Tracks } from './helpers/mp4.js';
 
@@ -142,15 +143,21 @@ async function readStatus(panel) {
 /**
  * 关掉应用。
  *
- * 录完一段之后应用退出会多等一会儿：Windows 的屏幕捕获会话要慢慢松手
- * （实测 17 秒到一百多秒，等够它自己就放开了，不是卡死）。
- * 等 10 秒还不走就**掐掉**：这是测试用的临时实例，用户数据在临时目录里，
- * 留着它只会拖慢后面的用例。
+ * 正常情况下几秒就关掉了。万一卡住（Windows 的屏幕捕获会话收尾有时候很慢），
+ * 等 20 秒还不走，就把**这棵树**掐掉：只掐主进程的话，它的 GPU、音频服务
+ * 这些子进程会变成没人管的孤儿，还占着用户数据目录，把后面的用例拖慢。
  */
 async function closeApp(app) {
-  // **等它自己关干净**：只掐掉主进程的话，它的 GPU、音频服务这些子进程
-  // 会变成没人管的孤儿，还占着用户数据目录——后面的用例会被它们拖慢。
-  await app.close().catch(() => {});
+  const closed = await Promise.race([
+    app.close().then(() => true).catch(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 20000)),
+  ]);
+  if (closed) return;
+  try {
+    execFileSync('taskkill', ['/F', '/T', '/PID', String(app.process().pid)], { stdio: 'ignore' });
+  } catch {
+    app.process().kill();
+  }
 }
 
 test.describe('录屏插件', () => {
@@ -264,6 +271,73 @@ test.describe('录屏插件', () => {
       expect(buffer.subarray(0, 6).toString('latin1')).toBe('GIF89a');
       expect(buffer[buffer.length - 1]).toBe(0x3b, 'GIF 的结尾标记');
       expect(buffer.length).toBeGreaterThan(1000);
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  test('工作台开着时快捷键才生效，关掉就注销', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      await clickButton(panel, '设置');
+
+      const workbench = await findWindow(app, 'workbench.html');
+      expect(workbench, '工作台应该出现').not.toBeNull();
+      await workbench.waitForLoadState('domcontentloaded');
+
+      // 快捷键已经填好了（默认 Control+Shift+R）
+      await workbench.waitForFunction(
+        () => (document.getElementById('hotkey')?.value || '').includes('+'),
+        null,
+        { timeout: 15000, polling: 100 }
+      );
+
+      // 工作台开着 → 快捷键注册上了
+      await new Promise((r) => setTimeout(r, 500));
+      const registered = await app.evaluate(({ globalShortcut }) =>
+        globalShortcut.isRegistered('Control+Shift+R')
+      );
+      expect(registered, '工作台开着的时候快捷键应该注册着').toBe(true);
+
+      // 关掉工作台 → 注销
+      await workbench.evaluate(() => window.close());
+      await new Promise((r) => setTimeout(r, 1000));
+      const afterClose = await app.evaluate(({ globalShortcut }) =>
+        globalShortcut.isRegistered('Control+Shift+R')
+      );
+      expect(afterClose, '工作台关了快捷键就该注销').toBe(false);
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  test('录制时桌面上有控制条：显示时长，点它能停', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      await clickButton(panel, '全屏');
+      await clickButton(panel, '视频');
+      await setInput(panel, OUT_DIR);
+      await clickButton(panel, '开始录制');
+
+      const control = await findWindow(app, 'control.html');
+      expect(control, '控制条应该出现').not.toBeNull();
+      await control.waitForLoadState('domcontentloaded');
+
+      // 时钟在走：等它不是 00:00
+      await control.waitForFunction(
+        () => (document.getElementById('time')?.textContent || '') !== '00:00',
+        null,
+        { timeout: 15000, polling: 200 }
+      );
+
+      // 点控制条上的「停止」→ 录制停下来，文件落盘
+      await control.evaluate(() => document.getElementById('stop').click());
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const mp4 = await newestRecording(OUT_DIR);
+      expect(mp4, '应该产出 mp4').toBeTruthy();
     } finally {
       await closeApp(app);
     }

@@ -193,6 +193,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     });
     state = 'recording';
     timer = setInterval(tick, 500);
+    // 控制条：录屏时桌面上一直看得见「还在录」和「怎么停」。
+    windows.showControl();
     tick();
   }
 
@@ -242,11 +244,9 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     if (timer) clearInterval(timer);
     timer = null;
     windows.hideControl();
-    // **捕获窗先不拆**：拆它会把主进程堵住一两分钟
-    // （Windows 的屏幕捕获会话收尾是同步的，拆窗口时主进程要排在它后面——
-    //  表现是「录完屏之后点桌宠弹面板要等 180 秒」）。
-    // 留着它反而没事：它是隐藏的，下一次录制直接复用。
-    // 真正拆它的地方是退出前（见 dispose）。
+    windows.destroyCapture();
+    // 捕获窗没了，下次录制要重新等它报「准备好了」。
+    pageReady = false;
     releaseSession();
     onState?.({ recording: false, elapsedMs: 0, file: target });
     return target;
@@ -258,6 +258,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     if (timer) clearInterval(timer);
     timer = null;
     windows.hideControl();
+    windows.destroyCapture();
+    pageReady = false;
     releaseSession();
     onState?.({ recording: false, elapsedMs: 0, error: message });
   }
@@ -277,8 +279,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     state = 'idle';
     readyResolve = null;
     releaseSession();
-    // 退出前才拆捕获窗：那时候整个应用都要收了，多等一会儿也无所谓。
     windows.destroyCapture();
+    pageReady = false;
   }
 
   return { listTargets, pickRegion, start, stop, save, fail, warn, notifyReady, isRecording, dispose };
