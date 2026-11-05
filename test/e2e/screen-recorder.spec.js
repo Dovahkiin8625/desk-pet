@@ -96,13 +96,19 @@ async function setInput(panel, value) {
 }
 
 test.describe('录屏插件', () => {
+  // 这套用例比平常的 UI 用例慢：录完一段之后，应用退出会多等一会儿——
+  // Windows 的屏幕捕获会话要慢慢松手（实测约 17 秒；等够了它自己就放开了，
+  // 不是卡死）。默认的 60 秒超时不够用。
+  test.setTimeout(180000);
+
   test.beforeAll(async () => {
     await rm(USER_DATA, { recursive: true, force: true });
     await mkdir(OUT_DIR, { recursive: true });
   });
 
   test.afterAll(async () => {
-    await rm(USER_DATA, { recursive: true, force: true });
+    // 应用还在收尾，文件可能还占着：删不掉就多试几次。
+    await rm(USER_DATA, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
   });
 
   test('全屏录制产出 mp4', async () => {
@@ -118,7 +124,11 @@ test.describe('录屏插件', () => {
 
       const files = await readdir(OUT_DIR);
       const mp4 = files.find((f) => f.endsWith('.mp4'));
-      expect(mp4, `应该产出 mp4：${files.join('、')}`).toBeTruthy();
+      // 出错时把插件的状态也带上：光说「没有 mp4」根本不知道卡在哪一步。
+      const status = await panel
+        .evaluate(() => document.getElementById('plugin-status')?.textContent || '')
+        .catch(() => '（面板读不到了）');
+      expect(mp4, `应该产出 mp4：${files.join('、')}；插件状态：${status}`).toBeTruthy();
       const buffer = await readFile(join(OUT_DIR, mp4));
       // mp4 的第一个 box 是 ftyp：看它就知道文件头是对的。
       expect(buffer.subarray(4, 8).toString('latin1')).toBe('ftyp');

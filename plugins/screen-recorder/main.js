@@ -87,11 +87,30 @@ export default function createScreenRecorderPlugin(ctx) {
   }
 
   /**
+   * 动作排队：一个没做完，下一个别开始。
+   *
+   * 面板的动作是**并发**派发的（宿主不等前一个返回就发下一个），
+   * 而写配置是异步的：刚改完「输出目录」就点「开始录制」，
+   * 录制读到的还是旧配置——文件就落到了视频文件夹，而不是刚选的地方。
+   * 排队之后，前一个动作写完了，后一个才读得到。
+   */
+  let chain = Promise.resolve();
+  function enqueue(task) {
+    const result = chain.then(task, task);
+    // 链子自己不能断：前一个失败了，后一个照样要能做。
+    chain = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
+  }
+
+  /**
    * 开始录制。用上次选的目标，没有就用列表里的第一个。
    *
    * 快捷键（Task 8）也走这里，所以它得是个独立的函数。
    */
-  async function startRecording() {
+  async function startRecordingInner() {
     if (capture.isRecording()) {
       status = '已经在录了';
       return;
@@ -119,9 +138,19 @@ export default function createScreenRecorderPlugin(ctx) {
     }
   }
 
+  /** 开始录制（快捷键也走这里，所以要排队）。 */
+  function startRecording() {
+    return enqueue(startRecordingInner);
+  }
+
   /** 面板里的一个动作。 */
   async function action(currentCtx, actionId, value) {
     if (currentCtx?.update) update = currentCtx.update;
+    return enqueue(() => handleAction(actionId, value));
+  }
+
+  /** 动作的真身（已经在队列里了）。 */
+  async function handleAction(actionId, value) {
     const cfg = await ensureConfig();
     if (actionId.startsWith('mode:')) {
       const mode = actionId.slice('mode:'.length);
@@ -145,7 +174,7 @@ export default function createScreenRecorderPlugin(ctx) {
         status = `输出目录：${picked}`;
       }
     } else if (actionId === 'start') {
-      await startRecording();
+      await startRecordingInner();
     } else if (actionId === 'stop') {
       capture.stop();
     } else {
