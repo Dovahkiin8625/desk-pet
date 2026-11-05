@@ -61,6 +61,8 @@ export async function createPluginHost({
   const listeners = new Set();
   /** 打开独立窗口的入口（window.js 装上来）。 */
   let windowOpener = null;
+  /** 插件界面开合的回调（插件想知道「我的界面开着吗」）。 */
+  const surfaceListeners = new Set();
 
   let prefs = await readJson(userDataDir, PREFS_FILE, { disabled: [] }, '插件启用状态');
   const disabled = new Set(
@@ -362,6 +364,26 @@ export async function createPluginHost({
     /** 把「开独立窗口」的能力接上（window.js 晚一步创建）。 */
     attachWindows: (opener) => {
       windowOpener = opener;
+    },
+    /**
+     * 某个插件的界面开合了。
+     *
+     * 「开」= 第一个界面挂上来，「关」= 最后一个界面摘掉。
+     * 录屏的快捷键靠它决定生不生效（见第二期计划）。
+     */
+    surfaceChanged: (pluginId, open) => {
+      for (const cb of surfaceListeners) {
+        try {
+          cb(pluginId, open);
+        } catch (err) {
+          console.warn('[desk-pet] 界面开合的回调出错：', err?.message);
+        }
+      }
+    },
+    /** 订阅界面开合。返回取消订阅的函数。 */
+    onSurfaceChange: (cb) => {
+      surfaceListeners.add(cb);
+      return () => surfaceListeners.delete(cb);
     },
     /**
      * 某个形态实际生效的窗口规格（尺寸、刷新间隔……）。

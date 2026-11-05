@@ -394,3 +394,40 @@ test('宿主：自带页面的 URL——页面在磁盘上才给，否则给空�
     await rm(userData, { recursive: true, force: true });
   }
 });
+
+test('宿主：界面开合会通知订阅者，取消订阅后不再收到', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'todo',
+      { id: 'todo', name: '待办' },
+      'export default () => ({ page: () => null });'
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const seen = [];
+    const off = host.onSurfaceChange((pluginId, open) => seen.push({ pluginId, open }));
+    host.surfaceChanged('todo', true);
+    host.surfaceChanged('todo', false);
+    assert.deepEqual(seen, [
+      { pluginId: 'todo', open: true },
+      { pluginId: 'todo', open: false },
+    ]);
+
+    // 取消订阅之后：不再收到通知。
+    off();
+    host.surfaceChanged('todo', true);
+    assert.equal(seen.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
