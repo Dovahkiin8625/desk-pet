@@ -626,8 +626,8 @@ test('挂着两个 surface：一次 tick 两边都收到', () => {
   ctl.attach('todos', a.surface);
   ctl.attach('todos', b.surface);
   ctl.broadcast('todos', 'tick', { n: 1 });
-  assert.deepEqual(a.received, [{ kind: 'tick', payload: { n: 1 } }]);
-  assert.deepEqual(b.received, [{ kind: 'tick', payload: { n: 1 } }]);
+  assert.deepEqual(a.received, [{ kind: 'tick', payload: { pluginId: 'todos', data: { n: 1 } } }]);
+  assert.deepEqual(b.received, [{ kind: 'tick', payload: { pluginId: 'todos', data: { n: 1 } } }]);
 });
 
 test('摘掉一个 surface：另一个还收得到', () => {
