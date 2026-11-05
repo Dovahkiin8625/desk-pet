@@ -662,13 +662,19 @@ export function createSurfaceController({ host, onChange }) {
     broadcast(pluginId, 'tick', data);
   }
 
-  /** 把一份数据推给某个插件的所有 surface。 */
+  /**
+   * 把一份数据推给某个插件的所有 surface。
+   *
+   * **统一包成 `{ pluginId, data }`**：面板可能在两个插件之间来回切，
+   * 收到的数据得带得清是给谁的。各 surface **不拆包**——
+   * 拆包的是宿主壳（plugin-window/main.js）与插件页面助手（pluginPage.js）。
+   */
   function broadcast(pluginId, kind, payload) {
     const set = attached.get(pluginId);
     if (!set || !set.size) return;
     for (const surface of set) {
       try {
-        surface.deliver(kind, payload);
+        surface.deliver(kind, { pluginId, data: payload });
       } catch (err) {
         console.warn(`[desk-pet] 插件「${pluginId}」的界面收数据失败：`, err?.message);
       }
@@ -1122,17 +1128,19 @@ export function bindSurface() {
 
     /** 首份数据到了（宿主推过来的）。 */
     onData(cb) {
-      api?.onData?.((data) => {
-        if (!isMine(data)) return;
-        cb(data);
+      api?.onData?.((payload) => {
+        const item = unwrap(payload);
+        if (!item.mine) return;
+        cb(item.data);
       });
     },
 
     /** 周期数据到了。 */
     onTick(cb) {
-      api?.onTick?.((data) => {
-        if (!isMine(data)) return;
-        cb(data);
+      api?.onTick?.((payload) => {
+        const item = unwrap(payload);
+        if (!item.mine) return;
+        cb(item.data);
       });
     },
 
@@ -1159,10 +1167,24 @@ export function bindSurface() {
   };
 
   /** 推来的数据是不是发给自己的（面板可能在两个插件之间来回切）。 */
-  function isMine(data) {
-    if (!data || typeof data !== 'object') return true;
-    if (!data.pluginId || !id) return true;
-    return data.pluginId === id;
+  function isMine(payload) {
+    if (!payload || typeof payload !== 'object') return true;
+    if (!payload.pluginId || !id) return true;
+    return payload.pluginId === id;
+  }
+
+  /**
+   * 拆包：宿主推来的东西统一是 `{ pluginId, data }`。
+   *
+   * 拆出 `data` 给回调，顺带按 pluginId 过滤——
+   * 面板可能在两个插件之间来回切，推迟了的数据不能串到别的插件那里。
+   */
+  function unwrap(payload) {
+    const mine = isMine(payload);
+    if (payload && typeof payload === 'object' && 'data' in payload) {
+      return { mine, data: payload.data };
+    }
+    return { mine, data: payload };
   }
 }
 ```
@@ -1521,7 +1543,8 @@ const frameEl = document.getElementById('plugin-frame');
    * 插件自带的页面已经装在 iframe 里了（主进程给的 `src`），
    * 这时候壳只管标题栏，**不要**再画一遍积木——画两遍内容就重了。
    */
-  function render(page) {
+  function render(payload) {
+    const page = payload?.data;
     if (!page) return;
     titleEl.textContent = page.title || '';
     subtitleEl.textContent = page.subtitle || '';
@@ -1535,6 +1558,8 @@ const frameEl = document.getElementById('plugin-frame');
     });
   }
 ```
+
+**注意**：宿主推来的东西统一包成 `{ pluginId, data }`，壳这里拆包。
 
 在文件末尾（`window.plugin?.reportReady?.()` 之前）加：
 
@@ -1804,35 +1829,27 @@ import { PLUGIN_WINDOW_MODE } from '../shared/plugin.js';
 
 **关于 tick**：周期数据由 `surface.js` 的定时器推，控制器调
 `surface.deliver('tick', payload)` → 这里发的是 `panel:surface:tick`。
-所以 `panelSurface.deliver` 要把 `kind` 拼成通道名 ✓（上面已经这么写了）。
-
-但 `surface.js` 推的 payload 是 `host.tick(pluginId)` 的返回值，**不带 pluginId**。
-插件页面助手要按 pluginId 过滤，所以推的时候要带上。改 `surface.js` 的 `pushTick`：
+`surface.js` 的 `broadcast()` 已经把数据统一包成 `{ pluginId, data }`（Task 3 就这么做），
+所以面板这边**不拆包**，原样发过去：
 
 ```js
-    if (data === undefined) return;
-    broadcast(pluginId, 'tick', { pluginId, data });
+  const panelSurface = {
+    kind: 'panel',
+    deliver(kind, payload) {
+      send(`panel:surface:${kind}`, payload);
+    },
+  };
 ```
 
-**同步改** `surface.js` 的单元测试（Task 3 建的）里那两条断言：
-
-```js
-  assert.deepEqual(a.received, [{ kind: 'tick', payload: { n: 1 } }]);
-```
-
-改成
-
-```js
-  assert.deepEqual(a.received, [{ kind: 'tick', payload: { pluginId: 'todos', data: { n: 1 } } }]);
-```
-
-**注意**：`broadcast` 的其它调用（比如首份数据）也要带 pluginId。
-在 `window.js` 的 `onReady()` 里发首份数据时改成：
+**首份数据**（`window.js` 的 `onReady()`）也要走 `broadcast`，
+这样面板与独立窗口拿到的是同一份：
 
 ```js
       const data = await host.data(pluginId);
-      surfaces?.broadcast(pluginId, 'data', { pluginId, data });
+      surfaces?.broadcast(pluginId, 'data', data);
 ```
+
+（`broadcast` 自己会包成 `{ pluginId, data }` ✓）
 
 - [ ] **Step 4: 面板 HTML 加 iframe**
 
