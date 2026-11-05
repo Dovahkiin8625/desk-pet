@@ -10,6 +10,7 @@
   const hotkey = document.getElementById('hotkey');
   const fps = document.getElementById('fps');
   const gifWidth = document.getElementById('gifWidth');
+  const gifFps = document.getElementById('gifFps');
   const status = document.getElementById('status');
   const hotkeyError = document.getElementById('hotkeyError');
 
@@ -76,21 +77,26 @@
         outputDir: outputDir.value.trim(),
         fps: Number(fps.value),
         gifWidth: Number(gifWidth.value),
+        gifFps: Number(gifFps.value),
       },
     });
   }
   outputDir.addEventListener('change', commit);
   fps.addEventListener('change', commit);
   gifWidth.addEventListener('change', commit);
+  gifFps.addEventListener('change', commit);
 
   window.rec.onMessage((message) => {
     if (message.type !== 'workbench') return;
     const payload = message.payload || {};
     const config = payload.config || {};
     if (document.activeElement !== outputDir) outputDir.value = config.outputDir || '';
-    if (document.activeElement !== hotkey) hotkey.value = config.hotkey || '';
+    // 正在录快捷键的时候别动那个框：它上面写着「按下新的组合键…」，
+    // 被状态推送一冲，用户就不知道自己在录什么了。
+    if (!recording && document.activeElement !== hotkey) hotkey.value = config.hotkey || '';
     if (document.activeElement !== fps) fps.value = String(config.fps ?? 30);
     if (document.activeElement !== gifWidth) gifWidth.value = String(config.gifWidth ?? 480);
+    if (document.activeElement !== gifFps) gifFps.value = String(config.gifFps ?? 12);
     hotkeyError.textContent = payload.hotkeyError || '';
     status.textContent = payload.status || '';
   });

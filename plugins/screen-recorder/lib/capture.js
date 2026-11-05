@@ -57,6 +57,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
       id: s.id,
       label: s.name || s.id,
       hint: isWindow ? '窗口' : '显示器',
+      // 显示器模式下，选区要按「用户选的那块屏」来框。
+      displayId: s.display_id || '',
     }));
   }
 
@@ -72,8 +74,11 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     captureSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(true));
     captureSession.setPermissionCheckHandler(() => true);
     captureSession.setDisplayMediaRequestHandler((request, callback) => {
-      const picked = pendingSources.find((s) => s.id === sourceId) || pendingSources[0];
+      const picked = pendingSources.find((s) => s.id === sourceId);
       if (!picked) {
+        // **不要兜底到别的源**：用户选的是某个窗口，兜底成整块屏幕，
+        // 录出来的东西跟用户要的完全不是一回事，而且全程没有提示。
+        console.warn(`[录屏] 要录的目标不在了：${sourceId}`);
         callback(null);
         return;
       }
@@ -115,11 +120,14 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
    * **顺序很重要**：遮罩必须先关掉，再开始取流。
    * 遮罩还在的时候取流，那块半透明的暗色层会被录进画面里。
    *
+   * @param {string} [displayId] 用户选的那块显示器（选区只在一块屏上框）
    * @returns {Promise<{crop:object,snapshotSize:object,sourceId:string}|null>}
    */
-  async function pickRegion() {
+  async function pickRegion(displayId) {
     const displays = screen.getAllDisplays();
-    const display = displays[0];
+    // 用户在面板里选了哪块屏，就在哪块屏上框；没选就用第一块。
+    const display =
+      displays.find((d) => String(d.id) === String(displayId || '')) || displays[0];
     if (!display) return null;
 
     // 截图要**物理像素**的：bounds 是 DIP，缩放不是 100% 时两者不等。
@@ -264,6 +272,22 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     onState?.({ recording: false, elapsedMs: 0, error: message });
   }
 
+  /**
+   * 录制被取消了（还没开始就停了）。
+   *
+   * 不是错误：用户自己喊停的，就别留个「出错了」的脸色。
+   */
+  function cancel() {
+    state = 'idle';
+    if (timer) clearInterval(timer);
+    timer = null;
+    windows.hideControl();
+    windows.destroyCapture();
+    pageReady = false;
+    releaseSession();
+    onState?.({ recording: false, elapsedMs: 0, cancelled: true });
+  }
+
   /** 出错了但还能继续录：只提示，不停。 */
   function warn(message) {
     onState?.({
@@ -283,5 +307,17 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     pageReady = false;
   }
 
-  return { listTargets, pickRegion, start, stop, save, fail, warn, notifyReady, isRecording, dispose };
+  return {
+    listTargets,
+    pickRegion,
+    start,
+    stop,
+    save,
+    fail,
+    cancel,
+    warn,
+    notifyReady,
+    isRecording,
+    dispose,
+  };
 }

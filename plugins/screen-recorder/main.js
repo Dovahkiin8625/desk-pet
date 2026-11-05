@@ -41,16 +41,48 @@ export default function createScreenRecorderPlugin(ctx) {
     preloadPath: join(pluginDir, 'preload', 'rec.cjs'),
     // 工作台开了才注册快捷键，关了就注销。
     onWorkbenchChanged: (open) => {
-      if (!open) unregisterHotkey();
-      else void syncHotkey();
+      if (!open) {
+        unregisterHotkey();
+        stopWatching();
+      } else {
+        void syncHotkey();
+        watchEnabled();
+      }
       pushWorkbenchState();
     },
   });
+
+  /**
+   * 盯着「插件是不是被关掉了」。
+   *
+   * 设置窗口里把插件关掉时，宿主会关掉**它自己**的插件窗口；
+   * 我们自建的窗口它管不着——于是工作台还开着、快捷键还占着、
+   * 录制还在跑。插件关了就该真的什么都不干，所以自己盯一下。
+   */
+  let watchTimer = null;
+  function watchEnabled() {
+    if (watchTimer) return;
+    watchTimer = setInterval(() => {
+      if (ctx.host.isEnabled('screen-recorder')) return;
+      windows.closeWorkbench();
+      windows.hideControl();
+      capture.stop();
+      unregisterHotkey();
+      stopWatching();
+    }, 2000);
+  }
+
+  function stopWatching() {
+    if (!watchTimer) return;
+    clearInterval(watchTimer);
+    watchTimer = null;
+  }
 
   const capture = createCaptureSession({
     windows,
     getOutputDir: () => (config?.outputDir || '').trim() || app.getPath('videos'),
     onState: (state) => {
+      const wasRecording = recording;
       recording = state.recording;
       if (state.warning) {
         note = state.warning;
@@ -60,12 +92,21 @@ export default function createScreenRecorderPlugin(ctx) {
         status = note ? `${note}；已保存：${state.file}` : `已保存：${state.file}`;
       }
       if (state.error) status = `出错了：${state.error}`;
-      // 控制条上显示录制时长。
+      if (state.cancelled) status = '已经停掉了';
+      // 控制条上显示录制时长：它每秒都在变，所以每次都推。
       windows.sendTo('control', {
         type: 'state',
         payload: { recording, elapsedMs: state.elapsedMs || 0 },
       });
+      // **面板不要跟着计时器重画**：重画会把用户正在输入的东西抹掉
+      // （输出目录框里打的字每半秒被覆盖、焦点每半秒丢一次）。
+      // 只有状态**变了**才重画面板。
+      const changed =
+        wasRecording !== recording || state.file || state.error || state.warning || state.cancelled;
+      if (!changed) return;
       update(buildPanelPage(ctx.ui, { config, targets, recording, status }));
+      // 工作台也只在状态变了的时候推：它那边有输入框，
+      // 每半秒推一次会把用户正在打的字冲掉。
       pushWorkbenchState();
     },
   });
@@ -95,13 +136,18 @@ export default function createScreenRecorderPlugin(ctx) {
       if (capture.isRecording()) capture.stop();
       else void startRecording();
     });
-    hotkeyError = ok ? '' : `快捷键 ${cfg.hotkey} 注册不了——可能已经被别的程序占着了`;
+    hotkeyError = ok
+      ? ''
+      : cfg.hotkey
+        ? `快捷键 ${cfg.hotkey} 注册不了——可能已经被别的程序占着了`
+        : '没有设置快捷键';
   }
 
-  // 退出前拆掉捕获窗：它一直留着（录完也不拆，拆了会把主进程堵住一两分钟），
-  // 退出时整个应用都要收了，这时候多等一会儿也无所谓。
+  // 退出前把自建的窗口都拆掉：顺序才是确定的（尤其遮罩可能正开着等用户框选）。
+  // Electron 自己也会挨个关窗口，但那时候窗口关到哪个算哪个。
   app.on('before-quit', () => {
     capture.dispose();
+    windows.destroyAll();
     unregisterHotkey();
   });
 
@@ -123,6 +169,9 @@ export default function createScreenRecorderPlugin(ctx) {
     } else if (message?.type === 'ended') {
       // 目标没了：记一句，等文件存好了一起显示。
       note = '目标没了，录制已经停下来了';
+    } else if (message?.type === 'cancelled') {
+      // 还没开始就停了：不算出错。
+      capture.cancel();
     } else if (message?.type === 'picked') {
       windows.resolvePicker(message.payload || null);
     } else if (message?.type === 'picked-cancel') {
@@ -161,6 +210,15 @@ export default function createScreenRecorderPlugin(ctx) {
   async function page(currentCtx) {
     if (currentCtx?.update) update = currentCtx.update;
     const cfg = await ensureConfig();
+    // 第一次打开面板时还没有目标列表：列一遍，
+    // 不然用户看不到这次会录哪块屏幕、哪个窗口。
+    if (!targets.length) {
+      try {
+        targets = await capture.listTargets(cfg.mode);
+      } catch (err) {
+        console.warn('[录屏] 列目标失败：', err?.message);
+      }
+    }
     return buildPanelPage(ctx.ui, { config: cfg, targets, recording, status });
   }
 
@@ -189,6 +247,10 @@ export default function createScreenRecorderPlugin(ctx) {
    * 快捷键（Task 8）也走这里，所以它得是个独立的函数。
    */
   async function startRecordingInner() {
+    if (!ctx.host.isEnabled('screen-recorder')) {
+      status = '录屏插件已经关掉了';
+      return;
+    }
     if (capture.isRecording()) {
       status = '已经在录了';
       return;
@@ -197,13 +259,16 @@ export default function createScreenRecorderPlugin(ctx) {
 
     // 选区模式：先让用户框一块，框完才开始录。
     if (cfg.mode === 'region') {
-      const region = await capture.pickRegion();
+      // 遮罩开在**用户选的那块屏**上：列表里选了哪块，就在那块上框。
+      const chosen = targets.find((t) => t.id === cfg.sourceId);
+      const region = await capture.pickRegion(chosen?.displayId);
       if (!region) {
         status = '没选区域';
         update(buildPanelPage(ctx.ui, { config, targets, recording, status }));
         return;
       }
       note = '';
+      status = '';
       await save({ sourceId: region.sourceId });
       try {
         await capture.start({
@@ -231,6 +296,7 @@ export default function createScreenRecorderPlugin(ctx) {
     targets = list;
     await save({ sourceId: picked.id });
     note = '';
+    status = '';
     try {
       await capture.start({
         mode: cfg.mode,

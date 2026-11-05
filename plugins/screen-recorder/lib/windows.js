@@ -30,6 +30,17 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     return win;
   }
 
+  /**
+   * 窗口关了之后把它从记录里去掉。
+   *
+   * **要认一下是不是当前那个**：关窗是异步的，旧窗口的 'closed' 事件
+   * 可能在新窗口建好之后才到——不认一下的话，新窗口的引用会被旧窗口
+   * 的回调清掉，下一段录制就停不下来了。
+   */
+  function forget(key, win) {
+    if (windows[key] === win) windows[key] = null;
+  }
+
   /** 捕获页：隐藏着，真正干活的地方。 */
   function createCapture() {
     if (windows.capture && !windows.capture.isDestroyed()) return windows.capture;
@@ -50,7 +61,7 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
       },
     });
     win.on('closed', () => {
-      windows.capture = null;
+      forget('capture', win);
     });
     win.loadFile(join(pluginDir, 'pages', 'recorder.html'));
     windows.capture = track(win, 'capture');
@@ -104,7 +115,7 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
       win.setAlwaysOnTop(true, 'screen-saver');
       windows.picker = track(win, 'picker');
       win.on('closed', () => {
-        windows.picker = null;
+        forget('picker', win);
         resolvePicker(null); // 窗口被直接关掉 = 用户放弃了
       });
       win.webContents.on('did-finish-load', () => {
@@ -117,8 +128,8 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     });
   }
 
-  /** 遮罩选完了：把结果交给等它的人。 */  function resolvePicker(result) {
-    const resolve = pickerResolve;
+  /** 遮罩选完了：把结果交给等它的人。 */
+  function resolvePicker(result) {    const resolve = pickerResolve;
     pickerResolve = null;
     if (resolve) resolve(result);
   }
@@ -170,6 +181,9 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     win.setAlwaysOnTop(true, 'floating');
     win.loadFile(join(pluginDir, 'pages', 'control.html'));
     windows.control = track(win, 'control');
+    win.on('closed', () => {
+      forget('control', win);
+    });
     return win;
   }
 
@@ -198,7 +212,7 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
       },
     });
     win.on('closed', () => {
-      windows.workbench = null;
+      forget('workbench', win);
       onWorkbenchChanged?.(false);
     });
     win.loadFile(join(pluginDir, 'pages', 'workbench.html'));

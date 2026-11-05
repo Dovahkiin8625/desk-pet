@@ -13,11 +13,13 @@ const CHANNEL = 'rec:screen-recorder:message';
  */
 export function registerIpc(handler) {
   ipcMain.on(CHANNEL, (event, message) => {
-    try {
-      handler(message, event);
-    } catch (err) {
-      console.warn('[录屏] IPC 处理出错：', err?.message);
-    }
+    // handler 是 async 的：**try/catch 接不住它内部的拒绝**。
+    // 不接住的话，写配置失败（磁盘满、目录只读）会变成主进程的未处理拒绝。
+    Promise.resolve()
+      .then(() => handler(message, event))
+      .catch((err) => {
+        console.warn('[录屏] IPC 处理出错：', err?.message);
+      });
   });
   ipcMain.handle(CHANNEL, async (event, message) => {
     try {

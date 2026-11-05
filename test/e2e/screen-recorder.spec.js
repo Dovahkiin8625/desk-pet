@@ -276,6 +276,45 @@ test.describe('录屏插件', () => {
     }
   });
 
+  test('刚开始就喊停：录制不会卡住，还能再录一次', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      await clickButton(panel, '全屏');
+      await clickButton(panel, '视频');
+      await setInput(panel, OUT_DIR);
+
+      await clickButton(panel, '开始录制');
+      // 「停止录制」一出现就点：这时捕获页很可能还在取流，
+      // 停止会落在「开始」还没走完的那段路上。
+      await panel.waitForFunction(
+        () =>
+          [...document.querySelectorAll('#plugin-body .block-buttons button')].some((b) =>
+            b.textContent.includes('停止录制')
+          ),
+        null,
+        { timeout: 10000, polling: 50 }
+      );
+      await clickButton(panel, '停止录制');
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // 应该回到「开始录制」：没卡在「已经在录了」。
+      const labels = await panel.evaluate(() =>
+        [...document.querySelectorAll('#plugin-body .block-buttons button')].map((b) => b.textContent)
+      );
+      expect(labels.join('|'), '录了又停之后应该还能再录').toContain('开始录制');
+
+      // 而且真的还能再录一段。
+      await clickButton(panel, '开始录制');
+      await new Promise((r) => setTimeout(r, 2500));
+      await clickButton(panel, '停止录制');
+      await new Promise((r) => setTimeout(r, 3000));
+      expect(await newestRecording(OUT_DIR), '第二段应该存下来了').toBeTruthy();
+    } finally {
+      await closeApp(app);
+    }
+  });
+
   test('工作台开着时快捷键才生效，关掉就注销', async () => {
     const { app, pet } = await launch();
     try {

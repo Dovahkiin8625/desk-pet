@@ -22,6 +22,7 @@
     video: null,
     audioContext: null,
     stopped: false,
+    cancelled: false,
   };
 
   function report(type, payload) {
@@ -32,8 +33,9 @@
   async function begin(payload) {
     try {
       // 捕获窗是复用的：上一段录完时这个页面还在，
-      // 所以这里要把「已经停了」的标记清掉。
+      // 所以这里要把「已经停了」「已经取消」的标记清掉。
       state.stopped = false;
+      state.cancelled = false;
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: Boolean(payload.audio?.speaker),
@@ -60,6 +62,7 @@
       // 别让前面的 canvas 裁剪把它处理两遍。
       if (payload.format === 'gif') {
         await beginGif(payload, stream, videoTrack);
+        if (state.stopped) report('cancelled', {});
         return;
       }
 
@@ -134,13 +137,25 @@
         if (event.data && event.data.size) state.chunks.push(event.data);
       };
       recorder.onstop = () => {
+        // 用户喊停的：什么都没录到，别存一个空文件出来。
+        if (state.cancelled) return;
         const blob = new Blob(state.chunks, { type: mime });
         blob.arrayBuffer().then((buffer) => {
           reportSaved(buffer, 'mp4');
         });
+        // 音频上下文在录器真的停下来之后再关：提前关会把最后一段声音切掉。
+        closeAudio();
       };
       state.recorder = recorder;
       recorder.start(200);
+
+      // **用户可能在「开始」还没走完时就喊停了**：
+      // 这时候录器刚建好、还没录到东西，就别留下一个停不下来的录制。
+      if (state.stopped) {
+        state.cancelled = true;
+        recorder.stop();
+        report('cancelled', {});
+      }
     } catch (err) {
       report('error', { message: err?.message || String(err) });
     }
@@ -159,9 +174,21 @@
     const trackWidth = settings.width || 1280;
     const trackHeight = settings.height || 720;
 
+    // 裁剪块要先算出来：目标尺寸要按**裁剪后**的比例算，
+    // 按整条轨的比例算的话，选区会被拉变形。
+    let crop = null;
+    if (payload.crop && payload.snapshotSize) {
+      crop = G.scaleRect(payload.crop, payload.snapshotSize, {
+        width: trackWidth,
+        height: trackHeight,
+      });
+    }
+    const sourceWidth = crop ? crop.width : trackWidth;
+    const sourceHeight = crop ? crop.height : trackHeight;
+
     // 目标尺寸：宽度不超过配置值，高度按比例。
-    const targetWidth = Math.min(payload.gif?.width || 480, trackWidth);
-    const targetHeight = Math.max(2, Math.round((targetWidth * trackHeight) / trackWidth));
+    const targetWidth = Math.max(2, Math.min(payload.gif?.width || 480, sourceWidth));
+    const targetHeight = Math.max(2, Math.round((targetWidth * sourceHeight) / sourceWidth));
 
     const video = document.createElement('video');
     video.srcObject = stream;
@@ -172,14 +199,6 @@
     canvas.width = targetWidth;
     canvas.height = targetHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    let crop = null;
-    if (payload.crop && payload.snapshotSize) {
-      crop = G.scaleRect(payload.crop, payload.snapshotSize, {
-        width: trackWidth,
-        height: trackHeight,
-      });
-    }
 
     const encoder = new GIF.GifEncoder({ width: targetWidth, height: targetHeight });
     state.gifEncoder = encoder;
@@ -194,6 +213,14 @@
       const image = ctx.getImageData(0, 0, targetWidth, targetHeight);
       encoder.addFrame(image.data, frameMs);
     }, frameMs);
+
+    // 用户在取流的路上喊停了：别留下一个停不下来的 GIF 录制。
+    if (state.stopped) {
+      clearInterval(state.drawTimer);
+      state.drawTimer = null;
+      state.gifEncoder = null;
+      report('cancelled', {});
+    }
   }
 
   /** 挑一个浏览器支持的容器：优先 MP4（H.264 + AAC）。 */
@@ -208,6 +235,13 @@
     return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
   }
 
+  /** 关掉音频上下文（不关的话它一直占着音频服务）。 */
+  function closeAudio() {
+    if (!state.audioContext) return;
+    state.audioContext.close().catch(() => {});
+    state.audioContext = null;
+  }
+
   /** 停止。 */
   function stop() {
     if (state.stopped) return;
@@ -219,14 +253,20 @@
       state.gifEncoder = null;
       reportSaved(bytes.buffer, 'gif');
     }
-    if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
-    if (state.video) state.video.getTracks().forEach((t) => t.stop());
-    // 音频上下文也要关：不关的话它一直占着音频服务，
-    // 应用退出会多等十几秒。
-    if (state.audioContext) {
-      state.audioContext.close().catch(() => {});
-      state.audioContext = null;
+    if (state.recorder) {
+      if (state.recorder.state !== 'inactive') state.recorder.stop();
+    } else {
+      // 录器还没建好（正在取流）：begin() 那边会看到 stopped 标记，
+      // 自己收手——不然就留下一个停不下来的录制。
+      state.pendingStop = true;
     }
+    if (state.video) state.video.getTracks().forEach((t) => t.stop());
+    // canvas 裁剪那条轨也要停：它不是源轨的附属，源轨停了它不一定停。
+    if (state.canvasStream) {
+      state.canvasStream.getTracks().forEach((t) => t.stop());
+      state.canvasStream = null;
+    }
+    closeAudio();
   }
 
   /**

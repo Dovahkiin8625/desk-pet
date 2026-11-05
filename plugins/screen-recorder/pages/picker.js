@@ -75,6 +75,11 @@
     window.rec.send({ type: 'picked-cancel' });
   });
 
+  // Esc 也能取消：用户未必看得见底下的按钮。
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') window.rec.send({ type: 'picked-cancel' });
+  });
+
   window.rec.onMessage((message) => {
     if (message.type !== 'picker') return;
     const payload = message.payload || {};
