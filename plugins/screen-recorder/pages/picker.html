@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>选一块要录的区域</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        cursor: crosshair;
+        user-select: none;
+      }
+      /* 底图铺满窗口（窗口就是显示器的大小，DIP）。 */
+      #shot {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
+      }
+      /* 变暗层：让选中的那块显眼。 */
+      #dim {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+      }
+      #sel {
+        position: absolute;
+        border: 2px solid #4f9dff;
+        background: rgba(79, 157, 255, 0.16);
+        display: none;
+      }
+      #bar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 24px;
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+      }
+      button {
+        font: 15px/1.2 "Microsoft YaHei", sans-serif;
+        padding: 8px 18px;
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+        background: #fff;
+        color: #222;
+      }
+      button.primary {
+        background: #4f9dff;
+        color: #fff;
+      }
+      #size {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        color: #fff;
+        font: 13px/1.4 "Microsoft YaHei", sans-serif;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      }
+    </style>
+  </head>
+  <body>
+    <img id="shot" alt="" />
+    <div id="dim"></div>
+    <div id="sel"></div>
+    <div id="size"></div>
+    <div id="bar">
+      <button id="cancel" type="button">取消</button>
+      <button id="ok" class="primary" type="button">确定</button>
+    </div>
+    <script src="../web/geometry.js"></script>
+    <script src="picker.js"></script>
+  </body>
+</html>

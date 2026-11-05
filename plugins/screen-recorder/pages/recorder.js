@@ -31,6 +31,9 @@
   /** 开始录制。 */
   async function begin(payload) {
     try {
+      // 捕获窗是复用的：上一段录完时这个页面还在，
+      // 所以这里要把「已经停了」的标记清掉。
+      state.stopped = false;
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
         audio: Boolean(payload.audio?.speaker),
@@ -123,7 +126,7 @@
       recorder.onstop = () => {
         const blob = new Blob(state.chunks, { type: mime });
         blob.arrayBuffer().then((buffer) => {
-          report('saved', { bytes: buffer, ext: 'mp4' });
+          reportSaved(buffer, 'mp4');
         });
       };
       state.recorder = recorder;
@@ -158,6 +161,19 @@
       state.audioContext.close().catch(() => {});
       state.audioContext = null;
     }
+  }
+
+  /**
+   * 停完之后，等一下再把结果交回去。
+   *
+   * 屏幕捕获会话的收尾是**异步**的：轨道停了之后它还要一会儿才真正松手。
+   * 给它留点时间，文件落盘时它就已经收得差不多了。
+   */
+  const SETTLE_MS = 800;
+
+  /** 交结果之前先等捕获会话松手。 */
+  function reportSaved(bytes, ext) {
+    setTimeout(() => report('saved', { bytes, ext }), SETTLE_MS);
   }
 
   window.rec.onMessage(async (message) => {

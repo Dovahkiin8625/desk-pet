@@ -1,5 +1,5 @@
 // plugins/screen-recorder/lib/capture.js
-import { desktopCapturer, session } from 'electron';
+import { desktopCapturer, screen, session } from 'electron';
 import { mkdir, writeFile, rename, unlink } from 'node:fs/promises';
 import { recordingFileName, uniquePath } from './naming.js';
 
@@ -32,6 +32,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
   let pendingSources = [];
   /** 捕获页说「准备好了」的回调。 */
   let readyResolve = null;
+  /** 捕获页已经就绪过吗（窗口是复用的，第二次不用再等）。 */
+  let pageReady = false;
 
   function isRecording() {
     return state === 'recording' || state === 'starting';
@@ -75,6 +77,7 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
         callback(null);
         return;
       }
+      console.log(`[录屏] 捕获源：${picked.id}（${picked.name}），要的是 ${sourceId}`);
       callback({ video: picked, audio: request.audioRequested ? 'loopback' : undefined });
     });
     return captureSession;
@@ -102,7 +105,49 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
 
   /** 捕获页报「准备好了」。 */
   function notifyReady() {
+    pageReady = true;
     readyResolve?.();
+  }
+
+  /**
+   * 选区模式：先把遮罩开出来，等用户框一块。
+   *
+   * **顺序很重要**：遮罩必须先关掉，再开始取流。
+   * 遮罩还在的时候取流，那块半透明的暗色层会被录进画面里。
+   *
+   * @returns {Promise<{crop:object,snapshotSize:object,sourceId:string}|null>}
+   */
+  async function pickRegion() {
+    const displays = screen.getAllDisplays();
+    const display = displays[0];
+    if (!display) return null;
+
+    // 截图要**物理像素**的：bounds 是 DIP，缩放不是 100% 时两者不等。
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.round(display.bounds.width * display.scaleFactor),
+        height: Math.round(display.bounds.height * display.scaleFactor),
+      },
+    });
+    // 源的 display_id 是**字符串**，显示器的 id 是**数字**：
+    // 不转成字符串比，永远比不相等——于是会掉进下面的兜底，
+    // 录到另一块屏幕上去（截图显示的是这块，内容却是那块）。
+    const source =
+      sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+    if (!source) return null;
+    console.log(`[录屏] 选区：显示器 ${display.label} → 源 ${source.id}（${source.name}）`);
+
+    const picked = await windows.openPicker({
+      display,
+      image: source.thumbnail.toDataURL(),
+      snapshotSize: { width: source.thumbnail.getSize().width, height: source.thumbnail.getSize().height },
+    });
+    // **遮罩必须先关掉**，再开始取流：它还在的时候取流，
+    // 那层半透明的暗色会被录进画面里。
+    windows.closePicker();
+    if (!picked) return null;
+    return { crop: picked.crop, snapshotSize: picked.snapshotSize, sourceId: source.id };
   }
 
   /**
@@ -128,9 +173,13 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
 
     prepareSession();
     const win = windows.createCapture();
-    const ready = waitReady();
-    await ready;
+    // 捕获页是复用的：第一次要等它报「准备好了」，
+    // 后面它已经在等着了，不用再等。
+    if (!pageReady) await waitReady();
     if (win.isDestroyed()) throw new Error('捕获页已经关了');
+    console.log(
+      `[录屏] 开始：模式 ${options.mode}，裁剪 ${options.crop ? `${options.crop.width}×${options.crop.height}` : '无'}`
+    );
     win.webContents.send('rec:screen-recorder:message', {
       type: 'begin',
       payload: {
@@ -193,7 +242,11 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     if (timer) clearInterval(timer);
     timer = null;
     windows.hideControl();
-    windows.destroyCapture();
+    // **捕获窗先不拆**：拆它会把主进程堵住一两分钟
+    // （Windows 的屏幕捕获会话收尾是同步的，拆窗口时主进程要排在它后面——
+    //  表现是「录完屏之后点桌宠弹面板要等 180 秒」）。
+    // 留着它反而没事：它是隐藏的，下一次录制直接复用。
+    // 真正拆它的地方是退出前（见 dispose）。
     releaseSession();
     onState?.({ recording: false, elapsedMs: 0, file: target });
     return target;
@@ -205,7 +258,6 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     if (timer) clearInterval(timer);
     timer = null;
     windows.hideControl();
-    windows.destroyCapture();
     releaseSession();
     onState?.({ recording: false, elapsedMs: 0, error: message });
   }
@@ -225,7 +277,9 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     state = 'idle';
     readyResolve = null;
     releaseSession();
+    // 退出前才拆捕获窗：那时候整个应用都要收了，多等一会儿也无所谓。
+    windows.destroyCapture();
   }
 
-  return { listTargets, start, stop, save, fail, warn, notifyReady, isRecording, dispose };
+  return { listTargets, pickRegion, start, stop, save, fail, warn, notifyReady, isRecording, dispose };
 }

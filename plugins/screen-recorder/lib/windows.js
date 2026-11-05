@@ -15,6 +15,8 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
   /** webContents.id → 窗口的角色。 */
   const roles = new Map();
   const windows = { capture: null, picker: null, control: null, workbench: null };
+  /** 遮罩选完之后的回调（谁在等这块区域）。 */
+  let pickerResolve = null;
 
   function track(win, role) {
     roles.set(win.webContents.id, role);
@@ -52,8 +54,76 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
   }
 
   function destroyCapture() {
-    if (windows.capture && !windows.capture.isDestroyed()) windows.capture.destroy();
+    // **close() 而不是 destroy()**：destroy() 是硬拆窗口，
+    // 窗口里的屏幕捕获会话还没松手，硬拆会把主进程堵住一两分钟
+    // （实测：录完屏之后点桌宠弹面板要等 180 秒）。
+    // close() 先让渲染进程自己收尾（页面会停掉轨道），拆得干净。
+    if (windows.capture && !windows.capture.isDestroyed()) windows.capture.close();
     windows.capture = null;
+  }
+
+  /**
+   * 开遮罩：铺满一块显示器，等用户框一块区域。
+   *
+   * 遮罩是**独立窗口**而不是画在桌宠上：它要盖住整块屏幕，
+   * 并且始终置顶（'screen-saver' 这一档比 'floating' 更靠前）。
+   *
+   * @returns {Promise<{crop:object,snapshotSize:object}|null>} 用户框的区域；取消就是 null
+   */
+  function openPicker({ display, image, snapshotSize }) {
+    return new Promise((resolve) => {
+      if (windows.picker && !windows.picker.isDestroyed()) windows.picker.destroy();
+      pickerResolve = resolve;
+      const win = new BrowserWindow({
+        x: display.bounds.x,
+        y: display.bounds.y,
+        width: display.bounds.width,
+        height: display.bounds.height,
+        frame: false,
+        transparent: true,
+        hasShadow: false,
+        resizable: false,
+        maximizable: false,
+        minimizable: false,
+        fullscreenable: false,
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        backgroundColor: '#00000000',
+        webPreferences: {
+          preload: preloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          backgroundThrottling: false,
+        },
+      });
+      win.setAlwaysOnTop(true, 'screen-saver');
+      windows.picker = track(win, 'picker');
+      win.on('closed', () => {
+        windows.picker = null;
+        resolvePicker(null); // 窗口被直接关掉 = 用户放弃了
+      });
+      win.webContents.on('did-finish-load', () => {
+        win.webContents.send('rec:screen-recorder:message', {
+          type: 'picker',
+          payload: { image, snapshotSize },
+        });
+      });
+      win.loadFile(join(pluginDir, 'pages', 'picker.html'));
+    });
+  }
+
+  /** 遮罩选完了：把结果交给等它的人。 */
+  function resolvePicker(result) {
+    const resolve = pickerResolve;
+    pickerResolve = null;
+    if (resolve) resolve(result);
+  }
+
+  /** 把遮罩关掉（框完就关，别让它留在屏幕上）。 */
+  function closePicker() {
+    if (windows.picker && !windows.picker.isDestroyed()) windows.picker.destroy();
+    windows.picker = null;
   }
 
   /** 控制条：置顶的小浮窗。 */
@@ -152,6 +222,9 @@ export function createWindows({ pluginDir, preloadPath, onWorkbenchChanged }) {
     createCapture,
     destroyCapture,
     captureWindow: () => windows.capture,
+    openPicker,
+    resolvePicker,
+    closePicker,
     showControl,
     hideControl,
     openWorkbench,

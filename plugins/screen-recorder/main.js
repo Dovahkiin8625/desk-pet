@@ -55,6 +55,12 @@ export default function createScreenRecorderPlugin(ctx) {
     },
   });
 
+  // 退出前拆掉捕获窗：它一直留着（录完也不拆，拆了会把主进程堵住一两分钟），
+  // 退出时整个应用都要收了，这时候多等一会儿也无所谓。
+  app.on('before-quit', () => {
+    capture.dispose();
+  });
+
   registerIpc((message, event) => {
     const role = windows.roleOf(event?.sender?.id);
     if (message?.type === 'ready') {
@@ -73,6 +79,10 @@ export default function createScreenRecorderPlugin(ctx) {
     } else if (message?.type === 'ended') {
       // 目标没了：记一句，等文件存好了一起显示。
       note = '目标没了，录制已经停下来了';
+    } else if (message?.type === 'picked') {
+      windows.resolvePicker(message.payload || null);
+    } else if (message?.type === 'picked-cancel') {
+      windows.resolvePicker(null);
     } else if (message?.type === 'stop' && role === 'control') {
       capture.stop();
     }
@@ -125,6 +135,33 @@ export default function createScreenRecorderPlugin(ctx) {
       return;
     }
     const cfg = await ensureConfig();
+
+    // 选区模式：先让用户框一块，框完才开始录。
+    if (cfg.mode === 'region') {
+      const region = await capture.pickRegion();
+      if (!region) {
+        status = '没选区域';
+        update(buildPanelPage(ctx.ui, { config, targets, recording, status }));
+        return;
+      }
+      note = '';
+      await save({ sourceId: region.sourceId });
+      try {
+        await capture.start({
+          mode: 'region',
+          sourceId: region.sourceId,
+          format: cfg.format,
+          fps: cfg.fps,
+          audio: { mic: cfg.mic, speaker: cfg.speaker },
+          crop: region.crop,
+          snapshotSize: region.snapshotSize,
+        });
+      } catch (err) {
+        status = `开始不了：${err?.message || err}`;
+      }
+      return;
+    }
+
     const list = await capture.listTargets(cfg.mode);
     if (!list.length) {
       status = '没有可录的目标';

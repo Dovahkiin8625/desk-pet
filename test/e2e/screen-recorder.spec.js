@@ -3,9 +3,27 @@
 // 覆盖真实链路：开面板 → 打开录屏 → 开始录制 → 录一会儿 → 停止 → 产出文件。
 // 这套用例**需要一块真的屏幕**：抓屏在无显示器的机器上跑不起来。
 import { test, expect, _electron as electron } from '@playwright/test';
-import { rm, mkdir, readFile, readdir } from 'node:fs/promises';
+import { rm, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseMp4Tracks } from './helpers/mp4.js';
+
+/**
+ * 找出目录里**最新**的那个录制文件。
+ *
+ * 不能拿「第一个」：几条用例共用同一个输出目录，
+ * 后一条会读到前一条的文件（实测：选区那条读到了全屏那条的文件，
+ * 于是「框的是 499×375，录出来是 2560×1440」——其实录对了，只是拿错了文件）。
+ */
+async function newestRecording(dir, ext = '.mp4') {
+  const names = await readdir(dir);
+  const candidates = names.filter((n) => n.endsWith(ext));
+  if (!candidates.length) return null;
+  const stamped = await Promise.all(
+    candidates.map(async (name) => ({ name, at: (await stat(join(dir, name))).mtimeMs }))
+  );
+  stamped.sort((a, b) => b.at - a.at);
+  return stamped[0].name;
+}
 
 const ROOT = process.cwd();
 const USER_DATA = join(ROOT, '.tmp-e2e-recorder');
@@ -44,14 +62,23 @@ async function openRecorder(app, pet) {
   const panel = await findWindow(app, '/renderer/panel/index.html');
   if (!panel) throw new Error('面板窗口没有出现');
   await panel.waitForLoadState('domcontentloaded');
-  await panel.waitForFunction(() => (window.__panel?.resultIds || []).length > 0, null, { timeout: 15000 });
+  // **一律用 polling（定时器）而不是默认的 requestAnimationFrame**：
+  // 面板失焦后会收起，藏起来的页面不再跑 rAF，按 rAF 轮询就永远等不到。
+  await panel.waitForFunction(() => (window.__panel?.resultIds || []).length > 0, null, {
+    timeout: 15000,
+    polling: 100,
+  });
   // 用拼音搜：'luping' 是这个插件独有的关键词，不会搜到别的东西。
   await panel.fill('#query', 'luping');
   await panel.waitForFunction(() => (window.__panel?.resultIds || []).includes('screen-recorder'), null, {
     timeout: 15000,
+    polling: 100,
   });
   await panel.click('#results li:has-text("录屏")');
-  await panel.waitForFunction(() => window.__panel?.pluginId === 'screen-recorder', null, { timeout: 10000 });
+  await panel.waitForFunction(() => window.__panel?.pluginId === 'screen-recorder', null, {
+    timeout: 10000,
+    polling: 100,
+  });
   return panel;
 }
 
@@ -166,7 +193,7 @@ test.describe('录屏插件', () => {
       await new Promise((r) => setTimeout(r, 2500));
 
       const files = await readdir(OUT_DIR);
-      const mp4 = files.find((f) => f.endsWith('.mp4'));
+      const mp4 = await newestRecording(OUT_DIR);
       // 出错时把插件的状态也带上：光说「没有 mp4」根本不知道卡在哪一步。
       const status = await readStatus(panel);
       expect(mp4, `应该产出 mp4：${files.join('、')}；插件状态：${status}`).toBeTruthy();
@@ -193,12 +220,72 @@ test.describe('录屏插件', () => {
       await toggle(panel, '扬声器', false);
       await clickButton(panel, '开始录制');
       await new Promise((r) => setTimeout(r, 2500));
-
-      const micStatus = await readStatus(panel);
-      expect(micStatus, `状态里应该说清楚为什么没声音：${micStatus}`).toContain('麦克风');
-
       await clickButton(panel, '停止录制');
       await new Promise((r) => setTimeout(r, 1500));
+
+      // 面板收起的时候是不收异步更新的（藏起来的页面不刷新），
+      // 所以要重新打开一次才能看到插件留下的提示。
+      panel = await openRecorder(app, pet);
+      const micStatus = await readStatus(panel);
+      expect(micStatus, `状态里应该说清楚为什么没声音：${micStatus}`).toContain('麦克风');
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  test('选区录制：框一块，录出来的就是那一块', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      await clickButton(panel, '全屏');
+      await clickButton(panel, '选区');
+      await setInput(panel, OUT_DIR);
+      await clickButton(panel, '开始录制');
+
+      // 遮罩应该盖住一块屏幕，等用户在上面拉框。
+      const picker = await findWindow(app, 'picker.html');
+      expect(picker, '遮罩窗口应该出现').not.toBeNull();
+      await picker.waitForLoadState('domcontentloaded');
+
+      await picker.mouse.move(200, 200);
+      await picker.mouse.down();
+      await picker.mouse.move(600, 500, { steps: 8 });
+      await picker.mouse.up();
+
+      // 遮罩上写着选区有多大（物理像素）。
+      const label = await picker.textContent('#size');
+      const [selWidth, selHeight] = (label || '').match(/(\d+)\s*×\s*(\d+)/)?.slice(1).map(Number) || [];
+      expect(selWidth, `遮罩上没写出选区大小：${label}`).toBeGreaterThan(0);
+
+      // 用 evaluate 派发 click：点了之后遮罩立刻就没了，
+      // 用 Playwright 的 click 的话，它会等一个已经不存在的窗口。
+      await picker.evaluate(() => document.getElementById('ok').click());
+
+      // 遮罩必须在开始录制**之前**关掉：不然那层暗色会被录进画面。
+      await new Promise((r) => setTimeout(r, 1500));
+      const stillThere = await findWindow(app, 'picker.html');
+      expect(stillThere, '遮罩应该已经关掉了').toBeNull();
+
+      await new Promise((r) => setTimeout(r, 2000));
+      await clickButton(panel, '停止录制');
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const files = await readdir(OUT_DIR);
+      const mp4 = await newestRecording(OUT_DIR);
+      const status = await readStatus(panel);
+      expect(mp4, `应该产出 mp4：${files.join('、')}；插件状态：${status}`).toBeTruthy();
+
+      const { tracks } = parseMp4Tracks(await readFile(join(OUT_DIR, mp4)));
+      const video = tracks.find((t) => t.type === 'vide');
+      expect(video, '得有一个画面轨').toBeTruthy();
+      // 录下来的画面应该和框出来的那块**同一个比例**：
+      // 尺寸不一定相等（录制用的是屏幕的原始分辨率），比例对就说明框对了。
+      const selected = selWidth / selHeight;
+      const recorded = video.width / video.height;
+      expect(
+        Math.abs(selected - recorded),
+        `框的是 ${selWidth}×${selHeight}，录出来是 ${video.width}×${video.height}`
+      ).toBeLessThan(0.05);
     } finally {
       await closeApp(app);
     }
