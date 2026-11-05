@@ -62,6 +62,15 @@ test('resolveWindowSpec：widget 写了就用清单里那份', () => {
   assert.equal(spec.width, 216);
 });
 
+test('resolveWindowSpec：清单没经过校验时，返回的也是完整规格', () => {
+  const manifest = { id: 'x', name: 'X', window: { width: 500 } };
+  const spec = resolveWindowSpec(manifest, PLUGIN_WINDOW_MODE.WINDOW);
+  assert.equal(spec.mode, PLUGIN_WINDOW_MODE.WINDOW);
+  assert.equal(spec.alwaysOnTop, true); // 声明了 window 段 → 默认置顶
+  assert.equal(spec.refreshMs, 0);
+  assert.equal(spec.width, 500);
+});
+
 test('每个插件都能分离成独立窗口', () => {
   assert.equal(canDetach({ id: 'todos', name: '待办' }), true);
   assert.equal(canDetach({ id: 'screen-recorder', name: '录屏' }), true);

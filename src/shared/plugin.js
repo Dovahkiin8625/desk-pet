@@ -130,12 +130,19 @@ export function defaultWindowSpec(manifest) {
  *   ——**每个插件都能开独立窗口**。
  * - `widget`：**没有就是没有**。小部件要占着用户的桌面，
  *   是插件自己该决定的事，不该由宿主替它决定。
+ *
+ * 清单里的那两段**在这里再归一化一次**：
+ * 调用方有没有先跑过 `validateManifest`，不该改变这里返回的**形状**
+ * （mode / alwaysOnTop / refreshMs 这些字段总要在）。
+ * 归一化对已归一化的值是幂等的，所以宿主那条路（清单已校验）行为不变。
  */
 export function resolveWindowSpec(manifest, mode) {
   if (mode === PLUGIN_WINDOW_MODE.WIDGET) {
-    return manifest?.widget ? manifest.widget : null;
+    if (!manifest?.widget) return null;
+    return normalizeWindowSpec(manifest.widget, PLUGIN_WINDOW_MODE.WIDGET);
   }
-  return manifest?.window || defaultWindowSpec(manifest);
+  if (!manifest?.window) return defaultWindowSpec(manifest);
+  return normalizeWindowSpec(manifest.window, PLUGIN_WINDOW_MODE.WINDOW);
 }
 
 /**
