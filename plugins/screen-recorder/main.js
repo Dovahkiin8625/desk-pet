@@ -91,6 +91,7 @@ export default function createScreenRecorderPlugin(ctx) {
     }
     const cfg = await ensureConfig();
     const ok = registerHotkey(cfg.hotkey, () => {
+      console.log('[录屏] 快捷键按下了');
       if (capture.isRecording()) capture.stop();
       else void startRecording();
     });
@@ -261,8 +262,15 @@ export default function createScreenRecorderPlugin(ctx) {
     if (actionId.startsWith('mode:')) {
       const mode = actionId.slice('mode:'.length);
       await save({ mode });
-      targets = [];
       status = '';
+      // 换了模式，能录的目标也换了（显示器 / 窗口）——
+      // 不重新列一遍的话，界面上还是上一个模式的列表。
+      try {
+        targets = await capture.listTargets(mode);
+      } catch (err) {
+        console.warn('[录屏] 列目标失败：', err?.message);
+        targets = [];
+      }
     } else if (actionId.startsWith('format:')) {
       await save({ format: actionId.slice('format:'.length) });
     } else if (actionId === 'mic') {
@@ -283,6 +291,10 @@ export default function createScreenRecorderPlugin(ctx) {
       await startRecordingInner();
     } else if (actionId === 'stop') {
       capture.stop();
+    } else if (actionId.startsWith('screen:') || actionId.startsWith('window:')) {
+      // 点了目标列表里的某一项：它就是这次要录的东西。
+      await save({ sourceId: actionId });
+      status = '选了要录的目标';
     } else if (actionId === 'open-workbench') {
       // 打开工作台：快捷键从这一刻起生效。
       windows.openWorkbench();

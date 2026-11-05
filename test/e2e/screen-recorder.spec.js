@@ -343,6 +343,52 @@ test.describe('录屏插件', () => {
     }
   });
 
+  test('窗口录制：选一个窗口，它被关掉时录制自动停下来并保存', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      await clickButton(panel, '全屏');
+      await clickButton(panel, '视频');
+      await setInput(panel, OUT_DIR);
+
+      // 先把工作台开出来：它是个有稳定标题的窗口，待会儿录它、再把它关掉。
+      await clickButton(panel, '设置');
+      const workbench = await findWindow(app, 'workbench.html');
+      expect(workbench, '工作台应该出现').not.toBeNull();
+      await workbench.waitForLoadState('domcontentloaded');
+      await new Promise((r) => setTimeout(r, 800));
+
+      // 切到窗口模式：面板里应该列出能录的窗口。
+      await clickButton(panel, '窗口');
+      await new Promise((r) => setTimeout(r, 1500));
+      const items = await panel.evaluate(() =>
+        [...document.querySelectorAll('#plugin-body .block-list li')].map((li) => li.textContent)
+      );
+      expect(items.length, '应该列出能录的窗口').toBeGreaterThan(0);
+
+      // 选工作台那个窗口。
+      const index = items.findIndex((text) => text.includes('录屏设置'));
+      expect(index, `列表里应该有工作台：${JSON.stringify(items)}`).toBeGreaterThanOrEqual(0);
+      await panel.evaluate((i) => {
+        document.querySelectorAll('#plugin-body .block-list li')[i].click();
+      }, index);
+      await new Promise((r) => setTimeout(r, 500));
+
+      await clickButton(panel, '开始录制');
+      await new Promise((r) => setTimeout(r, 2500));
+
+      // 关掉被录的那个窗口：录制应该自己停下来，把已有的内容存下来。
+      await workbench.evaluate(() => window.close());
+      await new Promise((r) => setTimeout(r, 4000));
+
+      const mp4 = await newestRecording(OUT_DIR);
+      const status = await readStatus(panel);
+      expect(mp4, `应该把已有内容存下来；插件状态：${status}`).toBeTruthy();
+    } finally {
+      await closeApp(app);
+    }
+  });
+
   test('选区录制：框一块，录出来的就是那一块', async () => {
     const { app, pet } = await launch();
     try {

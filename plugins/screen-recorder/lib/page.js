@@ -36,7 +36,16 @@ export function buildPanelPage(ui, data) {
   blocks.push(modeButtons(ui, config.mode));
 
   if (targets.length) {
-    blocks.push(ui.listBlock(targets.map((t) => ({ id: t.id, label: t.label, hint: t.hint || '' }))));
+    blocks.push(
+      ui.listBlock(
+        targets.map((t) => ({
+          id: t.id,
+          label: t.label,
+          // 选中的那个标出来：不然用户不知道这次会录哪一块。
+          hint: t.id === config.sourceId ? '● 已选' : t.hint || '',
+        }))
+      )
+    );
   }
 
   blocks.push(ui.toggleBlock('mic', '录制麦克风', config.mic));
