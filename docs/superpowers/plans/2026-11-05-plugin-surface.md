@@ -1313,6 +1313,10 @@ async function makeUserPluginWithPage() {
     page() {
       return { pluginId: 'e2e-page', title: '测试页面', blocks: [] };
     },
+    async act(ctx, actionId, payload) {
+      if (actionId === 'ping') return { pong: payload?.from || '' };
+      return null;
+    },
   };
 }
 `,
@@ -1321,8 +1325,22 @@ async function makeUserPluginWithPage() {
   await writeFile(
     join(dir, 'page.html'),
     `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>测试页面</title></head>
-<body><div id="marker">自定义页面</div></body></html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><title>测试页面</title></head>
+  <body>
+    <div id="marker">自定义页面</div>
+    <button id="send" type="button">发个动作</button>
+    <div id="received"></div>
+    <script type="module">
+      import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+      const surface = bindSurface();
+      document.getElementById('send').addEventListener('click', async () => {
+        const result = await surface.act('ping', { from: 'e2e' });
+        document.getElementById('received').textContent = String(result?.pong || '');
+      });
+    </script>
+  </body>
+</html>
 `,
     'utf8'
   );
@@ -1387,6 +1405,10 @@ test.describe('插件界面（surface）', () => {
         return el?.getAttribute('src') || '';
       });
       expect(src).toContain('/__plugins__/e2e-page/page.html');
+
+      // 插件页面用助手把动作送到插件：iframe → 父页面 → IPC → 插件 → 回来。
+      await frame.locator('#send').click();
+      await expect(frame.locator('#received')).toHaveText('e2e');
     } finally {
       await app.close();
     }
