@@ -53,6 +53,16 @@
       const trackWidth = settings.width || 1280;
       const trackHeight = settings.height || 720;
 
+      // GIF 走的是**完全不同的**一路：MediaRecorder 产不出 GIF，
+      // 这里自己逐帧取像素、量化、编码。
+      //
+      // 这个分支要放在「选区裁剪」之前：GIF 自己管缩放与裁剪，
+      // 别让前面的 canvas 裁剪把它处理两遍。
+      if (payload.format === 'gif') {
+        await beginGif(payload, stream, videoTrack);
+        return;
+      }
+
       // 选区：把整屏流裁一块出来。
       let outputTrack = videoTrack;
       if (payload.crop && payload.snapshotSize) {
@@ -136,6 +146,56 @@
     }
   }
 
+  /**
+   * GIF 模式。
+   *
+   * 走的是**完全不同的**一路：MediaRecorder 产不出 GIF，
+   * 所以这里自己逐帧取像素、量化、编码（web/gif.js）。
+   *
+   * GIF 没有音频——格式本身不支持，界面上要写明。
+   */
+  async function beginGif(payload, stream, videoTrack) {
+    const settings = videoTrack.getSettings();
+    const trackWidth = settings.width || 1280;
+    const trackHeight = settings.height || 720;
+
+    // 目标尺寸：宽度不超过配置值，高度按比例。
+    const targetWidth = Math.min(payload.gif?.width || 480, trackWidth);
+    const targetHeight = Math.max(2, Math.round((targetWidth * trackHeight) / trackWidth));
+
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    let crop = null;
+    if (payload.crop && payload.snapshotSize) {
+      crop = G.scaleRect(payload.crop, payload.snapshotSize, {
+        width: trackWidth,
+        height: trackHeight,
+      });
+    }
+
+    const encoder = new GIF.GifEncoder({ width: targetWidth, height: targetHeight });
+    state.gifEncoder = encoder;
+
+    const frameMs = Math.round(1000 / (payload.gif?.fps || 12));
+    state.drawTimer = setInterval(() => {
+      if (crop) {
+        ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, targetWidth, targetHeight);
+      } else {
+        ctx.drawImage(video, 0, 0, trackWidth, trackHeight, 0, 0, targetWidth, targetHeight);
+      }
+      const image = ctx.getImageData(0, 0, targetWidth, targetHeight);
+      encoder.addFrame(image.data, frameMs);
+    }, frameMs);
+  }
+
   /** 挑一个浏览器支持的容器：优先 MP4（H.264 + AAC）。 */
   function pickMime() {
     const candidates = [
@@ -153,6 +213,12 @@
     if (state.stopped) return;
     state.stopped = true;
     if (state.drawTimer) clearInterval(state.drawTimer);
+    if (state.gifEncoder) {
+      // GIF 是自己一帧一帧攒出来的，停下来就把攒好的字节交回去。
+      const bytes = state.gifEncoder.bytes();
+      state.gifEncoder = null;
+      reportSaved(bytes.buffer, 'gif');
+    }
     if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
     if (state.video) state.video.getTracks().forEach((t) => t.stop());
     // 音频上下文也要关：不关的话它一直占着音频服务，

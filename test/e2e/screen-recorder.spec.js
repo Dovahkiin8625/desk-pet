@@ -175,7 +175,7 @@ test.describe('录屏插件', () => {
     ]);
   });
 
-  test('全屏录制产出 mp4；没有麦克风时给的是明确提示', async () => {
+  test('全屏录制产出 mp4；麦克风可用就录，不可用就说清楚', async () => {
     // 两段录放在**同一个应用实例**里：每段录完应用都要收尾一会儿
     // （Windows 的屏幕捕获会话松手要十几秒），起两次应用太慢。
     const { app, pet } = await launch();
@@ -213,21 +213,57 @@ test.describe('录屏插件', () => {
       ).toBe(true);
 
       // —— 第二段：开麦克风、关扬声器 ——
-      // 这台机器没有音频输入设备：正好用来验「拿不到麦克风」这条路。
-      // 面板可能已经收起（失焦就收），重新打开一次。
+      // 这台机器**有没有**麦克风是不一定的（插着耳机就有），
+      // 两种情况都要照顾到：
+      //   - 有麦克风 → 录出来的文件要有声音轨；
+      //   - 没麦克风 → 状态里要说清楚为什么没声音，不能静默。
       panel = await openRecorder(app, pet);
       await toggle(panel, '麦克风', true);
       await toggle(panel, '扬声器', false);
       await clickButton(panel, '开始录制');
       await new Promise((r) => setTimeout(r, 2500));
       await clickButton(panel, '停止录制');
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const micFile = await newestRecording(OUT_DIR);
+      const micTracks = parseMp4Tracks(await readFile(join(OUT_DIR, micFile))).tracks;
+      const hasSound = micTracks.some((t) => t.type === 'soun');
 
       // 面板收起的时候是不收异步更新的（藏起来的页面不刷新），
       // 所以要重新打开一次才能看到插件留下的提示。
       panel = await openRecorder(app, pet);
       const micStatus = await readStatus(panel);
-      expect(micStatus, `状态里应该说清楚为什么没声音：${micStatus}`).toContain('麦克风');
+      expect(
+        hasSound || micStatus.includes('麦克风'),
+        `要么录到了声音（${JSON.stringify(micTracks)}），要么说清楚为什么没声音：${micStatus}`
+      ).toBe(true);
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  test('GIF 模式产出 GIF 文件', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      // 参数都自己设一遍：几条用例共用同一个 userData，配置是连着的。
+      await clickButton(panel, '全屏');
+      await clickButton(panel, 'GIF');
+      await setInput(panel, OUT_DIR);
+      await clickButton(panel, '开始录制');
+      await new Promise((r) => setTimeout(r, 3000));
+      await clickButton(panel, '停止录制');
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const files = await readdir(OUT_DIR);
+      const gif = await newestRecording(OUT_DIR, '.gif');
+      const status = await readStatus(panel);
+      expect(gif, `应该产出 GIF：${files.join('、')}；插件状态：${status}`).toBeTruthy();
+
+      const buffer = await readFile(join(OUT_DIR, gif));
+      expect(buffer.subarray(0, 6).toString('latin1')).toBe('GIF89a');
+      expect(buffer[buffer.length - 1]).toBe(0x3b, 'GIF 的结尾标记');
+      expect(buffer.length).toBeGreaterThan(1000);
     } finally {
       await closeApp(app);
     }
@@ -237,7 +273,9 @@ test.describe('录屏插件', () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
+      // 参数都自己设一遍：几条用例共用同一个 userData，配置是连着的。
       await clickButton(panel, '全屏');
+      await clickButton(panel, '视频');
       await clickButton(panel, '选区');
       await setInput(panel, OUT_DIR);
       await clickButton(panel, '开始录制');

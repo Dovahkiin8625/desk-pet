@@ -152,6 +152,7 @@ export default function createScreenRecorderPlugin(ctx) {
           sourceId: region.sourceId,
           format: cfg.format,
           fps: cfg.fps,
+          gif: { width: cfg.gifWidth, fps: cfg.gifFps },
           audio: { mic: cfg.mic, speaker: cfg.speaker },
           crop: region.crop,
           snapshotSize: region.snapshotSize,
@@ -177,6 +178,7 @@ export default function createScreenRecorderPlugin(ctx) {
         sourceId: picked.id,
         format: cfg.format,
         fps: cfg.fps,
+        gif: { width: cfg.gifWidth, fps: cfg.gifFps },
         audio: { mic: cfg.mic, speaker: cfg.speaker },
       });
     } catch (err) {

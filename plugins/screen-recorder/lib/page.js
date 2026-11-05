@@ -42,6 +42,11 @@ export function buildPanelPage(ui, data) {
   blocks.push(ui.toggleBlock('mic', '录制麦克风', config.mic));
   blocks.push(ui.toggleBlock('speaker', '录制扬声器', config.speaker));
 
+  if (config.format === 'gif') {
+    // GIF 存不了声音——不说清楚，用户会以为录的时候哑了。
+    blocks.push(ui.textBlock('GIF 存不了声音——切到 GIF 时不会录声音。'));
+  }
+
   blocks.push(
     ui.buttonsBlock([
       { id: 'format:video', label: `${config.format === 'video' ? '●' : '○'} 视频` },
