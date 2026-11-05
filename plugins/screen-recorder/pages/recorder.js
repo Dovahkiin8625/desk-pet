@@ -20,6 +20,7 @@
     canvasStream: null,
     drawTimer: null,
     video: null,
+    audioContext: null,
     stopped: false,
   };
 
@@ -76,7 +77,42 @@
       }
 
       const mime = pickMime();
-      const recorder = new MediaRecorder(new MediaStream([outputTrack]), {
+      // 声音：系统声音（loopback）由主进程的 handler 给，麦克风自己取。
+      const audioTracks = [];
+      if (payload.audio?.speaker) {
+        const systemTrack = stream.getAudioTracks()[0];
+        if (systemTrack) audioTracks.push(systemTrack);
+      }
+      let micTrack = null;
+      if (payload.audio?.mic) {
+        try {
+          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micTrack = mic.getAudioTracks()[0] || null;
+        } catch (err) {
+          // 没有麦克风 / 用户不给权限：说清楚，别静默录不到声音。
+          report('error', { message: `没有拿到麦克风：${err?.message || err}`, soft: true });
+        }
+      }
+
+      let audioTrack = null;
+      if (audioTracks.length && micTrack) {
+        // 两边都要：进同一个混音口，录出来就是一条音轨。
+        const context = new AudioContext();
+        state.audioContext = context;
+        const destination = context.createMediaStreamDestination();
+        context.createMediaStreamSource(new MediaStream(audioTracks)).connect(destination);
+        context.createMediaStreamSource(new MediaStream([micTrack])).connect(destination);
+        audioTrack = destination.stream.getAudioTracks()[0] || null;
+      } else if (audioTracks.length) {
+        // 只有系统声音：直接用它的轨，不用开混音口。
+        audioTrack = audioTracks[0];
+      } else if (micTrack) {
+        audioTrack = micTrack;
+      }
+
+      const tracks = [outputTrack];
+      if (audioTrack) tracks.push(audioTrack);
+      const recorder = new MediaRecorder(new MediaStream(tracks), {
         mimeType: mime,
         videoBitsPerSecond: 8_000_000,
       });
@@ -116,6 +152,12 @@
     if (state.drawTimer) clearInterval(state.drawTimer);
     if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
     if (state.video) state.video.getTracks().forEach((t) => t.stop());
+    // 音频上下文也要关：不关的话它一直占着音频服务，
+    // 应用退出会多等十几秒。
+    if (state.audioContext) {
+      state.audioContext.close().catch(() => {});
+      state.audioContext = null;
+    }
   }
 
   window.rec.onMessage(async (message) => {

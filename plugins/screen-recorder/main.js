@@ -21,8 +21,8 @@ export default function createScreenRecorderPlugin(ctx) {
   /** 可录的目标（显示器/窗口），随模式变。 */
   let targets = [];
   let recording = false;
-  /** 目标中途没了之类的附注，存好文件时一起显示。 */
-  let endedNote = '';
+  /** 附注（目标没了、没有麦克风……），存好文件时一起显示。 */
+  let note = '';
   /**
    * 刷新面板的回调。
    *
@@ -43,8 +43,12 @@ export default function createScreenRecorderPlugin(ctx) {
     getOutputDir: () => (config?.outputDir || '').trim() || app.getPath('videos'),
     onState: (state) => {
       recording = state.recording;
+      if (state.warning) {
+        note = state.warning;
+        status = state.warning;
+      }
       if (state.file) {
-        status = endedNote ? `${endedNote}；已保存：${state.file}` : `已保存：${state.file}`;
+        status = note ? `${note}；已保存：${state.file}` : `已保存：${state.file}`;
       }
       if (state.error) status = `出错了：${state.error}`;
       update(buildPanelPage(ctx.ui, { config, targets, recording, status }));
@@ -60,10 +64,15 @@ export default function createScreenRecorderPlugin(ctx) {
         capture.fail(`存不了文件：${err?.message || err}`);
       });
     } else if (message?.type === 'error') {
-      capture.fail(message.payload?.message || '录制失败');
+      // soft 的错误（比如没有麦克风）不该把整段录制废掉：提示一声，接着录。
+      if (message.payload?.soft) {
+        capture.warn(message.payload.message);
+      } else {
+        capture.fail(message.payload?.message || '录制失败');
+      }
     } else if (message?.type === 'ended') {
       // 目标没了：记一句，等文件存好了一起显示。
-      endedNote = '目标没了，录制已经停下来了';
+      note = '目标没了，录制已经停下来了';
     } else if (message?.type === 'stop' && role === 'control') {
       capture.stop();
     }
@@ -124,7 +133,7 @@ export default function createScreenRecorderPlugin(ctx) {
     const picked = list.find((t) => t.id === cfg.sourceId) || list[0];
     targets = list;
     await save({ sourceId: picked.id });
-    endedNote = '';
+    note = '';
     try {
       await capture.start({
         mode: cfg.mode,

@@ -157,6 +157,23 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     return true;
   }
 
+  /**
+   * 放掉捕获窗的 session。
+   *
+   * 录完之后要**把 displayMedia 的 handler 摘掉**：它还挂着的时候，
+   * 应用退出会卡住——主进程的事件循环被堵住，几十秒都动不了
+   * （实测退出要多等十几秒到一百多秒）。下一次录制会重新装上。
+   */
+  function releaseSession() {
+    if (!captureSession) return;
+    try {
+      captureSession.setDisplayMediaRequestHandler(null);
+    } catch {
+      // 已经没了就算了。
+    }
+    captureSession = null;
+  }
+
   /** 捕获页交回来的字节 → 写文件。 */
   async function save(bytes, ext) {
     const dir = getOutputDir();
@@ -177,6 +194,7 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     timer = null;
     windows.hideControl();
     windows.destroyCapture();
+    releaseSession();
     onState?.({ recording: false, elapsedMs: 0, file: target });
     return target;
   }
@@ -188,7 +206,17 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     timer = null;
     windows.hideControl();
     windows.destroyCapture();
+    releaseSession();
     onState?.({ recording: false, elapsedMs: 0, error: message });
+  }
+
+  /** 出错了但还能继续录：只提示，不停。 */
+  function warn(message) {
+    onState?.({
+      recording: isRecording(),
+      elapsedMs: Date.now() - startedAt,
+      warning: message,
+    });
   }
 
   function dispose() {
@@ -196,11 +224,8 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     timer = null;
     state = 'idle';
     readyResolve = null;
-    if (captureSession) {
-      captureSession.setDisplayMediaRequestHandler(null);
-      captureSession = null;
-    }
+    releaseSession();
   }
 
-  return { listTargets, start, stop, save, fail, notifyReady, isRecording, dispose };
+  return { listTargets, start, stop, save, fail, warn, notifyReady, isRecording, dispose };
 }
