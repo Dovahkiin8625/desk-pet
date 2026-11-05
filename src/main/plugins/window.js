@@ -61,9 +61,11 @@ export function createPluginWindowController({
 
   /** 插件页面的 URL：自定义页面优先，否则套通用界面。 */
   function pageUrl(pluginId, mode) {
+    // 插件没了就没有 URL：spec 缺了也可能是「这个形态它没有」，
+    // 那两种情况要分开，所以先看一眼插件还在不在。
     const record = host.get(pluginId);
     if (!record) return null;
-    const spec = mode === PLUGIN_WINDOW_MODE.WIDGET ? record.manifest.widget : record.manifest.window;
+    const spec = host.spec(pluginId, mode);
     const query = `?plugin=${encodeURIComponent(pluginId)}&mode=${encodeURIComponent(mode)}`;
     if (spec?.page) {
       return appUrl(`${host.baseUrl(pluginId)}/${spec.page}${query}`);
@@ -76,7 +78,7 @@ export function createPluginWindowController({
     const record = host.get(pluginId);
     if (!record) return null;
     const isWidget = mode === PLUGIN_WINDOW_MODE.WIDGET;
-    const spec = isWidget ? record.manifest.widget : record.manifest.window;
+    const spec = host.spec(pluginId, mode);
     if (!spec) return null;
     const url = pageUrl(pluginId, mode);
     if (!url) return null;
@@ -153,8 +155,9 @@ export function createPluginWindowController({
     const record = host.get(pluginId);
     if (!record) return { ok: false, message: '没有这个插件' };
     const wantMode = mode === PLUGIN_WINDOW_MODE.WIDGET ? PLUGIN_WINDOW_MODE.WIDGET : PLUGIN_WINDOW_MODE.WINDOW;
-    // 清单里没写这一段 = 这个插件没有这种形态。
-    const spec = wantMode === PLUGIN_WINDOW_MODE.WIDGET ? record.manifest.widget : record.manifest.window;
+    // 独立窗口：每个插件都有（没写 `window` 段就合成一份默认的）。
+    // 小部件：仍然要插件自己声明——它要占着用户的桌面。
+    const spec = host.spec(pluginId, wantMode);
     if (!spec) {
       return {
         ok: false,
@@ -216,7 +219,8 @@ export function createPluginWindowController({
       pluginId,
       mode,
       alwaysOnTop: entry ? entry.win.isAlwaysOnTop() : false,
-      canWidget: Boolean(record?.manifest?.widget),
+      // 小部件要插件自己声明：没有 `widget` 段就是没有。
+      canWidget: Boolean(host.spec(pluginId, PLUGIN_WINDOW_MODE.WIDGET)),
       title: record?.manifest?.name || pluginId,
     };
   }
@@ -239,7 +243,7 @@ export function createPluginWindowController({
     if (!entry) return;
     const record = host.get(pluginId);
     if (!record) return;
-    const spec = entry.mode === PLUGIN_WINDOW_MODE.WIDGET ? record.manifest.widget : record.manifest.window;
+    const spec = host.spec(entry.pluginId, entry.mode);
     entry.ready = true;
 
     if (spec?.page) {
@@ -267,7 +271,7 @@ export function createPluginWindowController({
     if (!entry || !entry.ready) return;
     const record = host.get(pluginId);
     if (!record) return;
-    const spec = entry.mode === PLUGIN_WINDOW_MODE.WIDGET ? record.manifest.widget : record.manifest.window;
+    const spec = host.spec(entry.pluginId, entry.mode);
     if (spec?.page) {
       const data = await host.tick(pluginId);
       if (data !== undefined) send(pluginId, 'plugin:tick', data);
