@@ -1825,9 +1825,15 @@ const frameEl = document.getElementById('plugin-frame');
    *
    * 插件自带的页面已经装在 iframe 里了（主进程给的 `src`），
    * 这时候壳只管标题栏，**不要**再画一遍积木——画两遍内容就重了。
+   *
+   * 宿主推来的东西**最终**会统一包成 `{ pluginId, data }`（Task 7 之后），
+   * 但 Task 6 这一刻主进程那边还在发**裸值**。
+   * 所以两种都认：认信封就拆包，不是信封就当它是页面本身。
    */
   function render(payload) {
-    const page = payload?.data;
+    const isEnvelope =
+      payload && typeof payload === 'object' && 'pluginId' in payload && 'data' in payload;
+    const page = isEnvelope ? payload.data : payload;
     if (!page) return;
     titleEl.textContent = page.title || '';
     subtitleEl.textContent = page.subtitle || '';
@@ -1842,7 +1848,8 @@ const frameEl = document.getElementById('plugin-frame');
   }
 ```
 
-**注意**：宿主推来的东西统一包成 `{ pluginId, data }`，壳这里拆包。
+**注意**：页面描述里**没有** `data` 字段（它是 `{pluginId, title, subtitle, status, blocks}`），
+所以「认信封就看 `pluginId` 与 `data` 两个键都在」这个判断对页面是安全的。
 
 在文件末尾（`window.plugin?.reportReady?.()` 之前）加：
 
