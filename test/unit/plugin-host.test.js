@@ -395,6 +395,85 @@ test('宿主：自带页面的 URL——页面在磁盘上才给，否则给空�
   }
 });
 
+test('宿主：插件清单里带页面信息（自带页面时给完整 URL）', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    const dir = await makePlugin(
+      root,
+      'paged',
+      { id: 'paged', name: '带页面', window: { title: '带页面', page: 'index.html' } },
+      'export default () => ({ page: () => null });'
+    );
+    await writeFile(join(dir, 'index.html'), '<!doctype html><title>插件</title>', 'utf8');
+    // 没有自带页面的插件。
+    await makePlugin(
+      root,
+      'plain',
+      { id: 'plain', name: '没页面' },
+      'export default () => ({ page: () => null });'
+    );
+
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const paged = host.list().find((p) => p.id === 'paged');
+    // 清单里写了 page → 面板据此装 iframe。
+    assert.equal(paged.hasPage, true);
+    assert.match(paged.pageUrl, /^app:\/\/bundle\/plugins\/paged\/index\.html\?plugin=paged$/);
+
+    const plain = host.list().find((p) => p.id === 'plain');
+    assert.equal(plain.hasPage, false);
+    assert.equal(plain.pageUrl, '');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：页面地址走缓存——查盘一次就够，插件清单变了才重算', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    const dir = await makePlugin(
+      root,
+      'paged',
+      { id: 'paged', name: '带页面', window: { title: '带页面', page: 'index.html' } },
+      'export default () => ({ page: () => null });'
+    );
+    await writeFile(join(dir, 'index.html'), '<!doctype html><title>插件</title>', 'utf8');
+
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    const url = host.listAll()[0].pageUrl;
+    assert.match(url, /index\.html/);
+
+    // 把文件删了：清单刷新**不该**每次都 statSync 一遍——
+    // 缓存里的地址原样还在（这正是缓存的意义）。
+    await rm(join(dir, 'index.html'), { force: true });
+    assert.equal(host.listAll()[0].pageUrl, url);
+
+    // 插件清单变了（开关了插件）：缓存作废，重新查盘——
+    // 文件真的没了，这次该给空串（调用方据此退回积木界面）。
+    await host.setEnabled('paged', false);
+    assert.equal(host.listAll()[0].pageUrl, '');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test('宿主：界面开合会通知订阅者，取消订阅后不再收到', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
   const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));

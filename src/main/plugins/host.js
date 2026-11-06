@@ -105,6 +105,22 @@ export async function createPluginHost({
     return records.has(id) && !disabled.has(id);
   }
 
+  /**
+   * 插件自带页面的 URL 缓存。
+   *
+   * `pageUrl()` 要查磁盘（statSync）：面板的插件清单**每次刷新都会重建**
+   * （开关一个插件、面板重新打开……），清单里带上页面地址就意味着
+   * 每次刷新都要查一遍盘。
+   *
+   * 缓存按插件 id 存，插件清单变了（加载了新的插件、开关了插件）就整个丢掉。
+   */
+  const pageUrlCache = new Map();
+
+  /** 插件清单变了：缓存里的页面地址不再可信。 */
+  function invalidatePageUrls() {
+    pageUrlCache.clear();
+  }
+
   /** 插件的公开元数据（面板搜索用）。 */
   function toMeta(record) {
     const m = record.manifest;
@@ -117,6 +133,10 @@ export async function createPluginHost({
       // 面板据此显示「在新窗口打开 / 变成小部件」两个按钮。
       canDetach: canDetach(m),
       hasWidget: hasWidget(m),
+      // 插件自带页面时：面板工作台与独立窗口装的是**同一份**。
+      // 页面**不存在**时 pageUrl 是空串 → 面板退回积木界面，不开白窗口。
+      hasPage: Boolean(m.window?.page),
+      pageUrl: pageUrlOf(m.id),
       source: record.source,
     };
   }
@@ -148,6 +168,8 @@ export async function createPluginHost({
     }
     // 关掉的插件，它的窗口也要跟着关：窗口还开着、插件却「不在」了。
     if (!on) windowOpener?.close(id);
+    // 插件清单变了：缓存里的页面地址不再可信（下次查盘重算）。
+    invalidatePageUrls();
     notifyChange();
     return { ok: true, enabled: on };
   }
@@ -273,6 +295,30 @@ export async function createPluginHost({
   }
 
   /**
+   * 插件自带页面的完整 URL（**带缓存**）。
+   *
+   * 页面不在磁盘上时给空串：调用方据此退回积木界面，不开白窗口。
+   *
+   * 为什么要缓存：查盘要 statSync，而插件清单**每次刷新都会重建**
+   * （面板打开、开关了插件……）——清单里带上页面地址就意味着
+   * 每次刷新都要 statSync 一遍。缓存按插件 id 存，
+   * 插件清单变了（加载了插件、开关了插件）就整个丢掉。
+   */
+  function pageUrlOf(id) {
+    if (pageUrlCache.has(id)) return pageUrlCache.get(id);
+    const record = records.get(id);
+    if (!record) return '';
+    const page = record.manifest.window?.page;
+    if (!page || !pageExists(record, page)) {
+      pageUrlCache.set(id, '');
+      return '';
+    }
+    const url = appUrl(`${baseUrl(id)}/${page}?plugin=${encodeURIComponent(id)}`);
+    pageUrlCache.set(id, url);
+    return url;
+  }
+
+  /**
    * 让用户插件目录里的 `.js` 按 **ESM** 解析。
    *
    * userData 下没有 package.json，Node 会把 `.js` 当成 CommonJS——
@@ -336,6 +382,8 @@ export async function createPluginHost({
     console.log(
       `[desk-pet] 已加载 ${records.size} 个插件：${[...records.keys()].join('、')}`
     );
+    // 插件刚加载出来：之前算过的页面地址（如果有）全部作废。
+    invalidatePageUrls();
     return records.size;
   }
 
@@ -401,13 +449,9 @@ export async function createPluginHost({
      *
      * 页面**不存在**时返回空串——调用方（窗口控制器、面板元数据）
      * 据此退回积木界面，而不是开一个白窗口。
+     *
+     * 带缓存：查盘一次就够，别在清单刷新的热路径上 statSync。
      */
-    pageUrl: (id) => {
-      const record = records.get(id);
-      if (!record) return '';
-      const page = record.manifest.window?.page;
-      if (!page || !pageExists(record, page)) return '';
-      return appUrl(`${baseUrl(id)}/${page}?plugin=${encodeURIComponent(id)}`);
-    },
+    pageUrl: (id) => pageUrlOf(id),
   };
 }
