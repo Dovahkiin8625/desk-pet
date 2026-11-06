@@ -197,12 +197,50 @@ export async function createPluginHost({
     if (!record || !isEnabled(id)) return null;
     const ctx = makeContext(record, update);
     try {
-      const page = await record.instance.page?.(ctx);
+      const instance = record.instance;
+      // 插件自带页面时，宿主只要标题那几个字段——
+      // 让插件写一份**便宜**的 meta()，别在这儿把整个界面重算一遍
+      // （有的插件的 page() 要列系统窗口，那一下要几百毫秒）。
+      //
+      // 页面**不在磁盘上**时不算：那种情况宿主要退回积木界面，
+      // 积木还得靠 page() 画出来（否则面板上是一片空白）。
+      if (pageUrlOf(id) && typeof instance.meta === 'function') {
+        const meta = (await instance.meta(ctx)) || {};
+        return {
+          pluginId: record.manifest.id,
+          title: String(meta.title || ''),
+          subtitle: String(meta.subtitle || ''),
+          status: String(meta.status || ''),
+          blocks: [],
+        };
+      }
+      const page = await instance.page?.(ctx);
       return page || null;
     } catch (err) {
       console.warn(`[desk-pet] 插件「${id}」打开失败：`, err?.message);
       return null;
     }
+  }
+
+  /**
+   * 界面落点的周期刷新：这一轮推什么。
+   *
+   * - **自带页面**的插件：推**数据**（插件自己的 tick()）。
+   *   插件没写 tick() 就没有推送——它的界面自己管。
+   * - **声明式界面**的插件：推**重算过的页面**。它的界面是宿主画的，
+   *   要动起来就得重算一次（番茄钟的倒计时就靠它）。
+   *
+   * 两种形态的刷新**周期**一样（清单里的 refreshMs），要的东西不一样。
+   */
+  async function refresh(id) {
+    const record = records.get(id);
+    if (!record) return null;
+    if (pageUrlOf(id)) {
+      const data = await tick(id);
+      return data === undefined ? null : { kind: 'tick', data };
+    }
+    const page = await open(id, null);
+    return page ? { kind: 'page', data: page } : null;
   }
 
   /**
@@ -395,6 +433,13 @@ export async function createPluginHost({
     action,
     data,
     tick,
+    /**
+     * 周期刷新：这一轮推什么（kind + 载荷）。
+     *
+     * 自带页面的插件推**数据**，声明式界面推**重算过的页面**——
+     * 界面路由这一层只管「推给谁」，推什么由插件的形态决定。
+     */
+    refresh,
     act,
     baseUrl,
     isEnabled,

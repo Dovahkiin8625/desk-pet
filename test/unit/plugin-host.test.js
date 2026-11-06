@@ -474,6 +474,87 @@ test('宿主：页面地址走缓存——查盘一次就够，插件清单变�
   }
 });
 
+test('宿主：自带页面的插件——打开时只问标题，周期刷新推数据', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    const dir = await makePlugin(
+      root,
+      'paged',
+      { id: 'paged', name: '带页面', window: { title: '带页面', page: 'index.html' } },
+      `export default function create() {
+         return {
+           page: () => { throw new Error('自带页面的插件不该被问整页'); },
+           meta: () => ({ title: '标题', subtitle: '副标题', status: '状态' }),
+           data: () => ({ n: 1 }),
+           tick: () => ({ n: 2 }),
+         };
+       }`
+    );
+    await writeFile(join(dir, 'index.html'), '<!doctype html><title>插件</title>', 'utf8');
+
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    // 打开：只问标题那几个字段，不重算整页。
+    const page = await host.open('paged');
+    assert.equal(page.title, '标题');
+    assert.equal(page.subtitle, '副标题');
+    assert.equal(page.status, '状态');
+    assert.deepEqual(page.blocks, []);
+
+    // 周期刷新：自带页面的插件推的是**数据**。
+    assert.deepEqual(await host.refresh('paged'), { kind: 'tick', data: { n: 2 } });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('宿主：页面文件不在磁盘上——打开时退回整页，周期刷新推页面', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    // 清单里写了 page，但磁盘上没有那个文件。
+    await makePlugin(
+      root,
+      'ghost',
+      { id: 'ghost', name: '页面没了', window: { title: '页面没了', page: 'missing.html' } },
+      `export default function create() {
+         return {
+           page: () => ({ pluginId: 'ghost', title: '整页', blocks: [] }),
+           meta: () => ({ title: '只问标题' }),
+         };
+       }`
+    );
+
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    // 页面装不进去 → 退回积木界面：整页得真的算出来。
+    const page = await host.open('ghost');
+    assert.equal(page.title, '整页');
+
+    // 周期刷新推的是**重算过的页面**（界面是宿主画的）。
+    const refreshed = await host.refresh('ghost');
+    assert.equal(refreshed.kind, 'page');
+    assert.equal(refreshed.data.title, '整页');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test('宿主：界面开合会通知订阅者，取消订阅后不再收到', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
   const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));

@@ -51,6 +51,7 @@ export function createPanelController({
   assistant,
   openSettings,
   onChat,
+  surfaces,
 }) {
   let win = null;
   let ready = false;
@@ -70,6 +71,46 @@ export function createPanelController({
   function send(channel, payload) {
     if (!win || win.isDestroyed()) return;
     win.webContents.send(channel, payload);
+  }
+
+  /**
+   * 面板工作台这个 surface。
+   *
+   * 它把数据送给面板的渲染层；面板渲染层再送进 iframe 里的插件页面。
+   */
+  const panelSurface = {
+    kind: 'panel',
+    deliver(kind, payload) {
+      send(`panel:surface:${kind}`, payload);
+    },
+  };
+
+  /**
+   * 面板工作台当前挂着的是哪个插件的界面落点。
+   *
+   * 与 `currentPluginId` 分开记：后者是「面板上正在显示什么」
+   * （可能是内置功能，它压根不是插件），前者是「哪个插件的界面挂着」。
+   */
+  let attachedPluginId = null;
+
+  /**
+   * 面板工作台这个界面落点换插件：先摘掉旧的，再挂上新的。
+   *
+   * 不摘旧的，**上一个插件的 tick 会一直推**——面板里明明在看 A，
+   * A 的定时器却还在跑，白烧 CPU。
+   */
+  function attachPanelSurface(pluginId) {
+    if (attachedPluginId && attachedPluginId !== pluginId) {
+      surfaces?.detach(attachedPluginId, panelSurface);
+    }
+    attachedPluginId = pluginId || null;
+    if (pluginId) surfaces?.attach(pluginId, panelSurface);
+  }
+
+  /** 摘掉面板工作台的界面落点（面板不再显示任何插件的界面）。 */
+  function detachPanelSurface() {
+    if (attachedPluginId) surfaces?.detach(attachedPluginId, panelSurface);
+    attachedPluginId = null;
   }
 
   /**
@@ -118,6 +159,9 @@ export function createPanelController({
 
   function hide() {
     if (!win || win.isDestroyed()) return;
+    // 面板收起来了：它这个界面落点就不该再收数据。
+    // 不摘的话，插件的 tick 定时器会一直跑到窗口销毁为止。
+    detachPanelSurface();
     currentPluginId = null;
     win.hide();
   }
@@ -138,6 +182,8 @@ export function createPanelController({
       pendingView = makeSearchView();
       return;
     }
+    // 回到搜索视图 = 不再看任何插件的界面：界面落点要摘掉。
+    detachPanelSurface();
     currentPluginId = null;
     sendView(makeSearchView());
     reveal();
@@ -200,6 +246,8 @@ export function createPanelController({
       win = null;
       ready = false;
       pendingView = null;
+      // 窗口没了：这个界面落点也不能留着——tick 会一直推。
+      detachPanelSurface();
       currentPluginId = null;
     });
   }
@@ -233,7 +281,18 @@ export function createPanelController({
       return;
     }
     currentPluginId = pluginId;
+    // 面板工作台的界面落点：**只有插件自带页面**时才挂上——
+    // 那种页面在 iframe 里，数据要经它送进去。
+    // 声明式界面（积木）是面板自己画的，走面板自己的通道，不需要它。
+    const ownPage = Boolean(plugins.pageUrl(pluginId));
+    attachPanelSurface(ownPage ? pluginId : null);
     sendView(makePluginView(page));
+    if (ownPage) {
+      // 第一份数据：插件页面在 iframe 里，**加载完**才订阅数据。
+      // 推早了就丢了（preload 那边留了一份，订阅时补上）。
+      const data = await plugins.data(pluginId);
+      surfaces?.broadcast(pluginId, 'data', data);
+    }
   }
 
   /**
@@ -358,6 +417,37 @@ export function createPanelController({
     handleAction(String(pluginId || ''), String(actionId || ''), value).catch((err) => {
       console.warn('[desk-pet] 插件动作失败：', err?.message || err);
     });
+  });
+
+  // 插件自带页面的数据：面板工作台里的 iframe 要的那一份。
+  //
+  // **返回裸值**，不包 `{ pluginId, data }`——
+  // 与插件壳那边（invoke 回来的是 `host.data()` 的原样）保持一致，
+  // 页面助手那边不用分身处何处。
+  ipcMain.handle('panel:surface:data', async (event, payload) => {
+    if (!win || event.sender !== win.webContents) return null;
+    const pluginId = String(payload?.pluginId || '');
+    if (!pluginId) return null;
+    return plugins.data(pluginId);
+  });
+
+  // 自带页面里的一个动作（页面助手 surface.act）。
+  //
+  // **返回裸值**（插件 act() 的原样）：页面那边拿到的形状
+  // 与独立窗口那边一模一样。
+  ipcMain.handle('panel:surface:act', async (event, payload) => {
+    if (!win || event.sender !== win.webContents) return null;
+    const pluginId = String(payload?.pluginId || '');
+    if (!pluginId) return null;
+    return plugins.act(pluginId, String(payload?.actionId || ''), payload?.payload);
+  });
+
+  // 声明式页面的动作：**invoke**（页面那边要一个 Promise）。
+  ipcMain.handle('panel:surface:action', async (event, payload) => {
+    if (!win || event.sender !== win.webContents) return null;
+    const pluginId = String(payload?.pluginId || '');
+    if (!pluginId) return null;
+    return plugins.action(pluginId, String(payload?.actionId || ''), payload?.value);
   });
 
   // 回到搜索视图。

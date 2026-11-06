@@ -62,15 +62,17 @@ export function createSurfaceController({ host, onChange }) {
     // 这里**不能**用 surfacesOf()：它会把不存在的插件塞进 attached，
     // 留下一个空集合——那个空集合会让后面的 detach() 误报一次「界面关了」。
     if (!attached.get(pluginId)?.size) return;
-    let data;
+    let payload;
     try {
-      data = await host?.tick?.(pluginId);
+      // 推什么由插件的形态决定（宿主知道）：自带页面的插件推数据，
+      // 声明式界面推重算过的页面。
+      payload = await host?.refresh?.(pluginId);
     } catch (err) {
       console.warn(`[desk-pet] 插件「${pluginId}」刷新失败：`, err?.message);
       return;
     }
-    if (data === undefined) return;
-    broadcast(pluginId, 'tick', data);
+    if (!payload) return;
+    broadcast(pluginId, payload.kind, payload.data);
   }
 
   /**

@@ -12,6 +12,52 @@ const { contextBridge, ipcRenderer } = require('electron');
 /** 面板当前打开的是哪个插件（surface 的 IPC 要带着它）。 */
 let currentPluginId = '';
 
+/**
+ * 订阅「推来的数据」的回调。
+ *
+ * 推送的监听器只装一次、各处订阅者共用：
+ * 面板会在插件之间来回切，每切一次就多一个订阅者——
+ * 各自 `ipcRenderer.on` 的话，推来的数据会被送到所有**旧**插件的回调上。
+ */
+const dataSubscribers = new Set();
+const tickSubscribers = new Set();
+
+/**
+ * 最近一次推来的数据。
+ *
+ * 插件页面在 iframe 里，要等**加载完**才跑脚本、才订阅 onData——
+ * 而宿主在面板打开插件的那一刻就把数据推过来了（那时 iframe 还没就位）。
+ * 推送是不排队的，不留一份在这儿，那份数据就永远丢了。
+ *
+ * **按插件 id 存**：面板会在插件之间来回切，
+ * 留着上一个插件的数据给下一个看，就是串台了。
+ */
+let pendingData = null;
+
+/** 推来的数据：转给所有订阅者。 */
+ipcRenderer.on('panel:surface:data', (_e, payload) => {
+  pendingData = payload;
+  for (const cb of dataSubscribers) {
+    try {
+      cb(payload);
+    } catch (err) {
+      // 旧插件的页面已经被换掉了：它的回调已经没用了，扔掉就是。
+      dataSubscribers.delete(cb);
+    }
+  }
+});
+
+/** 推来的周期数据：转给所有订阅者。 */
+ipcRenderer.on('panel:surface:tick', (_e, payload) => {
+  for (const cb of tickSubscribers) {
+    try {
+      cb(payload);
+    } catch (err) {
+      tickSubscribers.delete(cb);
+    }
+  }
+});
+
 contextBridge.exposeInMainWorld('panel', {
   // 主进程要显示一个视图（搜索视图 or 插件界面）。
   onView: (cb) => {
@@ -55,6 +101,8 @@ contextBridge.exposeInMainWorld('panel', {
   // 宿主才知道该把数据送给谁。
   setCurrentPlugin: (pluginId) => {
     currentPluginId = String(pluginId || '');
+    // 换插件了：上一份数据不属于它了。
+    pendingData = null;
   },
   // 插件自带页面用的通道（面板工作台里的 iframe 走这条）。
   //
@@ -69,10 +117,14 @@ contextBridge.exposeInMainWorld('panel', {
   surface: {
     data: () => ipcRenderer.invoke('panel:surface:data', { pluginId: currentPluginId }),
     onData: (cb) => {
-      ipcRenderer.on('panel:surface:data', (_e, payload) => cb(payload));
+      dataSubscribers.add(cb);
+      // 订阅之前推来的那份数据：补给它（插件页面加载得慢，
+      // 宿主早就把第一份数据推过来了）。
+      // 只补**当前插件**的那份：别的插件的数据串过来就是串台了。
+      if (pendingData && pendingData.pluginId === currentPluginId) cb(pendingData);
     },
     onTick: (cb) => {
-      ipcRenderer.on('panel:surface:tick', (_e, payload) => cb(payload));
+      tickSubscribers.add(cb);
     },
     act: (actionId, payload) =>
       ipcRenderer.invoke('panel:surface:act', { pluginId: currentPluginId, actionId, payload }),
