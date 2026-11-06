@@ -89,6 +89,63 @@ test('推来的数据按 {pluginId, data} 包着：拆包，并按 pluginId 过�
   assert.deepEqual(seen, [{ x: 2 }]);
 });
 
+test('裸数据里带一个叫 data 的字段：不能被当成信封拆开', async () => {
+  let onDataCb = null;
+  stubGlobals({
+    self: {},
+    parent: {
+      plugin: fakeChannel({
+        onData: (cb) => {
+          onDataCb = cb;
+        },
+      }),
+    },
+    search: '?plugin=todos',
+  });
+  const surface = bindSurface();
+  const seen = [];
+  surface.onData((data) => seen.push(data));
+  // 裸数据（没有 pluginId），里面恰好有个 data 字段：原样交出去。
+  onDataCb({ data: '这是插件自己的字段', n: 1 });
+  assert.deepEqual(seen, [{ data: '这是插件自己的字段', n: 1 }]);
+});
+
+test('识别顺序：自己身上的 plugin 优先于父页面的', async () => {
+  stubGlobals({
+    self: { plugin: fakeChannel({ data: async () => ({ from: 'self' }) }) },
+    parent: { plugin: fakeChannel({ data: async () => ({ from: 'parent' }) }) },
+    search: '?plugin=todos',
+  });
+  const surface = bindSurface();
+  assert.deepEqual(await surface.data(), { from: 'self' });
+});
+
+test('识别顺序：父页面的 plugin 优先于父页面的 panel.surface', async () => {
+  stubGlobals({
+    self: {},
+    parent: {
+      plugin: fakeChannel({ data: async () => ({ from: 'parent-plugin' }) }),
+      panel: { surface: fakeChannel({ data: async () => ({ from: 'panel-surface' }) }) },
+    },
+    search: '?plugin=todos',
+  });
+  const surface = bindSurface();
+  assert.deepEqual(await surface.data(), { from: 'parent-plugin' });
+});
+
+test('action 不管通道怎么实现，返回的都一定是 Promise', async () => {
+  stubGlobals({
+    self: {},
+    // 有些通道是 send 出去的，没有回执（返回 undefined）。
+    parent: { plugin: fakeChannel({ action: () => undefined }) },
+    search: '?plugin=todos',
+  });
+  const surface = bindSurface();
+  const result = surface.action('go', 1);
+  assert.ok(result instanceof Promise, '必须是个 Promise，否则页面 .then() 会炸');
+  assert.equal(await result, undefined);
+});
+
 test('setStatus / setHeight 用 postMessage 告诉父页面', async () => {
   const posted = [];
   stubGlobals({

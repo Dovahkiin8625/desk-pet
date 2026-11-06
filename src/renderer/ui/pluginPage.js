@@ -71,9 +71,12 @@ export function bindSurface() {
    */
   function unwrap(payload) {
     const mine = isMine(payload);
-    if (payload && typeof payload === 'object' && 'data' in payload) {
-      return { mine, data: payload.data };
-    }
+    // **只认真正的信封**：pluginId 与 data 两个键都在才算。
+    // 只看 'data' in payload 的话，插件自己的裸数据里带一个叫 data 的字段
+    // 就会被拆坏（Task 7 之前独立窗口推的还是裸数据）。
+    const isEnvelope =
+      payload && typeof payload === 'object' && 'pluginId' in payload && 'data' in payload;
+    if (isEnvelope) return { mine, data: payload.data };
     return { mine, data: payload };
   }
 
@@ -106,7 +109,10 @@ export function bindSurface() {
     act: (actionId, payload) => (api ? api.act(actionId, payload) : Promise.resolve(null)),
 
     /** 声明式页面里的一个动作（老插件的积木页走这条）。 */
-    action: (actionId, value) => (api ? api.action(actionId, value) : Promise.resolve(null)),
+    // **一定是 Promise**：面板那边的通道将来用 invoke，
+    // 但万一某个通道是 send（没有回执），页面那边 .then() 会炸。
+    action: (actionId, value) =>
+      api ? Promise.resolve(api.action(actionId, value)) : Promise.resolve(null),
 
     /** 底部那行字。 */
     setStatus(text) {
