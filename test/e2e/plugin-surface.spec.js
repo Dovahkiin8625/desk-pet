@@ -191,6 +191,12 @@ test.describe('插件界面（surface）', () => {
       const frame = panel.frameLocator('#plugin-frame');
       await expect(frame.locator('#marker')).toHaveText('自定义页面');
 
+      // 宿主推来的数据要能穿过面板的壳到达到插件页面：
+      // 首份数据是打开插件时推的（推早了就丢了，preload 那边留了一份，
+      // 插件页面订阅时补上），周期数据走同一条路。
+      await expect(frame.locator('#pushed')).toHaveText('from-plugin-data');
+      await expect(frame.locator('#ticked')).toHaveText('from-plugin-tick');
+
       // 独立窗口里装的是**同一份**页面。
       await panel.evaluate(() => document.querySelector('#detach')?.click());
       const pluginWin = await findWindow(app, '/renderer/plugin-window/index.html');
