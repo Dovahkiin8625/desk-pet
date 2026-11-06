@@ -179,6 +179,18 @@
       min-height: 30px;
     }
     #plugin-status:empty { display: none; }
+
+    /* 插件自带页面时，积木区让位给 iframe。 */
+    #plugin-frame {
+      width: 100%;
+      border: none;
+      background: transparent;
+      display: block;
+      flex: 0 1 auto;
+      min-height: 0;
+      max-height: 640px;
+    }
+    #plugin-frame[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -206,6 +218,8 @@
       </header>
       <div id="plugin-subtitle"></div>
       <div id="plugin-body"></div>
+      <!-- 插件自带的页面装在这里（src 由插件清单里的 page 决定）。 -->
+      <iframe id="plugin-frame" hidden></iframe>
       <div id="plugin-status"></div>
     </section>
   </div>

@@ -32,6 +32,7 @@ const backEl = document.getElementById('back');
 const closeEl = document.getElementById('close');
 const detachEl = document.getElementById('detach');
 const widgetEl = document.getElementById('widget');
+const pluginFrameEl = document.getElementById('plugin-frame');
 
 /** 插件清单（主进程一次性下发）。 */
 let plugins = [];
@@ -235,18 +236,47 @@ function renderPlugin(page) {
   pluginSubtitleEl.textContent = page?.subtitle || '';
   pluginStatusEl.textContent = page?.status || '';
 
-  // 块怎么画是共用的一份（src/renderer/ui/blocks.js）：
-  // 面板与插件的独立窗口必须长得一模一样。
-  renderPage(page, {
-    body: pluginBodyEl,
-    onAction: (actionId, value) => {
-      window.panel?.action?.(currentPluginId, actionId, value);
-    },
-  });
+  // 插件清单里带着这个插件的页面信息（有没有自带页面、页面的地址）。
+  const meta = plugins.find((p) => p.id === currentPluginId);
+
+  if (meta?.hasPage && meta.pageUrl) {
+    // 插件自带页面：装进 iframe，宿主不再画积木。
+    // 独立窗口那边也是「壳 + iframe」——两处结构一样，界面才是一套。
+    pluginBodyEl.hidden = true;
+    pluginFrameEl.hidden = false;
+    if (pluginFrameEl.getAttribute('src') !== meta.pageUrl) {
+      pluginFrameEl.setAttribute('src', meta.pageUrl);
+    }
+    // 面板的 surface 请求要带着插件 id（宿主才知道该把数据送给谁）。
+    window.panel?.setCurrentPlugin?.(currentPluginId);
+  } else {
+    pluginFrameEl.hidden = true;
+    pluginFrameEl.removeAttribute('src');
+    pluginBodyEl.hidden = false;
+    window.panel?.setCurrentPlugin?.('');
+
+    // 块怎么画是共用的一份（src/renderer/ui/blocks.js）：
+    // 面板与插件的独立窗口必须长得一模一样。
+    renderPage(page, {
+      body: pluginBodyEl,
+      onAction: (actionId, value) => {
+        window.panel?.action?.(currentPluginId, actionId, value);
+      },
+    });
+
+    // 第一个输入框直接聚焦：用户刚打开「待办」，多半就是想往上写字。
+    const firstInput = pluginBodyEl.querySelector('input[type="text"]');
+    if (firstInput) {
+      try {
+        firstInput.focus();
+      } catch {
+        /* 窗口还没拿到焦点时会抛，忽略即可 */
+      }
+    }
+  }
 
   // 「分离出去」的两个按钮：能不能分离取决于插件自己
   // （清单里有没有 window / widget 段）。不支持的形态整个藏掉。
-  const meta = plugins.find((p) => p.id === currentPluginId);
   detachEl.hidden = !meta?.canDetach;
   widgetEl.hidden = !meta?.hasWidget;
 
@@ -256,16 +286,6 @@ function renderPlugin(page) {
   window.__panel.view = PANEL_VIEW.PLUGIN;
   window.__panel.pluginId = currentPluginId;
   reportHeight();
-
-  // 第一个输入框直接聚焦：用户刚打开「待办」，多半就是想往上写字。
-  const firstInput = pluginBodyEl.querySelector('input[type="text"]');
-  if (firstInput) {
-    try {
-      firstInput.focus();
-    } catch {
-      /* 窗口还没拿到焦点时会抛，忽略即可 */
-    }
-  }
 }
 
 /** 回到搜索视图。 */
@@ -273,6 +293,11 @@ function renderSearch() {
   currentPluginId = '';
   queryEl.value = '';
   activeIndex = 0;
+  // 回到搜索视图：插件的页面也不该留在那儿。
+  pluginFrameEl.hidden = true;
+  pluginFrameEl.removeAttribute('src');
+  pluginBodyEl.hidden = false;
+  window.panel?.setCurrentPlugin?.('');
   searchEl.hidden = false;
   pluginEl.hidden = true;
   panelEl.dataset.view = PANEL_VIEW.SEARCH;
@@ -381,6 +406,26 @@ window.panel?.onView?.((view) => {
     renderPlugin(view.page);
   } else {
     renderSearch();
+  }
+});
+
+// 插件自带页面（在 iframe 里）发来的消息：底部那行字与内容高度。
+//
+// 用 `event.source` 认人：别的窗口也能往这里 postMessage，
+// 只有自己那个 iframe 说的才算数。
+window.addEventListener('message', (event) => {
+  if (!pluginFrameEl.contentWindow || event.source !== pluginFrameEl.contentWindow) return;
+  const data = event.data || {};
+  if (data.type === 'desk-pet:surface:status') {
+    pluginStatusEl.textContent = String(data.text || '');
+    return;
+  }
+  if (data.type === 'desk-pet:surface:height') {
+    // 插件页面自己报高度：窗口要按内容撑开。
+    // 上限 640px：再高就滚起来，别把面板撑出屏幕。
+    const h = Math.min(640, Math.max(0, Number(data.height) || 0));
+    if (h > 0) pluginFrameEl.style.height = `${h}px`;
+    reportHeight();
   }
 });
 

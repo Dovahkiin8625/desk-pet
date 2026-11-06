@@ -22,6 +22,7 @@ import { createBubbleController } from './bubble.js';
 import { createPanelController } from './panel.js';
 import { createPluginHost } from './plugins/host.js';
 import { createPluginWindowController } from './plugins/window.js';
+import { createSurfaceController } from './plugins/surface.js';
 import { createAppIndex } from './apps.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
@@ -57,6 +58,8 @@ let panel = null;
 let plugins = null;
 // 插件的独立窗口与桌面小部件。
 let pluginWindows = null;
+// 界面路由：面板工作台与独立窗口都是「界面落点」。
+let pluginSurfaces = null;
 // 本机程序索引：搜索框里能搜到本机的程序，回车就启动。
 let apps = null;
 // 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
@@ -1170,6 +1173,15 @@ app.whenReady().then(async () => {
   });
   await plugins.load();
 
+  // 界面路由：面板工作台与独立窗口都是「界面落点」。
+  //
+  // **必须先建好**：它要知道每个插件的刷新间隔（host.spec），
+  // 还要在插件清单变化时把界面开合告诉插件。
+  pluginSurfaces = createSurfaceController({
+    host: plugins,
+    onChange: (pluginId, open) => plugins.surfaceChanged(pluginId, open),
+  });
+
   // 插件的独立窗口与桌面小部件。
   pluginWindows = createPluginWindowController({
     rootDir: ROOT,
@@ -1177,6 +1189,7 @@ app.whenReady().then(async () => {
     getPetWindow: () => win,
     getPetRect: () => petVisibleRect(),
     getDisplays: () => currentDisplays(),
+    surfaces: pluginSurfaces,
   });
   // 宿主负责找插件，窗口负责开窗：两者互相认识一下。
   plugins.attachWindows(pluginWindows);
@@ -1214,6 +1227,8 @@ app.whenReady().then(async () => {
     // 聊天记录读的是助理里的聊天记录。
     assistant,
     openSettings,
+    // 界面路由：面板工作台里的插件页面，数据经它送进来。
+    surfaces: pluginSurfaces,
     // 输入框里的话直接发给桌宠（不走插件动作通道）。
     onChat: (text) => {
       // 一定要接住：chat() 里给气泡发消息的调用万一抛错，

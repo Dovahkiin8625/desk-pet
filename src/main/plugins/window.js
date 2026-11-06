@@ -27,8 +27,9 @@ export function createPluginWindowController({
   getPetWindow,
   getPetRect,
   getDisplays,
+  surfaces,
 }) {
-  /** pluginId → { win, mode, ready, timer }。 */
+  /** pluginId → { win, mode, ready, pluginId, contentsId, ownPage, surface }。 */
   const windows = new Map();
   /** webContents.id → pluginId：IPC 来了要认得出是哪个窗口。 */
   const byContents = new Map();
@@ -163,13 +164,14 @@ export function createPluginWindowController({
     // 表现为「点了退出，程序却不退」）。这里读一次，存下来就够用了。
     const contentsId = win.webContents.id;
 
-    const entry = { win, mode, ready: false, timer: null, pluginId, contentsId, ownPage };
+    const entry = { win, mode, ready: false, pluginId, contentsId, ownPage, surface: null };
     windows.set(pluginId, entry);
     byContents.set(contentsId, pluginId);
 
     win.on('closed', () => {
       byContents.delete(contentsId);
-      if (entry.timer) clearInterval(entry.timer);
+      // 窗口没了：这个界面落点也不能留着——tick 会一直推。
+      if (entry.surface) surfaces?.detach(pluginId, entry.surface);
       if (windows.get(pluginId) === entry) windows.delete(pluginId);
     });
 
@@ -227,7 +229,6 @@ export function createPluginWindowController({
   /** 退出前把插件窗口全部拆掉（见返回值处的说明）。 */
   function destroyAll() {
     for (const entry of windows.values()) {
-      if (entry.timer) clearInterval(entry.timer);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
     }
     windows.clear();
@@ -275,46 +276,45 @@ export function createPluginWindowController({
    *
    * 自定义页面拿的是插件自己的数据（`data()`）；
    * 通用声明式界面拿的是插件的页面（`page()`）。
+   *
+   * 窗口这个界面落点**挂到 surface 路由上**：数据由路由推过来，
+   * 面板工作台那边开着同一个插件时，两处看到的是同一份。
+   *
+   * **首份数据走 broadcast**：它要送到**所有**挂着这个插件的界面，
+   * 只送窗口这一份的话，面板那边就少了一份。
    */
   async function onReady(pluginId) {
     const entry = entryOf(pluginId);
     if (!entry) return;
     const record = host.get(pluginId);
     if (!record) return;
-    const spec = host.spec(entry.pluginId, entry.mode);
     entry.ready = true;
+
+    // 窗口这个界面落点：数据由 surface 路由推过来。
+    const windowSurface = {
+      kind: 'window',
+      deliver(kind, payload) {
+        const win = entryOf(pluginId)?.win;
+        if (!win || win.isDestroyed()) return;
+        const channel = kind === 'data' ? 'plugin:data'
+          : kind === 'tick' ? 'plugin:tick'
+          : 'plugin:page';
+        // **不拆包**：宿主推来的统一是 `{ pluginId, data }`，
+        // 拆包的是壳（plugin-window/main.js）与插件页面助手。
+        win.webContents.send(channel, payload);
+      },
+    };
+    entry.surface = windowSurface;
+    surfaces?.attach(pluginId, windowSurface);
 
     if (entry.ownPage) {
       // 自定义页面：插件自己管界面，宿主只负责喂数据。
       const data = await host.data(pluginId);
-      send(pluginId, 'plugin:data', data);
+      surfaces?.broadcast(pluginId, 'data', data);
     } else {
       // 通用界面：画插件的声明式页面。
       const page = await host.open(pluginId, null);
-      send(pluginId, 'plugin:page', page);
-    }
-
-    // 周期刷新：widget 靠它活着（系统监控每秒变一次）。
-    if (spec?.refreshMs > 0) {
-      if (entry.timer) clearInterval(entry.timer);
-      entry.timer = setInterval(() => {
-        void refresh(pluginId);
-      }, spec.refreshMs);
-    }
-  }
-
-  /** 刷新一次：自定义页面推 tick，通用界面重算页面。 */
-  async function refresh(pluginId) {
-    const entry = entryOf(pluginId);
-    if (!entry || !entry.ready) return;
-    const record = host.get(pluginId);
-    if (!record) return;
-    if (entry.ownPage) {
-      const data = await host.tick(pluginId);
-      if (data !== undefined) send(pluginId, 'plugin:tick', data);
-    } else {
-      const page = await host.open(pluginId, null);
-      if (page) send(pluginId, 'plugin:page', page);
+      surfaces?.broadcast(pluginId, 'page', page);
     }
   }
 
