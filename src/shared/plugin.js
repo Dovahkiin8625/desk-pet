@@ -93,9 +93,16 @@ export function normalizeWindowSpec(raw, mode) {
       PLUGIN_WINDOW_LIMITS.height
     ),
     // 0 = 不刷新（数据只在打开时取一次）。
+    //
+    // 大于 0 时**有下限**：清单是文件，作者手滑写个 1 也会
+    // 变成 1ms 的轮询循环，把 CPU 跑满。
+    // 夹在**这里**（而不是两个定时器各自夹）：两个地方都从这里取规格，
+    // 一处夹住，两处都干净。
     refreshMs:
       typeof spec.refreshMs === 'number' && Number.isFinite(spec.refreshMs)
-        ? clampInt(spec.refreshMs, 0, 3600000, 0)
+        ? spec.refreshMs > 0
+          ? clampInt(spec.refreshMs, MIN_PLUGIN_REFRESH_MS, 3600000, MIN_PLUGIN_REFRESH_MS)
+          : 0
         : 0,
     alwaysOnTop: spec.alwaysOnTop !== false,
   };

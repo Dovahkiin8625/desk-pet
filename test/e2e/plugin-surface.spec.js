@@ -82,7 +82,7 @@ async function makeUserPluginWithPage() {
         description: '端到端测试用的插件',
         keywords: ['测试', 'ce shi', 'test', 'e2e-page'],
         entry: 'main.js',
-        window: { page: 'page.html', title: '测试页面', width: 420, height: 360, refreshMs: 250 },
+        window: { page: 'page.html', title: '测试页面', width: 420, height: 360, refreshMs: 500 },
       },
       null,
       2

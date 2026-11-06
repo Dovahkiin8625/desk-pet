@@ -8,6 +8,7 @@ import {
   hasWidget,
   PLUGIN_WINDOW_MODE,
   PLUGIN_WINDOW_LIMITS,
+  MIN_PLUGIN_REFRESH_MS,
 } from '../../src/shared/plugin.js';
 
 /**
@@ -69,6 +70,29 @@ test('resolveWindowSpec：清单没经过校验时，返回的也是完整规格
   assert.equal(spec.alwaysOnTop, true); // 声明了 window 段 → 默认置顶
   assert.equal(spec.refreshMs, 0);
   assert.equal(spec.width, 500);
+});
+
+test('refreshMs 有下限：太密的刷新会被夹住', () => {
+  // 清单是文件：作者手滑写个 1 就是 1ms 的轮询循环，把 CPU 跑满。
+  const spec = resolveWindowSpec(
+    { id: 'x', name: 'X', window: { refreshMs: 1 } },
+    PLUGIN_WINDOW_MODE.WINDOW
+  );
+  assert.equal(spec.refreshMs, MIN_PLUGIN_REFRESH_MS);
+
+  // 正常值原样保留。
+  const ok = resolveWindowSpec(
+    { id: 'x', name: 'X', window: { refreshMs: 2000 } },
+    PLUGIN_WINDOW_MODE.WINDOW
+  );
+  assert.equal(ok.refreshMs, 2000);
+
+  // 0 还是 0（不刷新）——下限不适用于「不刷新」。
+  const none = resolveWindowSpec(
+    { id: 'x', name: 'X', window: { refreshMs: 0 } },
+    PLUGIN_WINDOW_MODE.WINDOW
+  );
+  assert.equal(none.refreshMs, 0);
 });
 
 test('每个插件都能分离成独立窗口', () => {
