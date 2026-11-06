@@ -16,9 +16,9 @@ function fakeHost({ refreshMs = 0, tickValue = 'T' } = {}) {
     calls,
     host: {
       spec: () => ({ refreshMs }),
-      tick: async () => {
+      refresh: async () => {
         calls.tick += 1;
-        return tickValue;
+        return { kind: 'tick', data: tickValue };
       },
     },
   };
@@ -56,6 +56,19 @@ test('挂着两个 surface：一次 tick 两边都收到', () => {
   // 收到的数据得带得清是给谁的。
   assert.deepEqual(a.received, [{ kind: 'tick', payload: { pluginId: 'todos', data: { n: 1 } } }]);
   assert.deepEqual(b.received, [{ kind: 'tick', payload: { pluginId: 'todos', data: { n: 1 } } }]);
+});
+
+test('周期刷新推的是宿主给的「这一轮推什么」', async () => {
+  const { host, calls } = fakeHost({ refreshMs: 20 });
+  const ctl = createSurfaceController({ host });
+  const a = fakeSurface('panel');
+  ctl.attach('todos', a.surface);
+  await new Promise((r) => setTimeout(r, 70));
+  // kind 由宿主决定：自带页面的插件推数据，声明式界面推重算过的页面。
+  assert.ok(calls.tick >= 2, `应该至少推了两次，实际 ${calls.tick}`);
+  assert.equal(a.received[0].kind, 'tick');
+  assert.deepEqual(a.received[0].payload, { pluginId: 'todos', data: 'T' });
+  ctl.detach('todos', a.surface);
 });
 
 test('摘掉一个 surface：另一个还收得到', () => {

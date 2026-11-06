@@ -101,8 +101,6 @@ contextBridge.exposeInMainWorld('panel', {
   // 宿主才知道该把数据送给谁。
   setCurrentPlugin: (pluginId) => {
     currentPluginId = String(pluginId || '');
-    // 换插件了：上一份数据不属于它了。
-    pendingData = null;
   },
   // 插件自带页面用的通道（面板工作台里的 iframe 走这条）。
   //

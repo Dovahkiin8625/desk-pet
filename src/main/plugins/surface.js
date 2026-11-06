@@ -51,22 +51,22 @@ export function createSurfaceController({ host, onChange }) {
   }
 
   /** 插件的刷新间隔（毫秒）。0 = 不刷。 */
-  function refreshMsOf(pluginId) {
-    const spec = host?.spec?.(pluginId, 'window');
+  function refreshMsOf(pluginId, mode) {
+    const spec = host?.spec?.(pluginId, mode || 'window');
     const ms = Number(spec?.refreshMs);
     return Number.isFinite(ms) && ms > 0 ? ms : 0;
   }
 
   /** 推一次周期数据。 */
-  async function pushTick(pluginId) {
+  async function pushTick(pluginId, mode) {
     // 这里**不能**用 surfacesOf()：它会把不存在的插件塞进 attached，
     // 留下一个空集合——那个空集合会让后面的 detach() 误报一次「界面关了」。
     if (!attached.get(pluginId)?.size) return;
     let payload;
     try {
-      // 推什么由插件的形态决定（宿主知道）：自带页面的插件推数据，
-      // 声明式界面推重算过的页面。
-      payload = await host?.refresh?.(pluginId);
+      // 推什么由插件的形态决定（宿主知道）：
+      // 自带页面的插件推**数据**，声明式界面推**重算过的页面**。
+      payload = await host?.refresh?.(pluginId, mode);
     } catch (err) {
       console.warn(`[desk-pet] 插件「${pluginId}」刷新失败：`, err?.message);
       return;
@@ -101,9 +101,11 @@ export function createSurfaceController({ host, onChange }) {
     const wasEmpty = set.size === 0;
     set.add(surface);
     if (wasEmpty) notify(pluginId, true);
-    const refreshMs = refreshMsOf(pluginId);
+    // 刷新周期按**这个界面的形态**算：小部件与独立窗口的清单段不一样。
+    const mode = surface.mode || 'window';
+    const refreshMs = refreshMsOf(pluginId, mode);
     if (refreshMs > 0 && !timers.has(pluginId)) {
-      timers.set(pluginId, setInterval(() => void pushTick(pluginId), refreshMs));
+      timers.set(pluginId, { id: setInterval(() => void pushTick(pluginId, mode), refreshMs), mode });
     }
   }
 
@@ -122,7 +124,7 @@ export function createSurfaceController({ host, onChange }) {
   function stopTimer(pluginId) {
     const timer = timers.get(pluginId);
     if (timer) {
-      clearInterval(timer);
+      clearInterval(timer.id);
       timers.delete(pluginId);
     }
   }

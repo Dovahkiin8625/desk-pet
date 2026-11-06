@@ -12,7 +12,7 @@ import {
   emptyBlock,
   messagesBlock,
 } from '../../shared/panel.js';
-import { canDetach, hasWidget, resolveWindowSpec } from '../../shared/plugin.js';
+import { canDetach, hasWidget, resolveWindowSpec, PLUGIN_WINDOW_MODE } from '../../shared/plugin.js';
 import { appUrl } from '../protocol.js';
 import { discoverPlugins, loadPluginFactory } from './loader.js';
 import { bundledPluginsDir, userPluginsDir as userPluginsPath } from './paths.js';
@@ -231,11 +231,23 @@ export async function createPluginHost({
    *   要动起来就得重算一次（番茄钟的倒计时就靠它）。
    *
    * 两种形态的刷新**周期**一样（清单里的 refreshMs），要的东西不一样。
+   *
+   * @param {string} id 插件 id
+   * @param {string} mode 这个界面的形态（window / widget）
    */
-  async function refresh(id) {
+  async function refresh(id, mode = PLUGIN_WINDOW_MODE.WINDOW) {
     const record = records.get(id);
     if (!record) return null;
-    if (pageUrlOf(id)) {
+    // 自带页面的插件：界面是插件自己画的，宿主只负责喂数据。
+    // 小部件的页面也是插件自己的（widget 段），它按 widget 段算。
+    const spec = resolveWindowSpec(record.manifest, mode);
+    const ownPage =
+      mode === PLUGIN_WINDOW_MODE.WIDGET
+        ? Boolean(spec?.page)
+        : // 窗口形态：**文件真的在磁盘上**才算自带页面。
+          // 清单里写了 page 但文件没了 → 退回积木界面。
+          pageUrlOf(id) !== '';
+    if (ownPage) {
       const data = await tick(id);
       return data === undefined ? null : { kind: 'tick', data };
     }

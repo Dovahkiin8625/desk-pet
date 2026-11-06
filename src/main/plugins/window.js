@@ -264,13 +264,6 @@ export function createPluginWindowController({
     };
   }
 
-  /** 把数据推给插件页面。 */
-  function send(pluginId, channel, payload) {
-    const entry = entryOf(pluginId);
-    if (!entry || !entry.ready) return;
-    entry.win.webContents.send(channel, payload);
-  }
-
   /**
    * 页面就绪：把该给它的东西给它。
    *
@@ -288,11 +281,12 @@ export function createPluginWindowController({
     if (!entry) return;
     const record = host.get(pluginId);
     if (!record) return;
-    entry.ready = true;
 
     // 窗口这个界面落点：数据由 surface 路由推过来。
     const windowSurface = {
       kind: 'window',
+      // 形态：小部件与独立窗口的清单段不一样，刷新周期按各自的算。
+      mode: entry.mode,
       deliver(kind, payload) {
         const win = entryOf(pluginId)?.win;
         if (!win || win.isDestroyed()) return;
@@ -301,7 +295,11 @@ export function createPluginWindowController({
           : 'plugin:page';
         // **不拆包**：宿主推来的统一是 `{ pluginId, data }`，
         // 拆包的是壳（plugin-window/main.js）与插件页面助手。
-        win.webContents.send(channel, payload);
+        //
+        // 小部件是**例外**：它的页面是插件自己写的，按 window.plugin 的约定
+        // 收**裸数据**（这一轮不改小部件）。
+        const body = entry.mode === PLUGIN_WINDOW_MODE.WIDGET ? payload?.data : payload;
+        win.webContents.send(channel, body);
       },
     };
     entry.surface = windowSurface;
@@ -351,7 +349,8 @@ export function createPluginWindowController({
     const pluginId = senderPluginId(event);
     if (!pluginId) return null;
     const page = await host.action(pluginId, String(payload?.actionId || ''), payload?.value, null);
-    if (page) send(pluginId, 'plugin:page', page);
+    // 动作之后的新页面：**所有**挂着这个插件的界面都要重画。
+    if (page) surfaces?.broadcast(pluginId, 'page', page);
     return page;
   });
 

@@ -174,9 +174,6 @@ test.describe('插件界面（surface）', () => {
   });
 
   test('插件自带的页面：面板工作台与独立窗口是同一份', async () => {
-    // 面板侧那半边是 Task 7 的活（面板工作台的 iframe）。
-    // Task 7 落地后把这里的 `true` 改成 `false`，这条断言就该是绿的。
-    test.skip(true, '面板侧的 iframe 是 Task 7 的活');
     await makeUserPluginWithPage();
     const { app, pet } = await launch();
     try {
@@ -325,6 +322,59 @@ test.describe('插件界面（surface）', () => {
       await expect(pluginWin.locator('#body')).toContainText('积木界面还在');
       // 壳里不该有 iframe（页面不存在，装了也是白屏）。
       await expect(pluginWin.locator('#plugin-frame')).toBeHidden();
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('插件自带的页面加载失败：面板工作台也退回积木界面', async () => {
+    const dir = join(USER_DATA, 'plugins', 'e2e-broken2');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'plugin.json'),
+      JSON.stringify({
+        id: 'e2e-broken2',
+        name: '坏页面二',
+        icon: '💥',
+        description: '页面路径写错了',
+        keywords: ['坏页面二', 'huai', 'broken2'],
+        entry: 'main.js',
+        window: { page: 'nope.html', title: '坏页面二', width: 380, height: 300 },
+      }),
+      'utf8'
+    );
+    await writeFile(
+      join(dir, 'main.js'),
+      `export default function createPlugin() {
+  return {
+    page() {
+      return {
+        pluginId: 'e2e-broken2',
+        title: '坏页面二',
+        blocks: [{ kind: 'text', text: '积木界面还在' }],
+      };
+    },
+  };
+}
+`,
+      'utf8'
+    );
+
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'broken2');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('e2e-broken2'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("坏页面二")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'e2e-broken2', null, {
+        timeout: 10000,
+      });
+      // 页面不存在 → 面板退回积木，积木里的文字要看得见。
+      await expect(panel.locator('#plugin-body')).toContainText('积木界面还在');
+      // 而且不该装 iframe（装了也是白屏）。
+      await expect(panel.locator('#plugin-frame')).toBeHidden();
     } finally {
       await app.close();
     }

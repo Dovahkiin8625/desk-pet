@@ -80,6 +80,8 @@ export function createPanelController({
    */
   const panelSurface = {
     kind: 'panel',
+    // 面板工作台里的插件页面与独立窗口是同一份，形态也一样。
+    mode: 'window',
     deliver(kind, payload) {
       send(`panel:surface:${kind}`, payload);
     },
