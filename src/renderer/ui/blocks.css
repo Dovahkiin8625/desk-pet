@@ -1,12 +1,17 @@
+@import url('/src/renderer/ui/theme.css');
+
 /*
  * 插件页面里「块」的样式。
  *
  * 面板与插件的独立窗口共用这一份（同 blocks.js）：
  * 同一个插件在两个地方必须长一个样。
+ *
+ * 颜色一律走 theme.css 里的变量——这一份文件不再自带调色板，
+ * 否则「一份设计系统」就名存实亡了。
  */
 
 .block-text { white-space: pre-wrap; word-break: break-word; }
-.block-empty { color: #9a9384; padding: 10px 0; }
+.block-empty { color: var(--dp-text-faint); padding: 10px 0; }
 .block-list { list-style: none; margin: 0 0 10px; padding: 0; }
 .block-list li {
   display: flex;
@@ -16,45 +21,45 @@
   border-radius: 8px;
   cursor: pointer;
 }
-.block-list li:hover { background: #f6f1e4; }
-.block-list li.done .label { color: #9a9384; text-decoration: line-through; }
+.block-list li:hover { background: var(--dp-surface); }
+.block-list li.done .label { color: var(--dp-text-faint); text-decoration: line-through; }
 .block-list .label { flex: 1; word-break: break-word; }
-.block-list .hint { color: #a29a89; font-size: 12px; white-space: nowrap; }
+.block-list .hint { color: var(--dp-text-faint); font-size: 12px; white-space: nowrap; }
 .block-list .remove {
   border: none;
   background: transparent;
-  color: #b3ab99;
+  color: var(--dp-text-faint);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
   padding: 2px 4px;
   border-radius: 6px;
 }
-.block-list .remove:hover { background: #efe6d2; color: #8a6a4a; }
+.block-list .remove:hover { background: var(--dp-surface-hover); color: var(--dp-accent-ink); }
 .block-input { display: flex; gap: 8px; margin-bottom: 10px; }
 .block-input input {
   flex: 1;
   min-width: 0;
   font: inherit;
   padding: 7px 10px;
-  border: 1px solid #c9c1b0;
+  border: 1px solid var(--dp-border);
   border-radius: 9px;
   background: #fff;
   color: inherit;
 }
-.block-input input:focus { outline: 2px solid #c8b78f; outline-offset: 1px; }
+.block-input input:focus { outline: 2px solid var(--dp-accent); outline-offset: 1px; }
 .block-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .block-buttons button {
   font: inherit;
   padding: 6px 13px;
-  border: 1px solid #c9c1b0;
+  border: 1px solid var(--dp-border);
   border-radius: 9px;
-  background: #f6f2e7;
-  color: #3a352c;
+  background: var(--dp-surface);
+  color: var(--dp-text);
   cursor: pointer;
 }
-.block-buttons button:hover { background: #efe9d8; }
-.block-buttons button.primary { background: #d9c9a3; border-color: #bda87c; }
+.block-buttons button:hover { background: var(--dp-surface-hover); }
+.block-buttons button.primary { background: var(--dp-accent); border-color: var(--dp-accent-strong); }
 .block-toggle {
   display: flex;
   align-items: center;
@@ -62,7 +67,7 @@
   padding: 6px 0;
   cursor: pointer;
 }
-.block-toggle input { accent-color: #bda87c; }
+.block-toggle input { accent-color: var(--dp-accent-strong); }
 
 /* 聊天记录：带角色与时间，条条都不可点。 */
 .block-messages { list-style: none; margin: 0 0 10px; padding: 0; }
@@ -74,8 +79,8 @@
   border-radius: 8px;
   margin-bottom: 4px;
 }
-.block-messages li.user { background: #ece6d8; }
-.block-messages li.assistant { background: #f6f2e7; }
-.block-messages .role { font-size: 12px; color: #8a8272; flex: none; }
+.block-messages li.user { background: var(--dp-border-soft); }
+.block-messages li.assistant { background: var(--dp-surface); }
+.block-messages .role { font-size: 12px; color: var(--dp-text-soft); flex: none; }
 .block-messages .text { flex: 1; word-break: break-word; }
-.block-messages .time { font-size: 11px; color: #a9a294; flex: none; }
+.block-messages .time { font-size: 11px; color: var(--dp-text-faint); flex: none; }

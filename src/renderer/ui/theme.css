@@ -1,0 +1,158 @@
+/*
+ * 共享设计系统。
+ *
+ * 面板、插件的独立窗口、插件自带的页面——**全都链这一份**。
+ * 所有插件因此长一个样：底色、圆角、强调色、控件的样子都是一份。
+ *
+ * 插件页面在 app:// 下，用绝对路径链它：
+ *   <link rel="stylesheet" href="/src/renderer/ui/theme.css">
+ */
+
+:root {
+  color-scheme: light;
+
+  /* 底与面 */
+  --dp-bg: #fffdf8;
+  --dp-surface: #f6f2e7;
+  --dp-surface-hover: #efe9d8;
+  --dp-border: #c9c1b0;
+  --dp-border-soft: #ece6d8;
+
+  /* 字 */
+  --dp-text: #2b2a26;
+  --dp-text-soft: #8a8272;
+  --dp-text-faint: #a9a294;
+
+  /* 强调 */
+  --dp-accent: #d9c9a3;
+  --dp-accent-strong: #bda87c;
+  --dp-accent-ink: #4a3f2a;
+  --dp-danger: #c9503f;
+
+  /* 形 */
+  --dp-radius-sm: 7px;
+  --dp-radius: 9px;
+  --dp-radius-lg: 14px;
+  --dp-gap: 8px;
+
+  --dp-font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+/* 宿主自己的页面（面板、插件壳）用这一份字体与底色。 */
+.dp-page {
+  font: var(--dp-font);
+  color: var(--dp-text);
+  background: var(--dp-bg);
+}
+
+/* 按钮 */
+.dp-button {
+  font: inherit;
+  padding: 6px 13px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+  color: var(--dp-text);
+  cursor: pointer;
+}
+.dp-button:hover { background: var(--dp-surface-hover); }
+.dp-button.primary {
+  background: var(--dp-accent);
+  border-color: var(--dp-accent-strong);
+  color: var(--dp-accent-ink);
+}
+.dp-button.danger {
+  background: var(--dp-danger);
+  border-color: var(--dp-danger);
+  color: #fff;
+}
+
+/* 分段控件：一排互斥的选项，当前那个是「按下去」的。 */
+.dp-segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+}
+.dp-segmented button {
+  font: inherit;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+}
+.dp-segmented button[aria-pressed='true'] {
+  background: var(--dp-bg);
+  color: var(--dp-text);
+  box-shadow: 0 1px 2px rgba(40, 34, 24, 0.12);
+}
+
+/* 开关 */
+.dp-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.dp-switch input { accent-color: var(--dp-accent-strong); }
+
+/* 列表 */
+.dp-list { list-style: none; margin: 0; padding: 0; }
+.dp-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--dp-radius);
+  cursor: pointer;
+}
+.dp-list li:hover { background: var(--dp-surface); }
+.dp-list .label { flex: 1; word-break: break-word; }
+.dp-list .hint { color: var(--dp-text-faint); font-size: 12px; white-space: nowrap; }
+
+/* 分节标题 */
+.dp-section-title {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--dp-text-soft);
+}
+.dp-section-title:first-child { margin-top: 0; }
+
+/* 输入框 */
+.dp-input {
+  font: inherit;
+  padding: 7px 10px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  background: #fff;
+  color: inherit;
+}
+.dp-input:focus { outline: 2px solid var(--dp-accent); outline-offset: 1px; }
+
+/* 底部条：状态在左，动作在右。 */
+.dp-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--dp-border-soft);
+  color: var(--dp-text-soft);
+  font-size: 12px;
+}
+.dp-footer .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-footer .time { font-variant-numeric: tabular-nums; }
+
+/*
+ * 容器查询的容器。
+ *
+ * 宿主给内容区套这一层，插件页面用
+ *   @container surface (min-width: 520px) { … }
+ * 决定窄的时候怎么排、宽的时候怎么排。
+ *
+ * 容器只看**宽度**：面板高度变化不会反过来影响布局，没有死循环。
+ */
+.surface {
+  container-type: inline-size;
+  container-name: surface;
+}
