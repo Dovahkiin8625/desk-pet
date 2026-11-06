@@ -49,7 +49,7 @@ function render(payload) {
   titleEl.textContent = page.title || '';
   subtitleEl.textContent = page.subtitle || '';
   statusEl.textContent = page.status || '';
-  if (frameEl.src) return; // 插件自带页面：内容在 iframe 里
+  if (winEl.dataset.content === 'page') return; // 插件自带页面：内容在 iframe 里
   renderPage(page, {
     body: bodyEl,
     onAction: (actionId, value) => {
@@ -70,7 +70,7 @@ async function syncState() {
   modeEl.hidden = !state.canWidget;
   modeEl.title = state.mode === 'widget' ? '变回独立窗口' : '变成桌面小部件';
   // 插件自带页面时宿主不推页面描述，标题栏会空着——
-  // 拿插件的名字顶上（页面推来的标题更准，推来了就用它的）。
+  // 拿插件的名字顶上（宿主推来的页面描述里有更准的标题，推来了就用它的）。
   if (!titleEl.textContent) titleEl.textContent = state.title || '';
 }
 
@@ -100,6 +100,27 @@ document.addEventListener('keydown', (e) => {
 // 主进程下发页面：宿主算好的声明式描述。
 window.plugin?.onPage?.(render);
 
+/**
+ * 报到：主进程收到「准备好了」才会把数据推过来。
+ */
+function reportReady() {
+  window.plugin?.reportReady?.();
+}
+
+// 插件页面（在 iframe 里）发来的消息：底部那行字。
+//
+// 用 `event.source` 认人：别的窗口也能往这里 postMessage，
+// 只有自己那个 iframe 说的才算数。
+//
+// 装 iframe **之前**就挂上：页面一加载完就可能往回报消息。
+window.addEventListener('message', (event) => {
+  if (!frameEl.contentWindow || event.source !== frameEl.contentWindow) return;
+  const data = event.data || {};
+  if (data.type === 'desk-pet:surface:status') {
+    statusEl.textContent = String(data.text || '');
+  }
+});
+
 // 插件自带的页面：主进程把它的完整 URL 放在 `src` 查询参数里。
 //
 // 装进 iframe 而不是直接加载：这样**壳**（标题栏、置顶、关闭）是宿主的，
@@ -109,20 +130,14 @@ if (src) {
   frameEl.src = src;
   frameEl.hidden = false;
   winEl.dataset.content = 'page';
+  // **等页面加载完再报到**：主进程一收到「准备好了」就推第一份数据，
+  // 而插件页面要先把监听器挂上——页面还没加载完时推过来，就没人接了
+  // （插件页面通过 `parent.plugin.onData(...)` 订阅，走的是同一个
+  // 渲染进程里 preload 的监听器）。
+  frameEl.addEventListener('load', () => reportReady(), { once: true });
+} else {
+  // 没有自带页面：壳自己画积木，现在就可以报到。
+  reportReady();
 }
 
-// 插件页面（在 iframe 里）发来的消息：底部那行字。
-//
-// 用 `event.source` 认人：别的窗口也能往这里 postMessage，
-// 只有自己那个 iframe 说的才算数。
-window.addEventListener('message', (event) => {
-  if (!frameEl.contentWindow || event.source !== frameEl.contentWindow) return;
-  const data = event.data || {};
-  if (data.type === 'desk-pet:surface:status') {
-    statusEl.textContent = String(data.text || '');
-  }
-});
-
-// 先注册监听器再报到：反过来主进程发来的页面会被丢弃。
-window.plugin?.reportReady?.();
 void syncState();

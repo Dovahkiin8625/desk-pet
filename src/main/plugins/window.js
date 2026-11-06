@@ -60,49 +60,51 @@ export function createPluginWindowController({
   }
 
   /**
-   * 插件界面的 URL。
+   * 插件的界面：地址 + 「归谁管」。
+   *
+   * `url` 是窗口要加载的地址；`ownPage` 说的是界面是不是由插件自己的页面负责
+   * （不是的话，宿主画积木）。
    *
    * **独立窗口永远是壳**：壳里再装插件自己的页面（如果有）。
    * 这样面板工作台与独立窗口结构完全相同，只有容器宽度不同——
    * 同一份页面两处用，界面天然是一套。
    *
+   * 清单里写了 `page` 但文件不在磁盘上（路径写错、文件被删）——
+   * 那不算「有页面」：那个页面装不进去，窗口只剩一片空白。
+   * 这种插件要退回积木界面，照样能干活。
+   * （host.pageUrl() 就是按「文件在不在」给答复的；查一次就够。）
+   *
    * **小部件这一轮不动**：插件的页面原样加载（带 preload），
-   * 壳不参与（见 spec §5.2）。
+   * 壳不参与，页面没了就是它自己的事（既有行为）。
    */
-  function pageUrl(pluginId, mode) {
+  function resolveSurface(pluginId, mode) {
     // 插件没了就没有 URL：spec 缺了也可能是「这个形态它没有」，
     // 那两种情况要分开，所以先看一眼插件还在不在。
     const record = host.get(pluginId);
     if (!record) return null;
     const spec = host.spec(pluginId, mode);
     const query = new URLSearchParams({ plugin: pluginId, mode });
+
     if (mode === PLUGIN_WINDOW_MODE.WIDGET) {
       // 小部件：插件的页面原样加载（带 preload），壳不参与。
       // 这里看的是 **widget 段**里的页面（spec.page）——
       // host.pageUrl() 只认 window 段，两者不是一回事。
-      if (spec?.page) return appUrl(`${host.baseUrl(pluginId)}/${spec.page}?${query}`);
-      return appUrl(`/src/renderer/plugin-window/index.html?${query}`);
+      if (spec?.page) {
+        return {
+          url: appUrl(`${host.baseUrl(pluginId)}/${spec.page}?${query}`),
+          ownPage: true,
+        };
+      }
+      return { url: appUrl(`/src/renderer/plugin-window/index.html?${query}`), ownPage: false };
     }
+
     // 页面**不存在**时 host.pageUrl() 给空串 → 壳里画积木，不开白窗口。
     const pluginPage = host.pageUrl?.(pluginId) || '';
     if (pluginPage) query.set('src', pluginPage);
-    return appUrl(`/src/renderer/plugin-window/index.html?${query}`);
-  }
-
-  /**
-   * 这个形态下，界面是「插件自己的页面」还是「宿主画的积木」。
-   *
-   * 清单里写了 `page` 但文件不在磁盘上（路径写错、文件被删）——
-   * 那不算「有页面」：那个页面装不进去，窗口只剩一片空白。
-   * 这种插件要退回积木界面，照样能干活。
-   * （host.pageUrl() 就是按「文件在不在」给答复的。）
-   *
-   * 小部件这一轮不动：它的页面原样加载（带 preload），壳不参与，
-   * 页面没了就是它自己的事（既有行为）。
-   */
-  function hasOwnPage(pluginId, mode) {
-    if (mode === PLUGIN_WINDOW_MODE.WIDGET) return Boolean(host.spec(pluginId, mode)?.page);
-    return Boolean(host.pageUrl?.(pluginId));
+    return {
+      url: appUrl(`/src/renderer/plugin-window/index.html?${query}`),
+      ownPage: Boolean(pluginPage),
+    };
   }
 
   /** 建一个插件窗口。 */
@@ -112,11 +114,12 @@ export function createPluginWindowController({
     const isWidget = mode === PLUGIN_WINDOW_MODE.WIDGET;
     const spec = host.spec(pluginId, mode);
     if (!spec) return null;
-    const url = pageUrl(pluginId, mode);
-    if (!url) return null;
+    const surface = resolveSurface(pluginId, mode);
+    if (!surface) return null;
+    const url = surface.url;
     // 「有没有自带页面」在建窗时定一次就够：
     // 它要查磁盘（host.pageUrl() 判文件在不在），每次刷新都查一遍是白花钱。
-    const ownPage = hasOwnPage(pluginId, mode);
+    const ownPage = surface.ownPage;
 
     const win = new BrowserWindow({
       width: spec.width,
