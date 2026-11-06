@@ -89,6 +89,17 @@
       flex: none;
     }
     #status:empty { display: none; }
+
+    /* 装了插件自己的页面时，iframe 铺满内容区。 */
+    #win[data-content="page"] #body { display: none; }
+    #plugin-frame {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      border: none;
+      background: transparent;
+    }
+    #plugin-frame[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -102,6 +113,8 @@
     </header>
     <div id="subtitle"></div>
     <div id="body"></div>
+    <!-- 插件自带的页面装在这里（src 由主进程通过查询参数给）。 -->
+    <iframe id="plugin-frame" hidden></iframe>
     <div id="status"></div>
   </div>
 
