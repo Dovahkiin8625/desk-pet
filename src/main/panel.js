@@ -285,13 +285,16 @@ export function createPanelController({
     currentPluginId = pluginId;
     // 面板工作台的界面落点：**只有插件自带页面**时才挂上——
     // 那种页面在 iframe 里，数据要经它送进去。
-    // 声明式界面（积木）是面板自己画的，走面板自己的通道，不需要它。
+    // 声明式界面（积木）是面板自己画的，走面板自己的通道：
+    // 挂了也没有消费者（面板这边只认 data/tick，不认 `page` 广播），
+    // 定时器却会每 refreshMs 把插件的整个页面重算一遍——白烧力气。
     const ownPage = Boolean(plugins.pageUrl(pluginId));
     attachPanelSurface(ownPage ? pluginId : null);
     sendView(makePluginView(page));
-    if (ownPage) {
-      // 第一份数据：插件页面在 iframe 里，**加载完**才订阅数据。
-      // 推早了就丢了（preload 那边留了一份，订阅时补上）。
+    // 插件自带页面时，第一份数据走界面路由：
+    // 插件页面在 iframe 里，**加载完**才订阅数据，推早了就丢了
+    // （preload 那边留了一份，订阅时补上）。
+    if (plugins.pageUrl(pluginId)) {
       const data = await plugins.data(pluginId);
       surfaces?.broadcast(pluginId, 'data', data);
     }

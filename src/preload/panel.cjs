@@ -34,8 +34,12 @@ const tickSubscribers = new Set();
  */
 let pendingData = null;
 
-/** 推来的数据：转给所有订阅者。 */
-ipcRenderer.on('panel:surface:data', (_e, payload) => {
+/**
+ * 推来的数据：转给所有订阅者。
+ *
+ * @param {object} payload 信封 `{ pluginId, data }`
+ */
+function deliverData(payload) {
   pendingData = payload;
   for (const cb of dataSubscribers) {
     try {
@@ -45,10 +49,10 @@ ipcRenderer.on('panel:surface:data', (_e, payload) => {
       dataSubscribers.delete(cb);
     }
   }
-});
+}
 
 /** 推来的周期数据：转给所有订阅者。 */
-ipcRenderer.on('panel:surface:tick', (_e, payload) => {
+function deliverTick(payload) {
   for (const cb of tickSubscribers) {
     try {
       cb(payload);
@@ -56,7 +60,10 @@ ipcRenderer.on('panel:surface:tick', (_e, payload) => {
       tickSubscribers.delete(cb);
     }
   }
-});
+}
+
+ipcRenderer.on('panel:surface:data', (_e, payload) => deliverData(payload));
+ipcRenderer.on('panel:surface:tick', (_e, payload) => deliverTick(payload));
 
 contextBridge.exposeInMainWorld('panel', {
   // 主进程要显示一个视图（搜索视图 or 插件界面）。
