@@ -1859,6 +1859,32 @@ if (src) {
 }
 ```
 
+**壳也要接插件页面发来的「底部那行字」**：
+
+插件页面用 `surface.setStatus('正在录制')` 改底部那行字，
+它是用 `postMessage` 发给**父页面**的（见 `src/renderer/ui/pluginPage.js`）。
+面板那边会接（Task 7），独立窗口这边**也得接**——不然这条消息在窗口里没人收，
+`setStatus` 就成了空话。
+
+在同一个文件里加：
+
+```js
+// 插件页面（在 iframe 里）发来的消息：底部那行字。
+//
+// 用 `event.source` 认人：别的窗口也能往这里 postMessage，
+// 只有自己那个 iframe 说的才算数。
+window.addEventListener('message', (event) => {
+  if (!frameEl.contentWindow || event.source !== frameEl.contentWindow) return;
+  const data = event.data || {};
+  if (data.type === 'desk-pet:surface:status') {
+    statusEl.textContent = String(data.text || '');
+  }
+});
+```
+
+**注意**：`setHeight` 在独立窗口里**不用管**——窗口的高度是用户拖出来的，
+插件说了也没用（面板那边才需要，Task 7 处理）。
+
 - [ ] **Step 6: 页面的 src 参数要在 iframe 里带上插件 id**
 
 Step 3 里 `pluginPage` 已经带了 `?plugin=<id>` ✓（`pluginPage.js` 的 `readPluginId()` 靠它）。
@@ -1969,6 +1995,12 @@ let currentPluginId = '';
   //
   // 与插件壳上的 window.plugin **同名同形**：
   // 插件页面不该知道自己身处面板还是独立窗口（见 src/renderer/ui/pluginPage.js）。
+  //
+  // **三个会返回值的接口，返回的都是「裸值」**——
+  // 与插件壳那边一致（那边 invoke 回来的是 `host.data()` / `host.act()` 的原样）。
+  // 页面助手就不用分身处何处，两边拿到的东西是同一个形状。
+  // （**推送**那条路不一样：推上来的都包成 `{ pluginId, data }`，
+  // 因为面板会在插件之间来回切，得带得清是给谁的。）
   surface: {
     data: () => ipcRenderer.invoke('panel:surface:data', { pluginId: currentPluginId }),
     onData: (cb) => {
@@ -1979,8 +2011,10 @@ let currentPluginId = '';
     },
     act: (actionId, payload) =>
       ipcRenderer.invoke('panel:surface:act', { pluginId: currentPluginId, actionId, payload }),
+    // **invoke 而不是 send**：send 没有回执，页面那边
+    // `surface.action(...).then(...)` 会拿到 undefined 而不是一个 Promise。
     action: (actionId, value) =>
-      ipcRenderer.send('panel:surface:action', { pluginId: currentPluginId, actionId, value }),
+      ipcRenderer.invoke('panel:surface:action', { pluginId: currentPluginId, actionId, value }),
   },
 ```
 
@@ -2084,29 +2118,30 @@ import { PLUGIN_WINDOW_MODE } from '../shared/plugin.js';
 
 ```js
   // 插件自带页面的数据：面板工作台里的 iframe 要的那一份。
+  //
+  // **返回裸值**，不包 `{ pluginId, data }`——
+  // 与插件壳那边（invoke 回来的是 `host.data()` 的原样）保持一致，
+  // 页面助手那边不用分身处何处。
   ipcMain.handle('panel:surface:data', async (event, payload) => {
     if (!win || event.sender !== win.webContents) return null;
     const pluginId = String(payload?.pluginId || '');
     if (!pluginId) return null;
-    const data = await plugins.data(pluginId);
-    return { pluginId, data };
+    return plugins.data(pluginId);
   });
 
   ipcMain.handle('panel:surface:act', async (event, payload) => {
     if (!win || event.sender !== win.webContents) return null;
     const pluginId = String(payload?.pluginId || '');
     if (!pluginId) return null;
-    const result = await plugins.act(pluginId, String(payload?.actionId || ''), payload?.payload);
-    return { pluginId, result };
+    return plugins.act(pluginId, String(payload?.actionId || ''), payload?.payload);
   });
 
-  ipcMain.on('panel:surface:action', (event, payload) => {
-    if (!win || event.sender !== win.webContents) return;
+  // 声明式页面的动作：**invoke**（页面那边要一个 Promise）。
+  ipcMain.handle('panel:surface:action', async (event, payload) => {
+    if (!win || event.sender !== win.webContents) return null;
     const pluginId = String(payload?.pluginId || '');
-    if (!pluginId) return;
-    plugins.action(pluginId, String(payload?.actionId || ''), payload?.value).catch((err) => {
-      console.warn('[desk-pet] 插件动作失败：', err?.message || err);
-    });
+    if (!pluginId) return null;
+    return plugins.action(pluginId, String(payload?.actionId || ''), payload?.value);
   });
 ```
 
