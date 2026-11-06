@@ -8,6 +8,10 @@ const { contextBridge, ipcRenderer } = require('electron');
  * 面板窗口只需要「显示什么」和「用户按了什么」，
  * 多给它一份能力就多一份攻击面。
  */
+
+/** 面板当前打开的是哪个插件（surface 的 IPC 要带着它）。 */
+let currentPluginId = '';
+
 contextBridge.exposeInMainWorld('panel', {
   // 主进程要显示一个视图（搜索视图 or 插件界面）。
   onView: (cb) => {
@@ -47,6 +51,36 @@ contextBridge.exposeInMainWorld('panel', {
   // 插件里的一个动作。
   action: (pluginId, actionId, value) =>
     ipcRenderer.send('panel:action', { pluginId, actionId, value }),
+  // 面板当前打开的是哪个插件：surface 的请求要带着它，
+  // 宿主才知道该把数据送给谁。
+  setCurrentPlugin: (pluginId) => {
+    currentPluginId = String(pluginId || '');
+  },
+  // 插件自带页面用的通道（面板工作台里的 iframe 走这条）。
+  //
+  // 与插件壳上的 window.plugin **同名同形**：
+  // 插件页面不该知道自己身处面板还是独立窗口（见 src/renderer/ui/pluginPage.js）。
+  //
+  // **三个会返回值的接口，返回的都是「裸值」**——
+  // 与插件壳那边一致（那边 invoke 回来的是 `host.data()` / `host.act()` 的原样）。
+  // 页面助手就不用分身处何处，两边拿到的东西是同一个形状。
+  // （**推送**那条路不一样：推上来的都包成 `{ pluginId, data }`，
+  // 因为面板会在插件之间来回切，得带得清是给谁的。）
+  surface: {
+    data: () => ipcRenderer.invoke('panel:surface:data', { pluginId: currentPluginId }),
+    onData: (cb) => {
+      ipcRenderer.on('panel:surface:data', (_e, payload) => cb(payload));
+    },
+    onTick: (cb) => {
+      ipcRenderer.on('panel:surface:tick', (_e, payload) => cb(payload));
+    },
+    act: (actionId, payload) =>
+      ipcRenderer.invoke('panel:surface:act', { pluginId: currentPluginId, actionId, payload }),
+    // **invoke 而不是 send**：send 没有回执，页面那边
+    // `surface.action(...).then(...)` 会拿到 undefined 而不是一个 Promise。
+    action: (actionId, value) =>
+      ipcRenderer.invoke('panel:surface:action', { pluginId: currentPluginId, actionId, value }),
+  },
   // 回到搜索视图。
   back: () => ipcRenderer.send('panel:back'),
   // 关掉面板。
