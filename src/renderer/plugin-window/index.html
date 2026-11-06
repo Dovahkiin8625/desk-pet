@@ -6,14 +6,16 @@
   <link rel="stylesheet" href="/src/renderer/ui/theme.css">
   <link rel="stylesheet" href="/src/renderer/ui/blocks.css">
   <style>
+    /* 颜色走 theme.css 的变量（上面链着那份）：
+       改主题只改一处，这一页跟着变。 */
     :root { color-scheme: light; }
     html, body {
       margin: 0; padding: 0;
       background: transparent;
       overflow: hidden;
       height: 100%;
-      font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-      color: #2b2a26;
+      font: var(--dp-font);
+      color: var(--dp-text);
     }
     #win {
       box-sizing: border-box;
@@ -21,7 +23,7 @@
       height: 100%;
       display: flex;
       flex-direction: column;
-      background: #fffdf8;
+      background: var(--dp-bg);
       border: 1px solid #d8d2c4;
       border-radius: 12px;
       box-shadow: 0 6px 18px rgba(40, 34, 24, 0.22);
@@ -39,7 +41,7 @@
       align-items: center;
       gap: 8px;
       padding: 8px 8px 8px 12px;
-      border-bottom: 1px solid #ece6d8;
+      border-bottom: 1px solid var(--dp-border-soft);
       /* 标题栏可以拖：整个窗口跟着走。 */
       -webkit-app-region: drag;
       flex: none;
@@ -56,7 +58,7 @@
       border: none;
       border-radius: 7px;
       background: transparent;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       cursor: pointer;
       font-size: 14px;
     }
@@ -67,7 +69,7 @@
 
     #subtitle {
       padding: 6px 14px 0;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       font-size: 12px;
       flex: none;
     }
@@ -80,7 +82,7 @@
     }
     #status {
       padding: 7px 14px;
-      border-top: 1px solid #ece6d8;
+      border-top: 1px solid var(--dp-border-soft);
       color: #7a6a4f;
       font-size: 12px;
       min-height: 30px;

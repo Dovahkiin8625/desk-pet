@@ -6,6 +6,8 @@
   <link rel="stylesheet" href="/src/renderer/ui/theme.css">
   <link rel="stylesheet" href="/src/renderer/ui/blocks.css">
   <style>
+    /* 颜色走 theme.css 的变量（上面链着那份）：
+       改主题只改一处，这一页跟着变。 */
     :root { color-scheme: light; }
     html {
       margin: 0; padding: 0;
@@ -37,12 +39,12 @@
       height: 100%;
       display: flex;
       flex-direction: column;
-      background: #fffdf8;
+      background: var(--dp-bg);
       border: 1px solid #d8d2c4;
       border-radius: 14px;
       box-shadow: 0 4px 10px rgba(40, 34, 24, 0.28);
-      font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-      color: #2b2a26;
+      font: var(--dp-font);
+      color: var(--dp-text);
       overflow: hidden;
     }
     /* 插件视图：卡片按内容收缩，窗口跟着变矮。
@@ -60,7 +62,7 @@
       align-items: center;
       gap: 8px;
       padding: 12px 14px;
-      border-bottom: 1px solid #ece6d8;
+      border-bottom: 1px solid var(--dp-border-soft);
       -webkit-app-region: drag;
     }
     /* 图标不再只是「搜索」：这个框既搜插件与程序，也能直接跟桌宠说话。
@@ -76,7 +78,7 @@
       font: 16px/1.4 inherit;
       -webkit-app-region: no-drag;
     }
-    #query::placeholder { color: #a9a294; }
+    #query::placeholder { color: var(--dp-text-faint); }
 
     #results-wrap {
       /* flex-basis 用 auto（不是 0）：基准尺寸就是内容的高度，
@@ -99,13 +101,13 @@
       cursor: pointer;
     }
     #results li.active { background: #f1ead8; }
-    #results li:hover { background: #f6f1e4; }
+    #results li:hover { background: var(--dp-surface); }
     #results .icon { width: 20px; text-align: center; font-size: 15px; }
     #results .name { font-weight: 600; }
     #results .name mark { background: #f0dfa8; color: inherit; border-radius: 3px; padding: 0 1px; }
     #results .desc {
       margin-left: auto;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       font-size: 12px;
       white-space: nowrap;
       overflow: hidden;
@@ -115,13 +117,13 @@
     #empty {
       padding: 24px 16px;
       text-align: center;
-      color: #9a9384;
+      color: var(--dp-text-faint);
     }
     #empty[hidden] { display: none; }
     /* 搜索视图底部那行提示（启动结果）。 */
     #search-status {
       padding: 7px 14px;
-      border-top: 1px solid #ece6d8;
+      border-top: 1px solid var(--dp-border-soft);
       color: #7a6a4f;
       font-size: 12px;
       min-height: 30px;
@@ -134,13 +136,13 @@
       align-items: center;
       gap: 8px;
       padding: 9px 10px 9px 12px;
-      border-bottom: 1px solid #ece6d8;
+      border-bottom: 1px solid var(--dp-border-soft);
       -webkit-app-region: drag;
     }
     #plugin-title { font-weight: 600; }
     #plugin-subtitle {
       padding: 6px 14px 0;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       font-size: 12px;
     }
     #plugin-subtitle:empty { display: none; }
@@ -153,7 +155,7 @@
       border: none;
       border-radius: 7px;
       background: transparent;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       cursor: pointer;
       font-size: 14px;
     }
@@ -171,7 +173,7 @@
     }
     #plugin-status {
       padding: 7px 14px;
-      border-top: 1px solid #ece6d8;
+      border-top: 1px solid var(--dp-border-soft);
       color: #7a6a4f;
       font-size: 12px;
       min-height: 30px;

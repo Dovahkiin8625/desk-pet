@@ -43,7 +43,7 @@
   font: inherit;
   padding: 7px 10px;
   border: 1px solid var(--dp-border);
-  border-radius: 9px;
+  border-radius: var(--dp-radius);
   background: #fff;
   color: inherit;
 }
@@ -53,7 +53,7 @@
   font: inherit;
   padding: 6px 13px;
   border: 1px solid var(--dp-border);
-  border-radius: 9px;
+  border-radius: var(--dp-radius);
   background: var(--dp-surface);
   color: var(--dp-text);
   cursor: pointer;
