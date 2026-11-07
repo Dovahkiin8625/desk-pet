@@ -13,6 +13,7 @@ import {
   messagesBlock,
 } from '../../shared/panel.js';
 import { canDetach, hasWidget, resolveWindowSpec, PLUGIN_WINDOW_MODE } from '../../shared/plugin.js';
+import { createAgentFacade } from '../assistant/agent/facade.js';
 import { appUrl } from '../protocol.js';
 import { discoverPlugins, loadPluginFactory } from './loader.js';
 import { bundledPluginsDir, userPluginsDir as userPluginsPath } from './paths.js';
@@ -78,8 +79,13 @@ export async function createPluginHost({
   const surfaceListeners = new Set();
   /** 真正在用的工具表：注入的优先，其次助理的。 */
   const tools = toolRegistry || assistant?.agentTools || null;
-  /** 插件拿到的 agent 接口：注入的优先，其次助理的。 */
-  const agentApi = agent || assistant?.agent || null;
+  /**
+   * 插件拿到的 agent 接口：注入的优先，其次助理的。
+   *
+   * 都没有时给一个**空壳**（提交任务会明确说「还没上线」）：
+   * 插件代码里不用到处判空——`ctx.agent.run(...)` 永远能调。
+   */
+  const agentApi = agent || assistant?.agent || createAgentFacade({});
   /** 插件 id → 它的工具实现（name → 实现）。取过了就不重复问插件。 */
   const toolImplCache = new Map();
 

@@ -24,6 +24,7 @@ import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools } from './agent/tools/builtin.js';
+import { createAgentFacade } from './agent/facade.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { appendMessage, mergeFacts } from './chat/memory.js';
 
@@ -155,6 +156,18 @@ export function createAssistant({  userDataDir,
       getAppIndex: () => getAppIndex?.() || null,
     })
   );
+
+  /**
+   * agent 的对外接口：插件通过 `ctx.agent` 用它（规格 §5.5）。
+   *
+   * **后台任务运行时还没上线**（规格 §14 的 T9 排在 L3），
+   * 所以现在提交任务会明确回一句「还没上线」，不假装成功。
+   * 运行时接上后，把 runtime 传进 createAgentFacade 即可。
+   */
+  const agentFacade = createAgentFacade({
+    tools: toolRegistry,
+    getHistory: () => chatHistoryView().messages,
+  });
 
   // ------------------------------------------------------------------
   // 持久化
@@ -1108,6 +1121,13 @@ export function createAssistant({  userDataDir,
      * 插件没开的，它声明的工具就不在表里——提示词里也就看不见。
      */
     agentTools: toolRegistry,
+    /**
+     * agent 的对外接口（插件用它反向提交任务、读历史、订阅事件）。
+     *
+     * 与 `agentTools` 是两回事：那是**工具表**（agent 用的），
+     * 这是**接口**（插件用的）。
+     */
+    agent: agentFacade,
     // —— 对话 ——
     /** 和桌宠聊天（用户发起的）。 */
     chat,
