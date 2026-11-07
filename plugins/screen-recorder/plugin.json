@@ -4,5 +4,12 @@
   "icon": "🎥",
   "description": "全屏、选区、窗口录制，输出视频或 GIF",
   "keywords": ["录屏", "屏幕", "录像", "录制", "luping", "screen", "record", "gif"],
-  "entry": "main.js"
+  "entry": "main.js",
+  "window": {
+    "page": "pages/studio.html",
+    "title": "录屏",
+    "width": 900,
+    "height": 620,
+    "refreshMs": 500
+  }
 }

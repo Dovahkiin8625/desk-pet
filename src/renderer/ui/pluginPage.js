@@ -56,6 +56,25 @@ export function bindSurface() {
   const api = findApi();
   const id = readPluginId();
 
+  /**
+   * 页面在**面板**的 iframe 里，还是在独立窗口的壳里？
+   *
+   * 两边的通道同名不同形：面板的通道挂在 `parent.panel.surface` 上，
+   * 窗口的挂在 `parent.plugin` 上。
+   *
+   * 页面常常要为这个分两套布局：面板窄、窗口宽，
+   * 而且**高度策略正好相反**——
+   *
+   * - 面板的窗口是**按内容撑开**的：页面报多高，面板就开多高。
+   *   页面于是不能按视口高度铺满（那会与面板互相卡住：
+   *   页面报 100vh，面板按 100vh 开，页面又看到 100vh……）。
+   * - 独立窗口的高度是用户拖出来的：页面按视口高度铺满才对。
+   *
+   * 所以这个判断放在这里（共用的一份），插件页面直接问。
+   */
+  const parent = window.parent;
+  const inPanel = Boolean(parent && parent !== window && parent.panel?.surface);
+
   /** 推来的数据是不是发给自己的（面板可能在两个插件之间来回切）。 */
   function isMine(payload) {
     if (!payload || typeof payload !== 'object') return true;
@@ -83,6 +102,8 @@ export function bindSurface() {
   return {
     id,
     mode: api?.mode || 'window',
+    /** 在面板的 iframe 里吗（面板窄、窗口宽，高度策略也相反）。 */
+    inPanel,
 
     /** 打开时的第一份数据。 */
     data: () => (api ? api.data() : Promise.resolve(null)),

@@ -102,8 +102,7 @@
       let micTrack = null;
       if (payload.audio?.mic) {
         try {
-          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-          micTrack = mic.getAudioTracks()[0] || null;
+          micTrack = await openMic(payload.audio?.micDeviceIndex);
         } catch (err) {
           // 没有麦克风 / 用户不给权限：说清楚，别静默录不到声音。
           report('error', { message: `没有拿到麦克风：${err?.message || err}`, soft: true });
@@ -158,6 +157,43 @@
       }
     } catch (err) {
       report('error', { message: err?.message || String(err) });
+    }
+  }
+
+  /**
+   * 打开用户选的那个麦克风。
+   *
+   * 配置里存的是**序号**（第几个麦克风），不是设备 id：
+   * 设备 id 是**按来源**给的——面板里的 id 与这个隐藏页（file://）
+   * 看到的不是同一个，拿面板那个 id 来这里用一定匹配不上。
+   * 序号两边是同一套顺序，所以在这里换成自己的 deviceId。
+   *
+   * 指定的设备要是没了（拔了、换了机器）：退回系统默认，
+   * 别让整段录制失败。
+   *
+   * @param {number} [index] 第几个麦克风
+   * @returns {Promise<MediaStreamTrack|null>}
+   */
+  async function openMic(index) {
+    let deviceId = '';
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((d) => d.kind === 'audioinput');
+      const wanted = inputs[Number(index) || 0];
+      deviceId = wanted?.deviceId || '';
+    } catch {
+      deviceId = '';
+    }
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+      });
+      return mic.getAudioTracks()[0] || null;
+    } catch (err) {
+      if (!deviceId) throw err;
+      // 指定的那个设备用不了了：退回到系统默认。
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return mic.getAudioTracks()[0] || null;
     }
   }
 

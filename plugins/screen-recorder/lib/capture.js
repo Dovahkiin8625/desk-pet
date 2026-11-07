@@ -8,6 +8,9 @@ const PARTITION = 'persist:screen-recorder';
 /** 捕获页报「准备好了」之后，等多久算超时。 */
 const READY_TIMEOUT_MS = 15000;
 
+/** 预览图的宽度（像素）。够看清就行，不必太大。 */
+const PREVIEW_WIDTH = 480;
+
 /**
  * 录制会话。
  *
@@ -43,7 +46,29 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     onState?.({ recording: isRecording(), elapsedMs: Date.now() - startedAt });
   }
 
-  /** 列出可录的目标。 */
+  /**
+   * 显示器 id → 显示器信息。
+   *
+   * 兜底是**主显示器**（`getPrimaryDisplay()`），不是 `getAllDisplays()[0]`：
+   * 那个顺序没有保证，实测多屏机器上第一块往往是副屏——
+   * 选区遮罩会开到副屏上去，而用户要框的是眼前这块（带任务栏的那块）。
+   */
+  function displayById(displayId) {
+    const displays = screen.getAllDisplays();
+    return (
+      displays.find((d) => String(d.id) === String(displayId || '')) ||
+      screen.getPrimaryDisplay() ||
+      displays[0] ||
+      null
+    );
+  }
+
+  /**
+   * 列出可录的目标。
+   *
+   * @param {'screen'|'window'} mode
+   * @returns {Promise<Array<{id:string,label:string,hint:string,displayId?:string,icon?:string}>>}
+   */
   async function listTargets(mode) {
     const isWindow = mode === 'window';
     // **不要缩略图**：要缩略图的话，系统会去挨个抓一遍窗口的画面，
@@ -53,13 +78,60 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
       types: isWindow ? ['window'] : ['screen'],
       thumbnailSize: { width: 0, height: 0 },
     });
+    if (!isWindow) {
+      // **主显示器排第一**：用户没选的时候默认就是它，
+      // 选区遮罩也开在它上面——多屏机器上「第一块」不一定是眼前那块。
+      const primary = String(screen.getPrimaryDisplay()?.id || '');
+      sources.sort((a, b) => {
+        const aPrimary = String(a.display_id || '') === primary ? 0 : 1;
+        const bPrimary = String(b.display_id || '') === primary ? 0 : 1;
+        return aPrimary - bPrimary;
+      });
+    }
     return sources.map((s) => ({
       id: s.id,
       label: s.name || s.id,
       hint: isWindow ? '窗口' : '显示器',
       // 显示器模式下，选区要按「用户选的那块屏」来框。
       displayId: s.display_id || '',
+      // 窗口的应用图标：Electron 直接给得到（Windows/macOS），
+      // **不用为了图标去抓缩略图**——抓缩略图会把列窗口从 0.4 秒拖到 5.5 秒。
+      icon: appIconOf(s),
     }));
+  }
+
+  /** 源的图标（data URL）。没有就空串。 */
+  function appIconOf(source) {
+    try {
+      const icon = source?.appIcon;
+      if (!icon || typeof icon.isEmpty !== 'function' || icon.isEmpty()) return '';
+      return icon.toDataURL();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 某块显示器的预览图（data URL）。
+   *
+   * 用来在界面上显示「要录的是哪一块屏幕」。
+   * 只有选中的那一块才抓——抓一遍全部显示器太慢。
+   */
+  async function preview(displayId) {
+    const display = displayById(displayId);
+    if (!display) return '';
+    const width = PREVIEW_WIDTH;
+    const height = Math.max(
+      1,
+      Math.round((width * display.bounds.height) / Math.max(1, display.bounds.width))
+    );
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width, height },
+    });
+    const source = sources.find((s) => String(s.display_id) === String(display.id));
+    if (!source || !source.thumbnail || source.thumbnail.isEmpty()) return '';
+    return source.thumbnail.toDataURL();
   }
 
   /**
@@ -124,38 +196,49 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
    * @returns {Promise<{crop:object,snapshotSize:object,sourceId:string}|null>}
    */
   async function pickRegion(displayId) {
-    const displays = screen.getAllDisplays();
-    // 用户在面板里选了哪块屏，就在哪块屏上框；没选就用第一块。
-    const display =
-      displays.find((d) => String(d.id) === String(displayId || '')) || displays[0];
+    const display = displayById(displayId);
     if (!display) return null;
 
-    // 截图要**物理像素**的：bounds 是 DIP，缩放不是 100% 时两者不等。
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: {
-        width: Math.round(display.bounds.width * display.scaleFactor),
-        height: Math.round(display.bounds.height * display.scaleFactor),
-      },
-    });
-    // 源的 display_id 是**字符串**，显示器的 id 是**数字**：
-    // 不转成字符串比，永远比不相等——于是会掉进下面的兜底，
-    // 录到另一块屏幕上去（截图显示的是这块，内容却是那块）。
-    const source =
-      sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
-    if (!source) return null;
-    console.log(`[录屏] 选区：显示器 ${display.label} → 源 ${source.id}（${source.name}）`);
+    // 快照的**物理像素**尺寸：bounds 是 DIP，缩放不是 100% 时两者不等。
+    // 这里不用截图去问——显示器的尺寸本来就知道。
+    const snapshotSize = {
+      width: Math.round(display.bounds.width * display.scaleFactor),
+      height: Math.round(display.bounds.height * display.scaleFactor),
+    };
 
-    const picked = await windows.openPicker({
-      display,
-      image: source.thumbnail.toDataURL(),
-      snapshotSize: { width: source.thumbnail.getSize().width, height: source.thumbnail.getSize().height },
-    });
+    const picked = await windows.openPicker({ display });
     // **遮罩必须先关掉**，再开始取流：它还在的时候取流，
     // 那层半透明的暗色会被录进画面里。
     windows.closePicker();
-    if (!picked) return null;
-    return { crop: picked.crop, snapshotSize: picked.snapshotSize, sourceId: source.id };
+    if (!picked || !picked.rect) return null;
+
+    // 遮罩报的是 DIP（它就那么大），裁剪要用物理像素。
+    const scale = display.scaleFactor || 1;
+    const crop = {
+      x: Math.round(picked.rect.x * scale),
+      y: Math.round(picked.rect.y * scale),
+      width: Math.round(picked.rect.width * scale),
+      height: Math.round(picked.rect.height * scale),
+    };
+    console.log(
+      `[录屏] 选区：${display.label} ${crop.width}×${crop.height}（物理像素），源 ${display.id}`
+    );
+
+    // 选区边框留在桌面上，录完才撤（用户要看得见自己录的是哪一块）。
+    windows.showRegionFrame({ display, rect: picked.rect });
+
+    // 这块屏对应的捕获源 id：录制时要从它身上取流。
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+    const source = sources.find((s) => String(s.display_id) === String(display.id));
+    return {
+      crop,
+      snapshotSize,
+      sourceId: source?.id || '',
+      displayId: String(display.id),
+    };
   }
 
   /**
@@ -165,7 +248,7 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
    * @param {string} options.sourceId 显示器或窗口的源 id
    * @param {'video'|'gif'} options.format
    * @param {number} options.fps
-   * @param {{mic:boolean,speaker:boolean}} options.audio
+   * @param {{mic:boolean,speaker:boolean,micDeviceIndex?:number}} options.audio
    */
   async function start(options) {
     if (isRecording()) throw new Error('已经在录了');
@@ -173,32 +256,45 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     startedAt = Date.now();
     sourceId = options.sourceId || '';
 
-    // 源提前取好：handler 里现取要等 5.9 秒（见 pendingSources 的说明）。
-    pendingSources = await desktopCapturer.getSources({
-      types: ['screen', 'window'],
-      thumbnailSize: { width: 0, height: 0 },
-    });
+    try {
+      // 源提前取好：handler 里现取要等 5.9 秒（见 pendingSources 的说明）。
+      pendingSources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 0, height: 0 },
+      });
 
-    prepareSession();
-    const win = windows.createCapture();
-    // 捕获页是复用的：第一次要等它报「准备好了」，
-    // 后面它已经在等着了，不用再等。
-    if (!pageReady) await waitReady();
-    if (win.isDestroyed()) throw new Error('捕获页已经关了');
-    console.log(
-      `[录屏] 开始：模式 ${options.mode}，裁剪 ${options.crop ? `${options.crop.width}×${options.crop.height}` : '无'}`
-    );
-    win.webContents.send('rec:screen-recorder:message', {
-      type: 'begin',
-      payload: {
-        sourceId,
-        format: options.format,
-        fps: options.fps,
-        audio: options.audio,
-        crop: options.crop || null,
-        snapshotSize: options.snapshotSize || null,
-      },
-    });
+      prepareSession();
+      const win = windows.createCapture();
+      // 捕获页是复用的：第一次要等它报「准备好了」，
+      // 后面它已经在等着了，不用再等。
+      if (!pageReady) await waitReady();
+      if (win.isDestroyed()) throw new Error('捕获页已经关了');
+      console.log(
+        `[录屏] 开始：模式 ${options.mode}，裁剪 ${options.crop ? `${options.crop.width}×${options.crop.height}` : '无'}`
+      );
+      win.webContents.send('rec:screen-recorder:message', {
+        type: 'begin',
+        payload: {
+          sourceId,
+          format: options.format,
+          fps: options.fps,
+          audio: options.audio,
+          crop: options.crop || null,
+          snapshotSize: options.snapshotSize || null,
+        },
+      });
+    } catch (err) {
+      /*
+       * 开始失败：把状态收回去。
+       *
+       * 不收的话状态**永远停在 starting**，而 isRecording() 把 starting
+       * 也算成「在录」——于是用户再也录不了第二次（每次都报「已经在录了」）。
+       * finish() 顺手把选区边框、捕获窗、session 都收了。
+       */
+      finish();
+      throw err;
+    }
+
     state = 'recording';
     timer = setInterval(tick, 500);
     // 控制条：录屏时桌面上一直看得见「还在录」和「怎么停」。
@@ -233,6 +329,19 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     captureSession = null;
   }
 
+  /** 收尾：选区边框撤掉（录完了还挂在屏幕上就碍事了）。 */
+  function finish() {
+    state = 'idle';
+    if (timer) clearInterval(timer);
+    timer = null;
+    windows.hideControl();
+    windows.closeRegionFrame();
+    windows.destroyCapture();
+    // 捕获窗没了，下次录制要重新等它报「准备好了」。
+    pageReady = false;
+    releaseSession();
+  }
+
   /** 捕获页交回来的字节 → 写文件。 */
   async function save(bytes, ext) {
     const dir = getOutputDir();
@@ -248,27 +357,14 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
       await unlink(tmp).catch(() => {});
       throw err;
     }
-    state = 'idle';
-    if (timer) clearInterval(timer);
-    timer = null;
-    windows.hideControl();
-    windows.destroyCapture();
-    // 捕获窗没了，下次录制要重新等它报「准备好了」。
-    pageReady = false;
-    releaseSession();
+    finish();
     onState?.({ recording: false, elapsedMs: 0, file: target });
     return target;
   }
 
   /** 出错了也要能回到 idle。 */
   function fail(message) {
-    state = 'idle';
-    if (timer) clearInterval(timer);
-    timer = null;
-    windows.hideControl();
-    windows.destroyCapture();
-    pageReady = false;
-    releaseSession();
+    finish();
     onState?.({ recording: false, elapsedMs: 0, error: message });
   }
 
@@ -278,13 +374,7 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
    * 不是错误：用户自己喊停的，就别留个「出错了」的脸色。
    */
   function cancel() {
-    state = 'idle';
-    if (timer) clearInterval(timer);
-    timer = null;
-    windows.hideControl();
-    windows.destroyCapture();
-    pageReady = false;
-    releaseSession();
+    finish();
     onState?.({ recording: false, elapsedMs: 0, cancelled: true });
   }
 
@@ -303,12 +393,14 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     state = 'idle';
     readyResolve = null;
     releaseSession();
+    windows.closeRegionFrame();
     windows.destroyCapture();
     pageReady = false;
   }
 
   return {
     listTargets,
+    preview,
     pickRegion,
     start,
     stop,

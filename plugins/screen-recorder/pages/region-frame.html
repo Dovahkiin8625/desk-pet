@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>选区</title>
+    <style>
+      /*
+       * 选区边框。
+       *
+       * 整个窗口就是一圈边框：窗口比选区大一圈（2px），
+       * 边框正好落在选区**外面**——画在里面的话，这圈线会被录进画面里。
+       */
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        user-select: none;
+      }
+      #frame {
+        position: absolute;
+        inset: 0;
+        box-sizing: border-box;
+        border: 2px solid #ff4d4f;
+        border-radius: 3px;
+        /* 边框里面透出桌面：看得见录的是哪一块。 */
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="frame"></div>
+  </body>
+</html>

@@ -1,43 +1,60 @@
 // plugins/screen-recorder/lib/hotkey.js
 import { globalShortcut } from 'electron';
 
-let registered = null;
+/**
+ * 全局快捷键。
+ *
+ * 一次管**两个**：开始录制、停止录制。
+ * 分开设比一个「切换」键好用——开始与停止是两种不同的意图，
+ * 合成一个键的话，用户得先想想「现在是录着还是没录」。
+ */
+
+/** accel → 回调。 */
+let registered = new Map();
 
 /**
- * 注册全局快捷键。
+ * 注册一组快捷键。
  *
- * 只有**工作台窗口开着**的时候才注册：关掉工作台就把这个组合键
- * 让回给别的程序——一个常驻抢键的录屏插件是很讨人厌的。
+ * **先把旧的全部注销再注册新的**：Electron 的 globalShortcut 是全局的，
+ * 同一个键注册两次会失败，而「先注销再注册」是唯一稳妥的换法。
  *
- * @param {string} accel Electron 的快捷键写法，如 'Control+Shift+R'
- * @param {() => void} onTrigger
- * @returns {boolean} 注册成功吗
+ * @param {Array<{accel: string, onTrigger: () => void}>} entries
+ * @returns {{ok: boolean, failed: string[]}} 有没有注册成功的
  */
-export function registerHotkey(accel, onTrigger) {
-  unregisterHotkey();
-  if (!accel) return false;
-  try {
-    const ok = globalShortcut.register(accel, onTrigger);
-    if (ok) registered = accel;
-    return ok;
-  } catch (err) {
-    console.warn('[录屏] 快捷键注册不了：', err?.message);
-    return false;
+export function setHotkeys(entries) {
+  clearHotkeys();
+  const failed = [];
+  for (const entry of entries || []) {
+    const accel = String(entry?.accel || '').trim();
+    if (!accel) continue;
+    try {
+      const ok = globalShortcut.register(accel, entry.onTrigger);
+      if (ok) {
+        registered.set(accel, entry.onTrigger);
+      } else {
+        failed.push(accel);
+      }
+    } catch (err) {
+      console.warn('[录屏] 快捷键注册不了：', err?.message);
+      failed.push(accel);
+    }
   }
+  return { ok: failed.length === 0, failed };
 }
 
-/** 注销。 */
-export function unregisterHotkey() {
-  if (!registered) return;
-  try {
-    globalShortcut.unregister(registered);
-  } catch {
-    // 已经没了就算了。
+/** 注销全部。 */
+export function clearHotkeys() {
+  for (const accel of registered.keys()) {
+    try {
+      globalShortcut.unregister(accel);
+    } catch {
+      // 已经没了就算了。
+    }
   }
-  registered = null;
+  registered = new Map();
 }
 
-/** 现在注册着哪个键。 */
-export function currentHotkey() {
-  return registered || '';
+/** 现在注册着哪些键。 */
+export function currentHotkeys() {
+  return [...registered.keys()];
 }

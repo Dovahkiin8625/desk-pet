@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <title>选一块要录的区域</title>
     <style>
+      /*
+       * 选区遮罩。
+       *
+       * 窗口是**透明**的：底下就是真实的桌面。
+       * 以前这里铺一张整屏截图再压一层暗色，框里再蒙一层蓝——
+       * 用户看到的是「一张会过期的图片」，不是自己真正要录的东西。
+       *
+       * 现在：框里**全透明**（看得到原始画面），框外压一层淡暗色
+       * 让人知道选的是哪一块，框上画一条边。
+       */
       html,
       body {
         margin: 0;
@@ -14,24 +24,27 @@
         cursor: crosshair;
         user-select: none;
       }
-      /* 底图铺满窗口（窗口就是显示器的大小，DIP）。 */
-      #shot {
+      /* 框外的四块暗色。选中的那块不盖。 */
+      .shade {
         position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: fill;
+        background: rgba(0, 0, 0, 0.32);
+        display: none;
       }
-      /* 变暗层：让选中的那块显眼。 */
-      #dim {
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.45);
-      }
+      /* 选中的那块：只有一条边，里面什么都不盖。 */
       #sel {
         position: absolute;
         border: 2px solid #4f9dff;
-        background: rgba(79, 157, 255, 0.16);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+        display: none;
+      }
+      #size {
+        position: absolute;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(28, 28, 32, 0.85);
+        color: #fff;
+        font: 12px/1.4 "Microsoft YaHei", sans-serif;
+        white-space: nowrap;
         display: none;
       }
       #bar {
@@ -51,31 +64,25 @@
         cursor: pointer;
         background: #fff;
         color: #222;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
       }
       button.primary {
         background: #4f9dff;
         color: #fff;
       }
-      #size {
-        position: absolute;
-        left: 12px;
-        top: 12px;
-        color: #fff;
-        font: 13px/1.4 "Microsoft YaHei", sans-serif;
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-      }
     </style>
   </head>
   <body>
-    <img id="shot" alt="" />
-    <div id="dim"></div>
+    <div class="shade" id="shade-top"></div>
+    <div class="shade" id="shade-right"></div>
+    <div class="shade" id="shade-bottom"></div>
+    <div class="shade" id="shade-left"></div>
     <div id="sel"></div>
     <div id="size"></div>
     <div id="bar">
       <button id="cancel" type="button">取消</button>
       <button id="ok" class="primary" type="button">确定</button>
     </div>
-    <script src="../web/geometry.js"></script>
     <script src="picker.js"></script>
   </body>
 </html>

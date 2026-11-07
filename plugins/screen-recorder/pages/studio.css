@@ -1,0 +1,412 @@
+/*
+ * 录屏插件的主界面。
+ *
+ * 同一份页面两处用：面板工作台里的 iframe（窄，约 400px）与
+ * 独立窗口里的 iframe（宽，用户自己拉）。所以布局靠**容器查询**分档：
+ * 窄的时候竖着排，宽的时候左右排。
+ */
+
+body {
+  margin: 0;
+}
+
+.studio {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  /*
+   * 容器查询的容器。
+   *
+   * 宿主的壳（面板工作台 / 独立窗口）只是把这一页装进 iframe，
+   * **查询不到外层的容器**——所以这一页自己得当容器：
+   * 窄的时候（面板里，约 400px）竖着排，宽的时候（独立窗口）左右排。
+   */
+  container-type: inline-size;
+  container-name: surface;
+}
+
+/*
+ * 独立窗口里：铺满窗口。
+ *
+ * **面板里不铺满**：面板的窗口是按内容撑开的（页面报多高，面板开多高），
+ * 页面要是按视口高度铺满，就与面板互相卡住——
+ * 页面报 100vh，面板按 100vh 开窗，页面看到的视口又是 100vh……
+ * 高度永远定不下来，界面就一直是被切掉的一截。
+ */
+body:not(.dp-panel) .studio {
+  height: 100vh;
+}
+
+/* —— 顶栏：三个 tab + 右上角的设置 —— */
+
+.studio-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dp-border-soft);
+  flex: none;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tab {
+  font: inherit;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--dp-radius);
+  background: transparent;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+}
+
+.tab:hover {
+  background: var(--dp-surface);
+}
+
+.tab[aria-selected='true'] {
+  background: var(--dp-surface);
+  border-color: var(--dp-border);
+  color: var(--dp-text);
+  font-weight: 600;
+}
+
+/* 设置按钮：一张图，不是一行字。 */
+.gear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--dp-radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+.gear:hover {
+  background: var(--dp-surface);
+  border-color: var(--dp-border-soft);
+}
+
+.gear img {
+  display: block;
+  opacity: 0.75;
+}
+
+.gear:hover img {
+  opacity: 1;
+}
+
+/* —— 主体：左边看目标，右边是设置 —— */
+
+.studio-body {
+  /*
+   * flex-basis 用 auto（不是 0）：容器高度由内容决定时，
+   * basis: 0 的项会**塌成 0**（面板里就是这个情况）。
+   * auto 时这一项先按内容算，再把剩下的空间分给它。
+   */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(148px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.studio-left {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.studio-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.pane[hidden] {
+  display: none;
+}
+
+/* 预览图：屏幕长什么样，录下来就是长什么样。 */
+.preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  padding: 8px;
+  border: 1px solid var(--dp-border-soft);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+  overflow: hidden;
+}
+
+.preview img {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: 4px;
+  display: block;
+}
+
+.preview img:not([src]) {
+  display: none;
+}
+
+.preview-tip {
+  position: absolute;
+  color: var(--dp-text-faint);
+  font-size: 12px;
+}
+
+.preview img[src] + .preview-tip {
+  display: none;
+}
+
+/* 选区那一栏 */
+.region-box {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 12px;
+  border: 1px dashed var(--dp-border);
+  border-radius: var(--dp-radius);
+  color: var(--dp-text-soft);
+}
+
+.region-icon {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.region-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.region-size {
+  margin: 0;
+  color: var(--dp-text-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 窗口列表 */
+.win-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-height: 320px;
+}
+
+.win-list li {
+  gap: 8px;
+}
+
+.win-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.win-icon.fallback {
+  display: grid;
+  place-items: center;
+  background: var(--dp-surface-hover);
+  color: var(--dp-text-faint);
+  font-size: 10px;
+}
+
+.win-list li.active {
+  background: var(--dp-accent);
+}
+
+/* 字段：一行标题 + 一个控件 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--dp-text-soft);
+}
+
+.field .row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.field .row .dp-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.field select,
+.field input {
+  width: 100%;
+}
+
+.record {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 14px;
+}
+/* 「停止录制」的样子用主题里的 .dp-button.danger，不在这里重写一份。 */
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dp-text-soft);
+}
+
+.note[hidden] {
+  display: none;
+}
+
+#hotkeyError {
+  color: var(--dp-danger);
+}
+
+.empty {
+  color: var(--dp-text-faint);
+  font-size: 13px;
+  padding: 8px;
+}
+
+/* —— 底部状态 —— */
+
+.studio-foot {
+  flex: none;
+}
+
+/* —— 设置抽屉：从右边滑出来 —— */
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 26, 18, 0.28);
+  z-index: 5;
+}
+
+.scrim[hidden] {
+  display: none;
+}
+
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(300px, 82%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--dp-bg);
+  border-left: 1px solid var(--dp-border);
+  box-shadow: -8px 0 24px rgba(40, 34, 24, 0.16);
+  transform: translateX(100%);
+  transition: transform 0.16s ease-out;
+}
+
+.drawer[hidden] {
+  display: none;
+}
+
+/* 抽屉打开时用 .open 滑进来——hidden 只是「不在那儿」，
+   滑进来的动画要它真的在 DOM 里。 */
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--dp-border-soft);
+  flex: none;
+}
+
+.drawer-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.drawer-close {
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.drawer-body .dp-button {
+  width: 100%;
+}
+
+/* —— 窄的时候竖着排 —— */
+
+@container surface (max-width: 460px) {
+  .studio-body {
+    grid-template-columns: minmax(0, 1fr);
+    /* 两行都按内容算：面板里整体高度是内容决定的，
+       行高写死（1fr）会把内容挤没了。 */
+    grid-template-rows: auto auto;
+    overflow: auto;
+  }
+
+  /* 整体一起滚，所以左边那块不用自己滚。 */
+  .studio-left {
+    overflow: visible;
+  }
+
+  .studio-right {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .studio-right .field {
+    flex: 1 1 110px;
+  }
+
+  .record {
+    flex: 1 1 100%;
+  }
+}

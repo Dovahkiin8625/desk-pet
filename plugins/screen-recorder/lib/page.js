@@ -35,14 +35,21 @@ export function buildPanelPage(ui, data) {
 
   blocks.push(modeButtons(ui, config.mode));
 
+  // 窗口模式选的是窗口、其余模式选的是显示器：各记各的。
+  const selectedId = config.mode === 'window' ? config.windowId : config.sourceId;
+
   if (targets.length) {
     blocks.push(
       ui.listBlock(
         targets.map((t) => ({
           id: t.id,
+          // 动作名要**自己指定**：默认会用条目的 id 当动作名，
+          // 而条目的 id 是系统的源 id（`window:1234:0` 这种），
+          // 跟插件自己的动作名混在一起迟早认错。
+          actionId: 'select-target',
           label: t.label,
           // 选中的那个标出来：不然用户不知道这次会录哪一块。
-          hint: t.id === config.sourceId ? '● 已选' : t.hint || '',
+          hint: t.id === selectedId ? '● 已选' : t.hint || '',
         }))
       )
     );
@@ -63,14 +70,11 @@ export function buildPanelPage(ui, data) {
     ])
   );
 
-  blocks.push(ui.inputBlock('outputDir', '输出目录（留空＝视频文件夹）', '保存', config.outputDir));
-
-  blocks.push(
-    ui.buttonsBlock([
-      { id: 'pick-dir', label: '浏览…' },
-      { id: 'open-workbench', label: '设置…' },
-    ])
-  );
+  // **这里没有输出目录**：设置（输出目录、快捷键……）只在插件自己的页面里
+  // （pages/studio.html 的抽屉）。主页面只管「录什么、怎么录」。
+  //
+  // 这一页是退路（页面文件不在磁盘上时宿主换用它），
+  // 所以退到这里也就没有抽屉——界面简单一点，但不会白屏。
 
   blocks.push(
     ui.buttonsBlock([
