@@ -6,6 +6,7 @@ import {
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
+  LLM_BACKENDS,
   hasChatKind,
 } from '../../shared/assistant.js';
 import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
@@ -178,7 +179,9 @@ export function sanitizeAssistant(raw) {
         raw.llm.maxTokensField === 'max_completion_tokens'
           ? 'max_completion_tokens'
           : 'max_tokens',
-      backend: str(raw.llm.backend, DEFAULT_LLM.backend).slice(0, 40),
+      // 后端只认 LLM_BACKENDS 里的值：磁盘上的值可能是旧版本留下的，
+      // 也可能被手改过——认不出来的当普通对话（最保险的那个）。
+      backend: LLM_BACKENDS.includes(raw.llm.backend) ? raw.llm.backend : DEFAULT_LLM.backend,
       lastWorkingBaseUrl: str(raw.llm.lastWorkingBaseUrl).slice(0, 300),
       persona: {
         name: str(persona.name, DEFAULT_LLM.persona.name).slice(0, 40),

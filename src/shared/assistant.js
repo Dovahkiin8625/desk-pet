@@ -57,6 +57,17 @@ export const LLM_BASE_URLS = Object.freeze([
   'https://api.minimax.io/v1',
 ]);
 
+/**
+ * 可选的大模型对话后端。
+ *
+ * 'chat' 是普通对话（一次调用、一段回复，见 src/main/assistant/chat/plain.js）；
+ * 'agent' 是多步循环（会调工具，见 src/main/assistant/chat/agent.js）。
+ *
+ * **定义只有一份**：状态清洗、后端注册、设置界面都从这儿取——
+ * 两边各认一套的话，用户改了设置却没生效，是最难查的那种 bug。
+ */
+export const LLM_BACKENDS = Object.freeze(['chat', 'agent']);
+
 /** TTS 的默认偏好。 */
 export const DEFAULT_TTS = Object.freeze({
   enabled: false,

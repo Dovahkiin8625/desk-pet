@@ -541,7 +541,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
  */
 export async function chatCompletionStreamWithProbe(
   params,
-  { fetchImpl = fetch, baseUrls = LLM_BASE_URLS, onDelta } = {},
+  { fetchImpl = fetch, baseUrls = LLM_BASE_URLS, onDelta, signal } = {},
 ) {
   const tried = [];
   let emitted = 0;
@@ -550,6 +550,9 @@ export async function chatCompletionStreamWithProbe(
     try {
       const result = await chatCompletionStream({ ...params, baseUrl }, {
         fetchImpl,
+        // 取消信号要一路传到底：agent 的循环被取消时，
+        // 正在流式的那次请求也得停下来，不能让它把 token 烧完。
+        signal,
         onDelta: (delta) => {
           emitted += 1;
           onDelta?.(delta);

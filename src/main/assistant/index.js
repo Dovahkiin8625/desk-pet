@@ -22,6 +22,7 @@ import { createTapTalk } from './tapTalk.js';
 import { tapTalkNeedsPrewarm } from '../../shared/tapVoice.js';
 import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
+import { createAgentBackend } from './chat/agent.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools } from './agent/tools/builtin.js';
 import { createAgentFacade } from './agent/facade.js';
@@ -158,6 +159,29 @@ export function createAssistant({  userDataDir,
       // 剪贴板助手默认关着：工具不能绕过用户这个开关。
       isClipboardEnabled: () => Boolean(state?.clipboard?.enabled),
       getAppIndex: () => getAppIndex?.() || null,
+    })
+  );
+
+  // ------------------------------------------------------------------
+  // agent 后端：多步循环，会调工具。
+  //
+  // **审批闸门还没上线**（L3 的 T10）：所以现在写/执行类工具一律不执行，
+  // 只读工具照常——宁可什么都不做，也不能在用户没点头的情况下动他的机器。
+  //
+  // 状态是异步加载的（start() 之后才有），所以这里全是**取值函数**。
+  // ------------------------------------------------------------------
+  backends.register(
+    'agent',
+    createAgentBackend({
+      fetchImpl,
+      getTools: () => toolRegistry,
+      getGate: () => null,
+      getWorkspace: () => state?.agent?.workspace || '',
+      getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
+      getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+      getMaxSteps: () => state?.agent?.maxSteps || DEFAULT_AGENT.maxSteps,
+      getPersona: () => state?.llm?.persona || {},
+      getFacts: () => state?.chat?.facts || [],
     })
   );
 
@@ -799,6 +823,9 @@ export function createAssistant({  userDataDir,
         onDelta: (delta) => {
           if (streamId) bubble.appendStream(streamId, delta);
         },
+        // agent 的步骤事件转发给插件：插件只认 ctx.agent.onEvent 这一个入口，
+        // 换了后端也不用改插件（规格 §5.5）。
+        onEvent: (event) => agentFacade.emit(event),
       });
     } catch (err) {
       if (streamId) bubble.cancelStream();
