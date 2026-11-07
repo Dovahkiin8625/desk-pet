@@ -1569,3 +1569,25 @@ git commit -m "feat(助手): LLM 客户端支持 tools——请求带工具、�
 | Important 4：meta 没有体积上限 | `磁盘：meta 太大了要截断，别让一条记录把文件撑爆` |
 | Important 5：`emitted` 的 tool_calls 分支是死代码 | `地址探测：流里已经吐过工具调用后中断，不要换个地址重来` |
 | Important 6：工具名碎片拼接规则两头都会错 | `累积：工具名被切成碎片时要拼对（"fo" + "o" → "foo"）` 与 `累积：服务端重发完整名时要替换，不能拼成两遍` |
+
+## T0 探针的实际结果
+
+探针脚本是**一次性**的（`C:\Users\Felix\.claude\jobs\908a7ee8\tmp\probe-tool-calling.mjs`，不进仓库）。
+它只**读** `userData/credentials.json` 与 `userData/assistant.json`，不写；且**绝不打印 key**（只打印「有没有配」）。
+
+结论：**stable** —— 方案照旧。
+
+- 非流式 200：`tool_calls` 1 个，`arguments` = `{"city": "北京"}` 能 parse。
+- 流式 200：9 帧里 3 帧带 tool_calls，**并行 2 个调用**（`weather.get` / `fs.list`）各自参数都能 parse，
+  参数被切成 **3 块** —— 说明「按 index 累积碎片」不是假想的坑，是真的会发生。
+- `role:'tool'` + `tool_call_id` 回灌被接受（200），模型给出了最终答复。
+
+附带观察：模型在调工具前会先说一句英文正文（"I'll check the weather..."），
+agent 后端的输出契约要能容忍「正文 + tool_calls 同时出现」。
+
+## 执行期间我拍过的板
+
+- 复审的 6 个 Minor 里，4 个是纯清理（死导出、说假话的注释、名不副实的常量名、`0` 的语义），
+  与 Important 的修复落在同一批文件上——**顺手一起改掉**，而不是留成两次改动。
+  剩下 2 个（`messagesBlock` 丢字段、旧记录 id 漂移）真的要改行为，按规矩进「deferred」，
+  等 L1 动记录层时一起做。代价：L0 的改动比计划的略多一点点，但少一次来回。
