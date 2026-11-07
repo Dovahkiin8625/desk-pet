@@ -38,6 +38,22 @@ const MAX_MEMORY_LENGTH = 200;
 const MAX_MOOD = 10;
 
 /**
+ * 输出契约的说明。
+ *
+ * **普通对话与 agent 共用一份**：两边说不一样的话，
+ * 就会出现「普通对话读得出情绪、agent 读不出」这种鬼故事。
+ */
+export function metaContractLines() {
+  return [
+    '- 回答写完后，另起一行输出 ' + META_MARKER + '，紧跟一个 JSON 对象（不要代码块围栏）：',
+    `  {"emotion":"<情绪>","mood":<整数>,"memories":["<事实>"]}`,
+    `- emotion 只能是 ${EMOTIONS.join(' / ')} 之一。`,
+    `- mood 是 -${MAX_MOOD} 到 ${MAX_MOOD} 的整数：正数表示这轮让你更开心，负数表示更闷。`,
+    '- memories 只写「以后还用得上的、用户身上的事实」，最多 2 条；没有就写 []。',
+  ];
+}
+
+/**
  * 组装系统提示词：人设 + 记忆 + 输出契约。
  */
 export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() } = {}) {
@@ -55,11 +71,7 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() }
     '说话规则：',
     '- 用中文口语回答，1~3 句，不超过 80 字。',
     '- 只说给桌宠听的话：不要复述用户的问题，不要 Markdown，不要表情符号。',
-    '- 回答写完后，另起一行输出 ' + META_MARKER + '，紧跟一个 JSON 对象（不要代码块围栏）：',
-    `  {"emotion":"<情绪>","mood":<整数>,"memories":["<事实>"]}`,
-    `- emotion 只能是 ${EMOTIONS.join(' / ')} 之一。`,
-    `- mood 是 -${MAX_MOOD} 到 ${MAX_MOOD} 的整数：正数表示这轮让你更开心，负数表示更闷。`,
-    '- memories 只写「以后还用得上的、用户身上的事实」，最多 2 条；没有就写 []。',
+    ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
   ]
