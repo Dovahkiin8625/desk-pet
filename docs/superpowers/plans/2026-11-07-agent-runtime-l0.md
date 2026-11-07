@@ -41,7 +41,7 @@
 
 复审还发现计划自己的测试代码块漏了这几条，于是它们当时全都没被锁住：
 非流式并行 tool_calls、碎片工具名、`role:'tool'` 的 `tool_call_id`。
-**对应的测试已经补进 `test/unit/agent-tools-stream.test.js` 与 `test/unit/agent-record.test.js`**（9 + 14 例）。
+**对应的测试已经补进 `test/unit/agent-tools-stream.test.js` 与 `test/unit/agent-record.test.js`**（16 + 15 例）。
 
 ## Review Focus
 
@@ -583,6 +583,18 @@ export function chatKindOf(entry) {
   if (Object.values(CHAT_KIND).includes(kind)) return kind;
   return entry?.role === 'user' ? CHAT_KIND.USER : CHAT_KIND.REPLY;
 }
+
+/**
+ * 一条记录有没有**明确的**分类。
+ *
+ * 与 `chatKindOf` 的区别：后者永远给出一个合法 kind（按 role 兜底），
+ * 这个回答的是「这条数据自己说了自己是哪一类吗」——
+ * 写盘关口用它区分「形状不对」与「合法但没写 role」。
+ */
+export function hasChatKind(entry) {
+  const kind = String(entry?.kind || '').trim();
+  return Object.values(CHAT_KIND).includes(kind);
+}
 ```
 
 - [ ] **Step 4: 改 `src/main/assistant/chat/memory.js`**
@@ -593,12 +605,87 @@ export function chatKindOf(entry) {
 import { randomUUID } from 'node:crypto';
 import {
   MAX_CHAT_FACTS,
+  CHAT_KIND,
   CHAT_KIND_LIMITS,
   chatKindOf,
 } from '../../../shared/assistant.js';
 ```
 
-并把「追加一条聊天消息，并截断到上限」那段替换成：
+并先加上 meta 的体积上限（工具结果可以很大，而 assistant.json 每次改动整份重写）：
+
+```js
+/** meta 里单个字符串最多留多少字。 */
+const MAX_META_STRING = 1000;
+
+/** meta 里一个数组最多留多少项。 */
+const MAX_META_ITEMS = 20;
+
+/** meta 里最多留多少个键。 */
+const MAX_META_KEYS = 30;
+
+/** 一条记录的 meta 最多多少字符（超了就再砍字符串）。 */
+const MAX_META_CHARS = 4000;
+
+/**
+ * 把 meta 里的长字符串、数组、层级收一收。
+ *
+ * 递归深度也有限：meta 是给界面看的结构化数据，不是数据湖。
+ */
+function clampMeta(value, limit, depth = 0) {
+  if (depth > 4) return '[略]';
+  if (typeof value === 'string') {
+    return value.length > limit ? `${value.slice(0, limit)}…（已截断）` : value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, MAX_META_ITEMS).map((item) => clampMeta(item, limit, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value).slice(0, MAX_META_KEYS)) {
+      out[key] = clampMeta(item, limit, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * 给 meta 定一个体积上限。
+ *
+ * **为什么要有**：规格 §4.4 估的是「每条约 200 字」，
+ * 但工具结果（读一个 500 行的文件、跑一条 `ls -la` 的输出）天然可以很大；
+ * 而 assistant.json 是**每次改动整份重写**的——
+ * 一条撑爆的记录会让每次保存都变贵。
+ *
+ * 砍体积时**保留结构**：taskId、tool 名这些字段没了就没法把步骤归并回任务了。
+ * 所以是「把长字符串砍短」，而不是「只留一段预览」。
+ */
+export function capMeta(meta) {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;
+  let limit = MAX_META_STRING;
+  let clamped = clampMeta(meta, limit);
+  let text = '';
+  try {
+    text = JSON.stringify(clamped);
+  } catch {
+    return null; // 循环引用之类的坏数据：直接不要 meta
+  }
+  let guard = 0;
+  while (text.length > MAX_META_CHARS && guard < 10) {
+    limit = Math.max(8, Math.floor(limit / 2));
+    clamped = clampMeta(meta, limit);
+    try {
+      text = JSON.stringify(clamped);
+    } catch {
+      return null;
+    }
+    guard += 1;
+  }
+  return clamped;
+}
+```
+
+再把「追加一条聊天消息，并截断到上限」那段替换成：
 
 ```js
 /**
@@ -607,12 +694,18 @@ import {
  * 旧记录（用户升级前的数据）只有 `{role, text, at, proactive}`：
  * 这里补上 `id` 与 `kind`（按 role 兜底），并把正文限长。
  *
+ * **`role` 由 `kind` 推导**，不是反过来：
+ * kind 是新契约，role 只是为兼容旧数据保留的字段。
+ * 两个都是真值来源就会自相矛盾——
+ * 比如 `{kind:'user'}`（按新契约写、不写 role）会被归一化成 role:'assistant'，
+ * 用户自己说的话就以助手的身份进了模型上下文（模型开始自问自答，且不报错）。
+ *
  * `id` 用 randomUUID 而不是时间戳：同一毫秒里可能写好几条。
  */
 export function normalizeChatEntry(raw) {
   const kind = chatKindOf(raw);
-  const role = raw?.role === 'user' ? 'user' : 'assistant';
-  const meta = raw?.meta && typeof raw.meta === 'object' && !Array.isArray(raw.meta) ? raw.meta : null;
+  const role = kind === CHAT_KIND.USER ? 'user' : 'assistant';
+  const meta = capMeta(raw?.meta);
   return {
     id: typeof raw?.id === 'string' && raw.id !== '' ? raw.id : randomUUID(),
     at: Number.isFinite(raw?.at) ? raw.at : Date.now(),
@@ -718,6 +811,7 @@ import {
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
+  hasChatKind,
 } from '../../shared/assistant.js';
 import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
 ```
@@ -736,8 +830,11 @@ import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
       .filter(
         (m) =>
           isPlainObject(m) &&
-          (m.role === 'user' || m.role === 'assistant') &&
-          str(m.text) !== ''
+          // 关口认 kind（也认旧 role）：只写 kind 的新记录不能被静默丢掉。
+          (hasChatKind(m) || m.role === 'user' || m.role === 'assistant') &&
+          // 正文空但 meta 有内容的记录要留下：
+          // 「工具调了但没有可展示的正文」是步骤记录的正常形态。
+          (str(m.text) !== '' || (isPlainObject(m.meta) && Object.keys(m.meta).length > 0))
       )
       .map((m) => normalizeChatEntry({ ...m, text: str(m.text).slice(0, 2000) }));
     out.chat.messages = truncateByKind(messages);
@@ -774,7 +871,7 @@ import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
 
 Run: `node --test "test/unit/agent-record.test.js"`
 
-Expected: PASS —— 11 个测试全过。
+Expected: PASS —— 15 个测试全过（复审补了 4 例：role 由 kind 推导 / 旧数据兼容 / 只写 kind 的记录不被丢掉 / meta 体积上限）。
 
 - [ ] **Step 9: 跑全量单元测试，确认没有回归**
 
@@ -1102,7 +1199,7 @@ export function createToolCallAccumulator() {
 }
 ```
 
-- [ ] **Step 4: 加 `parseFrame`，并让 `extractDelta` 建立在它上面**
+- [ ] **Step 4: 加 `parseFrame`，删掉 `extractDelta`**
 
 把 `extractDelta` 替换成：
 
@@ -1138,12 +1235,10 @@ export function parseFrame(frame) {
     toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
   };
 }
-
-/** 从一帧里取出增量文本（只要正文的那部分）。 */
-export function extractDelta(frame) {
-  return parseFrame(frame).content;
-}
 ```
+
+（`extractDelta` 一起删掉：流式重构后它已经没有调用方，
+留着会让下一个人以为它是流式解析的入口。）
 
 - [ ] **Step 5: `buildRequestBody` 支持 `tools`**
 
@@ -1295,9 +1390,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
     const whole = parseCompletionBody(text);
     if (whole && (whole.content || whole.toolCalls.length)) {
       if (whole.content) onDelta?.(whole.content);
-      const accumulator = createToolCallAccumulator();
-      accumulator.push(whole.toolCalls);
-      return { text: whole.content, toolCalls: accumulator.calls() };
+      // 整段 JSON 里的 tool_calls 同样是完整的：按数组顺序映射，不塞进按 index 的堆。
+      const toolCalls = normalizeToolCalls(whole.toolCalls);
+      if (toolCalls.length) onToolCall?.(toolCalls);
+      return { text: whole.content, toolCalls };
     }
     throw new LlmError('接口返回的不是 SSE 也不是 JSON', {
       code: LLM_ERRORS.MALFORMED,
@@ -1407,13 +1503,13 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
 
 Run: `node --test "test/unit/agent-tools-stream.test.js"`
 
-Expected: PASS —— 9 个测试全过。
+Expected: PASS —— 16 个测试全过（复审补了 7 例：非流式并行 / 整段 JSON 并行 / 碎片工具名 / 重发完整名 / 中断不换地址）。
 
 - [ ] **Step 10: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
-Expected: PASS —— 193 + 11 + 9 = 213 个测试全过。
+Expected: PASS —— 193 + 15 + 16 = 224 个测试全过。
 
 - [ ] **Step 11: 提交**
 
