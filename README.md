@@ -107,7 +107,7 @@ src/renderer/   渲染层：pixi + Live2D 模型与交互
 src/renderer/bubble/  说话气泡的页面
 src/renderer/panel/   插件面板的页面（搜索框 + 插件界面）
 src/renderer/plugin-window/  插件独立窗口的通用界面
-src/renderer/ui/     面板与插件窗口共用的「块」的画法与样式
+src/renderer/ui/     共享设计系统（theme.css）、插件页面助手（pluginPage.js）与「块」的画法
 src/settings/   设置窗口
 src/shared/     主进程与渲染层共用的常量
 plugins/        **插件本体**：一个插件一个子目录（待办、提醒、系统监控……）
@@ -202,7 +202,9 @@ plugins/                  内置插件（随程序分发）
 
 - `id` 必须与**目录名一致**，只能用小写字母、数字与连字符；
 - `entry` 与 `page` 都是相对路径，**不能**跑到插件目录外面去；
-- 写了 `window` 段，面板上才有「在新窗口打开」按钮；写了 `widget` 段才有「变成小部件」；
+- **「在新窗口打开」每个插件都有**：清单里没写 `window` 段，宿主会合成一份默认的
+  （标题=插件名，360×420）。写了 `window` 段就以清单为准（尺寸、页面、刷新间隔）。
+- 写了 `widget` 段才有「变成桌面小部件」——小部件要占着桌面，由插件自己决定要不要。
 - `refreshMs` 是周期刷新的间隔（毫秒）：小部件靠它活着（系统监控每秒变一次）。
 
 ### 插件能拿到什么
@@ -220,6 +222,7 @@ export default function createTodosPlugin() {
 
   return {
     page,                                   // 面板里的界面（可以是 async）
+    meta(ctx) { return { title: '录屏', subtitle: '', status: '' }; }, // 可选
     action(ctx, actionId, value) {          // 界面里的动作 → 返回新的页面
       return { ...page(ctx), status: '加好了' };
     },
@@ -243,10 +246,14 @@ export default function createTodosPlugin() {
 （它是个普通的 Node 模块），想 import 什么就 import 什么——**这里没有沙箱**。
 插件与宿主之间靠的是约定，不是权限边界。
 
+插件实例上的 `meta(ctx)` 是**可选**的：返回界面的标题、副标题、状态。
+插件自带页面时，宿主只取这三个（界面是插件自己画的，宿主不重画）；
+不写就退回用 `page(ctx)` 给的那几个。
+
 ### 独立窗口与桌面小部件
 
-插件界面默认待在面板里。清单里写了 `window` 段之后，面板上会出现 **↗**
-（在新窗口打开）；写了 `widget` 段还会多一个 **▣**（变成桌面小部件）。
+插件界面默认待在面板里。面板上永远有 **↗**（在新窗口打开）；
+清单里写了 `widget` 段还会多一个 **▣**（变成桌面小部件）。
 
 - **独立窗口**：自己的窗口，能调整大小、能拖到别处；标题栏上有 **📌** 置顶开关；
 - **桌面小部件**：无边框、透明、常驻桌面（像系统监控那样挂在那儿），整块可以拖。
@@ -255,18 +262,56 @@ export default function createTodosPlugin() {
 窗口里套的是**通用界面**（`src/renderer/plugin-window/`）——
 上面是插件的标题与窗口按钮，下面是插件的声明式页面，与面板里长得一样。
 
-插件自己写了页面（清单里的 `page`）时，走的是插件自己的 HTML：
+小部件自己写了页面（清单里 `widget` 段的 `page`）时，走的是插件自己的 HTML：
 它自己画界面，宿主只负责按 `refreshMs` 喂数据（`tick`）、
-以及替它转发动作（`act`）。页面里能用 `window.plugin`：
+以及替它转发动作（`act`）。小部件的页面是**原样加载**的（自带 preload），
+页面里能用 `window.plugin`：
 
 ```js
 window.plugin.onTick((data) => { /* 周期数据到了 */ });
 window.plugin.data().then((data) => { /* 打开时的第一份数据 */ });
 window.plugin.act('click', { id: 1 });
 window.plugin.window.setAlwaysOnTop(true);
-window.plugin.window.setMode('widget');
+window.plugin.window.setMode('window');
 window.plugin.window.close();
 ```
+
+独立窗口里的插件自带页面不是这样装的——见下一节。
+
+### 插件自带的页面
+
+清单里的 `window.page` 是插件**自己的**页面（一个 HTML 文件）：
+
+- 面板工作台里，宿主把它装进一个 `<iframe>`；
+- 独立窗口里，宿主也把它装进一个 `<iframe>`（窗口的标题栏是宿主的）。
+
+**同一份页面两处用**，所以界面天然是一套。窄的时候（面板工作台）与
+宽的时候（独立窗口，用户能拉宽）怎么排，由页面自己决定——
+宿主给内容区套了一层容器，页面用 CSS 容器查询来适配：
+
+```css
+.surface { container-type: inline-size; container-name: surface; }
+
+@container surface (min-width: 520px) {
+  .targets { display: grid; grid-template-columns: 1fr 1fr; }
+}
+```
+
+所有插件界面共用同一套设计系统（`src/renderer/ui/theme.css`）——
+颜色、圆角、间距、按钮那些都在那份文件里，插件自己的页面链上它，
+看起来就跟别的插件是同一个产品做的。
+
+页面里的脚本用一份助手（两处通用，它自己认得出身处面板还是独立窗口）：
+
+```js
+import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+
+const surface = bindSurface();
+surface.onTick((data) => render(data));
+surface.act('start');
+```
+
+页面加载不出来时（路径写错了），宿主会**退回积木界面**——插件照样能用。
 
 ### 开关插件
 
