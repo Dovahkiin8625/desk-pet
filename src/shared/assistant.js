@@ -4,6 +4,9 @@
  * 气泡消息的形状放在这里：主进程负责**造**消息，
  * 气泡窗口负责**画**它——两边对「一条消息长什么样」的理解必须一致，
  * 所以定义只有一份。
+ *
+ * 聊天记录的**分类**也放在这里：它同样是「主进程写、界面读」的东西，
+ * 定义只有一份，两边才不会各认一套 kind。
  */
 
 /**
@@ -152,3 +155,56 @@ export const POMODORO_PRESETS = Object.freeze({
   focus: 25 * 60 * 1000,
   break: 5 * 60 * 1000,
 });
+
+/**
+ * 聊天记录的分类。
+ *
+ * agent 之后，记录里会混进工具调用日志、审批请求、任务状态——
+ * 它们是**给人看的**，绝不能进模型的上下文。
+ * 所以每条记录都要带一个 `kind`，把「给人看的」与「给模型看的」分开。
+ *
+ * 规格见 docs/superpowers/specs/2026-11-07-agent-runtime-design.md §4.2。
+ */
+export const CHAT_KIND = Object.freeze({
+  /** 用户说的话。 */
+  USER: 'user',
+  /** 桌宠的回复（普通对话的结论，或 agent 的最终答复）。 */
+  REPLY: 'reply',
+  /** 任务状态变化：排队 / 开始 / 完成 / 失败 / 取消。 */
+  TASK: 'task',
+  /** 任务中的一次步骤：模型决定、工具调用、工具结果。 */
+  STEP: 'step',
+  /** 审批请求与用户的选择。 */
+  APPROVAL: 'approval',
+});
+
+/**
+ * 每类记录在磁盘上最多留多少条。
+ *
+ * **按类分路，不是一个总上限**：user/reply 要留得久（模型要看），
+ * step 增长极快（几步就几条）——一个总上限会让一条新步骤把最老的用户输入挤掉，
+ * 而模型恰恰最需要那几条用户输入。
+ */
+export const CHAT_KIND_LIMITS = Object.freeze({
+  user: MAX_CHAT_MESSAGES,
+  reply: MAX_CHAT_MESSAGES,
+  step: 200,
+  task: 100,
+  approval: 100,
+});
+
+/** 哪些分类会进模型的上下文（其它一律不进）。 */
+export const CHAT_KIND_FOR_MODEL = Object.freeze([CHAT_KIND.USER, CHAT_KIND.REPLY]);
+
+/**
+ * 取一条记录的分类。
+ *
+ * **旧记录没有 `kind`**（用户升级前的数据），按 `role` 兜底：
+ * `user` → user，其余 → reply。判断不了的一律当 reply（宁可多给模型一点，
+ * 也不要凭空丢掉用户说过的话）。
+ */
+export function chatKindOf(entry) {
+  const kind = String(entry?.kind || '').trim();
+  if (Object.values(CHAT_KIND).includes(kind)) return kind;
+  return entry?.role === 'user' ? CHAT_KIND.USER : CHAT_KIND.REPLY;
+}

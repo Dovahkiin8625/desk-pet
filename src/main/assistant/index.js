@@ -5,6 +5,7 @@ import {
   POMODORO_PRESETS,
   TTS_HOSTS,
   LLM_BASE_URLS,
+  chatKindOf,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
 import { loadApiKey, loadLlmApiKey } from '../credentials.js';
@@ -816,13 +817,21 @@ export function createAssistant({  userDataDir,
     return detail ? `${base}（${detail}）` : base;
   }
 
-  /** 聊天记录（插件界面用）。 */
+  /**
+   * 聊天记录（插件界面用）。
+   *
+   * **带上 kind**：以后记录里会混进任务、步骤、审批，
+   * 界面要按分类分区显示；不带 kind 的话界面只能靠 role 猜。
+   */
   function chatHistoryView() {
     const messages = (state.chat.messages || []).map((m) => ({
+      id: m.id,
+      kind: chatKindOf(m),
       role: m.role,
       text: m.text,
       at: m.at,
       proactive: Boolean(m.proactive),
+      ...(m.meta ? { meta: m.meta } : {}),
     }));
     return { messages, total: messages.length, facts: [...(state.chat.facts || [])] };
   }

@@ -4,9 +4,9 @@ import {
   DEFAULT_LLM,
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
-  MAX_CHAT_MESSAGES,
   MAX_CHAT_FACTS,
 } from '../../shared/assistant.js';
+import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
 import { createPomodoroState } from './pomodoro.js';
 import { DEFAULT_VOLUME } from '../../shared/volume.js';
 import { MAX_TAP_LINES, MAX_TAP_LINE_LENGTH } from '../../shared/tapVoice.js';
@@ -200,9 +200,10 @@ export function sanitizeAssistant(raw) {
   }
 
   if (isPlainObject(raw.chat)) {
-    // 聊天记录：**只留最近的**（slice(-N)）。
-    // 磁盘上的文件是用户与旧版本写出来的，形状可能对不上——
+    // 聊天记录：磁盘上的文件是用户与旧版本写出来的，形状可能对不上——
     // 这里保证内存里的状态永远是合法的、也是有限的。
+    // **按分类分路截断**（user/reply 留久、step 砍自己的尾巴），
+    // 砍数组尾巴会把最老的用户输入挤掉，而那正是模型最需要的。
     const messages = (Array.isArray(raw.chat.messages) ? raw.chat.messages : [])
       .filter(
         (m) =>
@@ -210,13 +211,8 @@ export function sanitizeAssistant(raw) {
           (m.role === 'user' || m.role === 'assistant') &&
           str(m.text) !== ''
       )
-      .map((m) => ({
-        role: m.role,
-        text: str(m.text).slice(0, 2000),
-        at: Number.isFinite(m.at) ? m.at : Date.now(),
-        proactive: Boolean(m.proactive),
-      }));
-    out.chat.messages = messages.slice(-MAX_CHAT_MESSAGES);
+      .map((m) => normalizeChatEntry({ ...m, text: str(m.text).slice(0, 2000) }));
+    out.chat.messages = truncateByKind(messages);
 
     const facts = (Array.isArray(raw.chat.facts) ? raw.chat.facts : [])
       .filter((f) => typeof f === 'string')

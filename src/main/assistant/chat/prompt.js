@@ -1,4 +1,9 @@
-import { EMOTIONS, PROMPT_HISTORY_MESSAGES } from '../../../shared/assistant.js';
+import {
+  EMOTIONS,
+  PROMPT_HISTORY_MESSAGES,
+  CHAT_KIND_FOR_MODEL,
+  chatKindOf,
+} from '../../../shared/assistant.js';
 
 /**
  * 人设、系统提示词与回复解析。
@@ -65,14 +70,20 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() }
 /**
  * 组装要发给接口的消息数组。
  *
- * **只带最近若干条**：磁盘上留 40 条，提示词里只带 12 条——
- * 「记多少」与「发多少」是两回事，全发既花钱又稀释重点。
+ * **只带最近若干条**：磁盘上留的条数按分类分路（见 memory.js），
+ * 提示词里只带 12 条——「记多少」与「发多少」是两回事，全发既花钱又稀释重点。
+ *
+ * **只取 user 与 reply**：步骤、任务状态、审批记录是**给人看的**，
+ * 它们进了上下文会把对话冲垮——而且症状是「模型突然变笨」而不是报错，
+ * 极难排查。所以过滤放在这里做，且只认 kind 为 user/reply 的条目。
  */
 export function buildChatMessages({ history = [], userText = '', trigger = 'user' } = {}) {
   const messages = [];
-  const recent = (Array.isArray(history) ? history : []).slice(-PROMPT_HISTORY_MESSAGES);
-  for (const item of recent) {
-    if (!item || !item.text) continue;
+  const list = Array.isArray(history) ? history : [];
+  const conversational = list
+    .filter((item) => item && item.text && CHAT_KIND_FOR_MODEL.includes(chatKindOf(item)))
+    .slice(-PROMPT_HISTORY_MESSAGES);
+  for (const item of conversational) {
     messages.push({
       role: item.role === 'user' ? 'user' : 'assistant',
       content: item.text,
