@@ -54,6 +54,19 @@ export async function createPluginHost({
   userPluginsDir,
   assistant,
   openSettings,
+  /**
+   * agent 的工具表：插件提供的工具挂进这里。
+   *
+   * 省略时用 `assistant.agentTools`——助理是 agent 子系统的所在地，
+   * 工具表自然也在它那儿。
+   */
+  toolRegistry = null,
+  /**
+   * agent 的对外接口（插件用它反向提交任务、读历史、订阅事件）。
+   *
+   * 省略时用 `assistant.agent`。
+   */
+  agent = null,
 }) {
   /** id → 插件记录。 */
   const records = new Map();
@@ -63,6 +76,12 @@ export async function createPluginHost({
   let windowOpener = null;
   /** 插件界面开合的回调（插件想知道「我的界面开着吗」）。 */
   const surfaceListeners = new Set();
+  /** 真正在用的工具表：注入的优先，其次助理的。 */
+  const tools = toolRegistry || assistant?.agentTools || null;
+  /** 插件拿到的 agent 接口：注入的优先，其次助理的。 */
+  const agentApi = agent || assistant?.agent || null;
+  /** 插件 id → 它的工具实现（name → 实现）。取过了就不重复问插件。 */
+  const toolImplCache = new Map();
 
   /**
    * 订阅界面开合。返回取消订阅的函数。
@@ -95,6 +114,14 @@ export async function createPluginHost({
         source: record.source,
       },
       assistant,
+      /**
+       * agent 的对外接口（规格 §5.5）：插件能提交后台任务、取消任务、
+       * 读聊天记录、订阅 agent 事件。
+       *
+       * 插件跑在主进程里，与 agent 运行时同处一个进程，所以这是**直接调用**，
+       * 不需要 IPC。
+       */
+      agent: agentApi,
       openSettings,
       update: typeof update === 'function' ? update : () => {},
       ui: UI,
@@ -187,6 +214,8 @@ export async function createPluginHost({
     }
     // 关掉的插件，它的窗口也要跟着关：窗口还开着、插件却「不在」了。
     if (!on) windowOpener?.close(id);
+    // 插件开关 → 它提供的工具也要跟着进出 agent 的工具表。
+    await syncPluginTools();
     // 插件清单变了：缓存里的页面地址不再可信（下次查盘重算）。
     invalidatePageUrls();
     notifyChange();
@@ -423,6 +452,83 @@ export async function createPluginHost({
   }
 
   /**
+   * 插件提供的工具实现：name → 实现。
+   *
+   * `tools()` 是插件实例上的钩子（规格 §5.4）：它返回与清单**同名**的实现。
+   * 插件没写这个钩子就没有工具。
+   *
+   * 插件的 `tools()` 抛错只影响它自己——记一行日志，
+   * 不让一个插件的异常掀翻整个宿主。
+   */
+  async function collectToolImpls(record) {
+    const instance = record.instance;
+    if (!instance || typeof instance.tools !== 'function') return new Map();
+    let list;
+    try {
+      list = await instance.tools(makeContext(record, null));
+    } catch (err) {
+      console.warn(`[desk-pet] 插件「${record.manifest.id}」的工具列表取不到：`, err?.message);
+      return new Map();
+    }
+    const map = new Map();
+    for (const impl of Array.isArray(list) ? list : []) {
+      const name = String(impl?.name || '').trim();
+      if (!name || typeof impl?.run !== 'function') {
+        console.warn(`[desk-pet] 插件「${record.manifest.id}」给了一个不像工具的实现，丢掉`);
+        continue;
+      }
+      map.set(name, impl);
+    }
+    return map;
+  }
+
+  /**
+   * 把当前**启用**的插件提供的工具挂进工具表。
+   *
+   * 插件被关掉时它的工具要消失——「渐进式加载」就是这么自然：
+   * agent 的系统提示词里只列当前启用的插件提供的工具，
+   * 插件没开，模型就看不见它的工具，也不会去调它。
+   *
+   * **清单是契约**：清单里声明了但实例没实现同名实现 → 不注册；
+   * 实例实现了但清单里没声明 → 也不注册（两边必须一致）。
+   * 两种情况都留一行日志，插件作者还能继续跑。
+   */
+  async function syncPluginTools() {
+    if (!tools) return;
+    // 先把插件这一族全摘掉，再按启用状态重新挂上。
+    // （内置工具没有 owner，摘不掉。）
+    for (const id of records.keys()) tools.unregister(id);
+    for (const record of records.values()) {
+      const id = record.manifest.id;
+      if (!isEnabled(id)) continue;
+      const declared = record.manifest.tools || [];
+      if (!declared.length) continue;
+      let impls = toolImplCache.get(id);
+      if (!impls) {
+        impls = await collectToolImpls(record);
+        toolImplCache.set(id, impls);
+      }
+      for (const decl of declared) {
+        const impl = impls.get(decl.name);
+        if (!impl) {
+          console.warn(
+            `[desk-pet] 插件「${id}」声明了工具「${decl.name}」但没有提供实现，这个工具不注册`
+          );
+          continue;
+        }
+        tools.register({ ...decl, run: impl.run }, { owner: id });
+      }
+      for (const name of impls.keys()) {
+        if (!declared.some((d) => d.name === name)) {
+          console.warn(
+            `[desk-pet] 插件「${id}」实现了工具「${name}」但清单里没有声明，不注册`
+          );
+        }
+      }
+    }
+  }
+
+  /**
    * 发现并加载全部插件。
    *
    * 一个插件加载失败（清单坏了、入口抛错）只影响它自己：
@@ -444,6 +550,13 @@ export async function createPluginHost({
           throw new Error('工厂函数没有返回插件实例');
         }
         records.set(record.manifest.id, { ...record, instance });
+        // 清单里的工具声明有毛病：记一行，插件本身照常加载。
+        const toolErrors = record.manifest.toolErrors || [];
+        if (toolErrors.length) {
+          console.warn(
+            `[desk-pet] 插件「${record.manifest.id}」的工具声明有问题：${toolErrors.join('；')}`
+          );
+        }
       } catch (err) {
         console.warn(`[desk-pet] 插件「${record.manifest.id}」加载失败：`, err?.message);
       }
@@ -451,6 +564,8 @@ export async function createPluginHost({
     console.log(
       `[desk-pet] 已加载 ${records.size} 个插件：${[...records.keys()].join('、')}`
     );
+    // 插件提供的工具挂进 agent 的工具表。
+    await syncPluginTools();
     // 插件刚加载出来：之前算过的页面地址（如果有）全部作废。
     invalidatePageUrls();
     return records.size;

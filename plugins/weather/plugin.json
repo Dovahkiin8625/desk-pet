@@ -4,6 +4,21 @@
   "icon": "🌤",
   "description": "当前天气与定时播报",
   "keywords": ["weather", "tianqi", "tq", "天气", "气温", "下雨", "温度"],
+  "tools": [
+    {
+      "name": "weather.get",
+      "label": "查天气",
+      "description": "按城市名查当前的天气（温度与天气状况）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string", "description": "城市名，例如「北京」" }
+        },
+        "required": ["city"]
+      },
+      "risk": "read"
+    }
+  ],
   "window": {
     "title": "天气",
     "width": 320,

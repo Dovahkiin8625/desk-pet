@@ -10,6 +10,8 @@
  * （与 shared/panel.js 里面板消息的约定同理）。
  */
 
+import { TOOL_NAME_RE, TOOL_RISK_ORDER } from './assistant.js';
+
 /** 插件清单的文件名：每个插件目录下都要有这一个。 */
 export const PLUGIN_MANIFEST_FILE = 'plugin.json';
 
@@ -153,6 +155,45 @@ export function resolveWindowSpec(manifest, mode) {
 }
 
 /**
+ * 规整插件清单里声明的一个工具。
+ *
+ * 返回 `{ ok: true, value }` 或 `{ ok: false, error }`。
+ *
+ * **一个坏工具不许把整个插件干掉**：清单里写错一个工具名，
+ * 那个工具没有就行，插件照常加载——
+ * 与「目录名 ≠ 清单 id 就被静默跳过」同样的宽容度。
+ * 原因写进清单的 `toolErrors`，宿主会打一行日志，插件作者看得见。
+ */
+function normalizeToolDeclaration(raw) {
+  if (!isPlainObject(raw)) return { ok: false, error: '工具声明不是一个对象' };
+  const name = str(raw.name).trim();
+  if (!name) return { ok: false, error: '工具声明缺少 name' };
+  if (!TOOL_NAME_RE.test(name)) {
+    return { ok: false, error: `工具名「${name}」不合法：只能用小写字母、数字与点` };
+  }
+  const risk = str(raw.risk).trim();
+  if (!TOOL_RISK_ORDER.includes(risk)) {
+    return {
+      ok: false,
+      error: `工具「${name}」的风险等级「${risk || '（空）'}」不合法：只能是 read / write / exec`,
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      name,
+      label: str(raw.label).trim() || name,
+      description: str(raw.description).trim().slice(0, 2000),
+      // 模型是按 JSON Schema 读它的，形状不对的话有的服务端直接 400。
+      parameters: isPlainObject(raw.parameters)
+        ? raw.parameters
+        : { type: 'object', properties: {} },
+      risk,
+    },
+  };
+}
+
+/**
  * 校验并规整一份插件清单。
  *
  * 校验失败**不抛错**，而是把问题列出来：宿主要把原因写进日志，
@@ -189,6 +230,26 @@ export function validateManifest(raw) {
     }
   }
 
+  // 插件给 agent 提供的工具：**声明**在清单里，**实现**在实例的 tools() 钩子里。
+  // 两边必须同名（规格 §5.4）。
+  //
+  // 声明坏了**不**算清单不合法——它只是这个工具没有而已，
+  // 插件照常加载（宽容度与「目录名 ≠ id 就跳过」一致）。
+  const tools = [];
+  const toolErrors = [];
+  for (const rawTool of Array.isArray(raw.tools) ? raw.tools : []) {
+    const result = normalizeToolDeclaration(rawTool);
+    if (!result.ok) {
+      toolErrors.push(result.error);
+      continue;
+    }
+    if (tools.some((t) => t.name === result.value.name)) {
+      toolErrors.push(`工具「${result.value.name}」重复声明了，只留第一个`);
+      continue;
+    }
+    tools.push(result.value);
+  }
+
   if (errors.length) return { ok: false, errors };
 
   const manifest = {
@@ -206,6 +267,9 @@ export function validateManifest(raw) {
     widget: isPlainObject(raw.widget)
       ? normalizeWindowSpec(raw.widget, PLUGIN_WINDOW_MODE.WIDGET)
       : null,
+    // 插件提供的工具（给 agent 用）与它们的毛病。
+    tools,
+    toolErrors,
   };
   return { ok: true, value: manifest, errors: [] };
 }
