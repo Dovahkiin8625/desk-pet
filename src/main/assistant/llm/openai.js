@@ -43,6 +43,84 @@ export const LLM_ERRORS = Object.freeze({
   MALFORMED: 'malformed',
 });
 
+/**
+ * 把工具描述符转成 OpenAI 兼容的 `tools` 字段。
+ *
+ * 我们自己的工具描述符是 `{name, label, description, parameters, risk, run}`，
+ * 接口只认 `{name, description, parameters}`——`label`（给人看的）与
+ * `risk`（审批用）**不能**发出去：有的服务端见到不认识的字段直接 400。
+ */
+export function toRequestTools(tools) {
+  const list = Array.isArray(tools) ? tools : [];
+  return list
+    .filter((t) => t && typeof t.name === 'string' && t.name !== '')
+    .map((t) => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: String(t.description || ''),
+        parameters:
+          t.parameters && typeof t.parameters === 'object'
+            ? t.parameters
+            : { type: 'object', properties: {} },
+      },
+    }));
+}
+
+/**
+ * 流式 `tool_calls` 的累积器。
+ *
+ * **这是整个 tools 支持里最容易做错的地方。**
+ * `choices[].delta.tool_calls[]` 里的 `function.arguments` 是一段被网络切碎的
+ * JSON 字符串，按 `index` 到达：
+ *
+ * - 每帧单独 parse 必然失败（JSON 是碎的）；
+ * - 按**到达顺序**拼接而不看 index 也必然错位（并行调用会交错到达）。
+ *
+ * 所以：按 `index` 归堆，参数按到达顺序拼进同一堆，最后按 index 升序输出。
+ *
+ * （T0 的探针实测过：MiniMax 一次流式响应就把两个并行调用的参数切成了 3 块。）
+ */
+export function createToolCallAccumulator() {
+  const byIndex = new Map();
+  return {
+    /** 收一帧的 `delta.tool_calls`。 */
+    push(deltaCalls) {
+      for (const call of Array.isArray(deltaCalls) ? deltaCalls : []) {
+        const index = Number.isFinite(call?.index) ? call.index : 0;
+        const current = byIndex.get(index) || {
+          id: '',
+          type: 'function',
+          function: { name: '', arguments: '' },
+        };
+        if (typeof call?.id === 'string' && call.id) current.id = call.id;
+        if (typeof call?.type === 'string' && call.type) current.type = call.type;
+        const name = call?.function?.name;
+        if (typeof name === 'string' && name) {
+          if (!current.function.name) {
+            current.function.name = name;
+          } else if (name !== current.function.name && !current.function.name.endsWith(name)) {
+            // 名字也可能是碎的：只在不是重复、也不是已收到的后缀时才续上。
+            current.function.name += name;
+          }
+        }
+        const args = call?.function?.arguments;
+        if (typeof args === 'string') current.function.arguments += args;
+        byIndex.set(index, current);
+      }
+    },
+    /** 按 index 升序返回完整的调用。 */
+    calls() {
+      return [...byIndex.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, call]) => ({ ...call, function: { ...call.function } }));
+    },
+    get size() {
+      return byIndex.size;
+    },
+  };
+}
+
 export class LlmError extends Error {
   constructor(message, { code = null, status = null, body = null } = {}) {
     super(message);
@@ -72,16 +150,21 @@ export function buildRequestBody({
   maxTokens,
   maxTokensField = 'max_tokens',
   stream = false,
+  tools = [],
 } = {}) {
   // 只发一个 token 字段：两个都发的话有的服务端会直接 400。
   const field = maxTokensField === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
-  return {
+  const body = {
     model: String(model || ''),
     messages: Array.isArray(messages) ? messages : [],
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
     [field]: Number.isFinite(maxTokens) ? Math.round(maxTokens) : 800,
     stream: Boolean(stream),
   };
+  // **空数组不发**：有的服务端见到 `tools: []` 直接 400。
+  const requestTools = toRequestTools(tools);
+  if (requestTools.length) body.tools = requestTools;
+  return body;
 }
 
 /** HTTP 状态码 → 错误分类。 */
@@ -117,7 +200,7 @@ export function splitSseFrames(buffer) {
 }
 
 /**
- * 从一帧里取出增量文本。
+ * 解析一帧 SSE，返回正文与 tool_calls 分片。
  *
  * 兼容三种形态：`delta.content`（流式）、`message.content`（非流式）、
  * `text`（老接口）。
@@ -125,9 +208,9 @@ export function splitSseFrames(buffer) {
  * **不读 `reasoning_content`**：那是推理模型的心里的想法，
  * 而且可能夹着我们约定的元数据——显示出来既奇怪又可能泄底。
  */
-export function extractDelta(frame) {
+export function parseFrame(frame) {
   const text = String(frame ?? '').trim();
-  if (!text || text === '[DONE]') return '';
+  if (!text || text === '[DONE]') return { content: '', toolCalls: [] };
   let data;
   try {
     data = JSON.parse(text);
@@ -139,9 +222,18 @@ export function extractDelta(frame) {
     throw new LlmError(message, { code: classifyErrorCode(data.error?.code ?? data.error?.type) });
   }
   const choice = data?.choices?.[0];
-  if (!choice) return '';
+  if (!choice) return { content: '', toolCalls: [] };
   const content = choice.delta?.content ?? choice.message?.content ?? choice.text ?? '';
-  return typeof content === 'string' ? content : '';
+  const toolCalls = choice.delta?.tool_calls ?? choice.message?.tool_calls ?? [];
+  return {
+    content: typeof content === 'string' ? content : '',
+    toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
+  };
+}
+
+/** 从一帧里取出增量文本（只要正文的那部分）。 */
+export function extractDelta(frame) {
+  return parseFrame(frame).content;
 }
 
 /** 接口在 200 的 body 里报的错误码 → 错误分类。 */
@@ -220,26 +312,35 @@ async function* readChunks(res) {
   yield new TextEncoder().encode(text);
 }
 
-/** 从一整段 JSON 里取正文（非流式响应）。 */
-function extractWholeText(text) {
+/**
+ * 从一整段 JSON 里取正文与 tool_calls（非流式响应）。
+ *
+ * 返回 null 表示这根本不是合法 JSON。
+ */
+function parseCompletionBody(text) {
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    return '';
+    return null;
   }
   const choice = data?.choices?.[0];
   const content = choice?.message?.content ?? choice?.delta?.content ?? choice?.text ?? '';
-  return typeof content === 'string' ? content : '';
+  const toolCalls = choice?.message?.tool_calls ?? choice?.delta?.tool_calls ?? [];
+  return {
+    content: typeof content === 'string' ? content : '',
+    toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
+    raw: data,
+  };
 }
 
 /**
  * 一次**非流式**调用。
  *
- * @returns {Promise<{text: string, raw: object}>}
+ * @returns {Promise<{text: string, raw: object, toolCalls: object[]}>}
  */
 export async function chatCompletion(params, fetchImpl = fetch) {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField } = params;
+  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools } = params;
   if (!apiKey) throw new LlmError('没有配置 API Key', { code: LLM_ERRORS.CONFIG });
   const url = buildUrl(baseUrl);
   if (!url) throw new LlmError('没有配置接口地址', { code: LLM_ERRORS.CONFIG });
@@ -255,7 +356,7 @@ export async function chatCompletion(params, fetchImpl = fetch) {
         Accept: 'application/json',
       },
       body: JSON.stringify(
-        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: false })
+        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: false, tools })
       ),
       signal: AbortSignal.timeout(60000),
     });
@@ -273,29 +374,32 @@ export async function chatCompletion(params, fetchImpl = fetch) {
   }
 
   const text = await res.text();
-  const content = extractWholeText(text);
-  if (!content) {
+  const parsed = parseCompletionBody(text);
+  if (!parsed) {
     throw new LlmError('接口没有返回内容', {
       code: LLM_ERRORS.MALFORMED,
       body: String(text).slice(0, 500),
     });
   }
-  let raw = null;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    raw = null;
+  // **正文为空不一定是错**：模型可能只调工具、不说话。
+  if (!parsed.content && !parsed.toolCalls.length) {
+    throw new LlmError('接口没有返回内容', {
+      code: LLM_ERRORS.MALFORMED,
+      body: String(text).slice(0, 500),
+    });
   }
-  return { text: content, raw };
+  const accumulator = createToolCallAccumulator();
+  accumulator.push(parsed.toolCalls);
+  return { text: parsed.content, raw: parsed.raw, toolCalls: accumulator.calls() };
 }
 
 /**
  * 一次**流式**调用。`onDelta(delta)` 会被逐字调用。
  *
- * @returns {Promise<{text: string}>} 累积起来的完整正文
+ * @returns {Promise<{text: string, toolCalls: object[]}>} 累积起来的完整正文与工具调用
  */
 export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta, signal } = {}) {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField } = params;
+  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools } = params;
   if (!apiKey) throw new LlmError('没有配置 API Key', { code: LLM_ERRORS.CONFIG });
   const url = buildUrl(baseUrl);
   if (!url) throw new LlmError('没有配置接口地址', { code: LLM_ERRORS.CONFIG });
@@ -311,7 +415,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
         Accept: 'text/event-stream',
       },
       body: JSON.stringify(
-        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: true })
+        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: true, tools })
       ),
       signal: signal || AbortSignal.timeout(120000),
     });
@@ -333,10 +437,12 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
   const contentType = headerValue(res, 'content-type');
   if (!contentType.includes('text/event-stream')) {
     const text = await res.text();
-    const whole = extractWholeText(text);
-    if (whole) {
-      onDelta?.(whole);
-      return { text: whole };
+    const whole = parseCompletionBody(text);
+    if (whole && (whole.content || whole.toolCalls.length)) {
+      if (whole.content) onDelta?.(whole.content);
+      const accumulator = createToolCallAccumulator();
+      accumulator.push(whole.toolCalls);
+      return { text: whole.content, toolCalls: accumulator.calls() };
     }
     throw new LlmError('接口返回的不是 SSE 也不是 JSON', {
       code: LLM_ERRORS.MALFORMED,
@@ -350,6 +456,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
   let buffer = '';
   let full = '';
   let done = false;
+  const toolAccumulator = createToolCallAccumulator();
 
   try {
     for await (const bytes of readChunks(res)) {
@@ -361,10 +468,11 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
           done = true;
           break;
         }
-        const delta = extractDelta(frame);
-        if (delta) {
-          full += delta;
-          onDelta?.(delta);
+        const { content, toolCalls } = parseFrame(frame);
+        if (toolCalls.length) toolAccumulator.push(toolCalls);
+        if (content) {
+          full += content;
+          onDelta?.(content);
         }
       }
       if (done) break;
@@ -382,15 +490,16 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
     const { frames } = splitSseFrames(`${buffer}\n\n`);
     for (const frame of frames) {
       if (frame === '[DONE]') break;
-      const delta = extractDelta(frame);
-      if (delta) {
-        full += delta;
-        onDelta?.(delta);
+      const { content, toolCalls } = parseFrame(frame);
+      if (toolCalls.length) toolAccumulator.push(toolCalls);
+      if (content) {
+        full += content;
+        onDelta?.(content);
       }
     }
   }
 
-  return { text: full };
+  return { text: full, toolCalls: toolAccumulator.calls() };
 }
 
 /**
@@ -421,6 +530,8 @@ export async function chatCompletionStreamWithProbe(
           onDelta?.(delta);
         },
       });
+      // 工具调用也算「已经开始吐东西」：只调工具的轮次正文是空的。
+      if (result.toolCalls?.length) emitted += 1;
       return { ...result, baseUrl };
     } catch (err) {
       tried.push(`${redactUrl(baseUrl)}（${err?.message || err}）`);
