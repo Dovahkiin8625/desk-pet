@@ -2,6 +2,10 @@
 //
 // 覆盖真实链路：开面板 → 打开录屏 → 开始录制 → 录一会儿 → 停止 → 产出文件。
 // 这套用例**需要一块真的屏幕**：抓屏在无显示器的机器上跑不起来。
+//
+// 录屏现在有**自己的页面**（plugins/screen-recorder/pages/studio.html），
+// 面板工作台里它装在 iframe 中——所以下面大部分操作都发生在 iframe 里
+// （frame），不在面板的 DOM 里。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { rm, mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -83,61 +87,138 @@ async function openRecorder(app, pet) {
   return panel;
 }
 
-/**
- * 点面板里的一个按钮（按文字找）。
- *
- * **用 evaluate 派发 click，不用 Playwright 的 click**：面板失焦就会收起，
- * Playwright 的命中检测会一直重试到超时（见 test/e2e/panel.spec.js 的 clickIn）。
- */
-async function clickButton(panel, label) {
-  await panel.evaluate((text) => {
-    const btn = [...document.querySelectorAll('#plugin-body .block-buttons button')].find((b) =>
-      b.textContent.includes(text)
-    );
-    if (!btn) throw new Error(`面板里没有按钮：${text}`);
-    btn.click();
-  }, label);
+/** 插件自己的页面（面板工作台里的那个 iframe）。 */
+function studio(panel) {
+  return panel.frameLocator('#plugin-frame');
 }
 
-/** 勾一个开关（按文字找）。 */
-async function toggle(panel, label, checked) {
-  await panel.evaluate(
-    ({ text, want }) => {
-      const row = [...document.querySelectorAll('#plugin-body .block-toggle')].find((l) =>
-        l.textContent.includes(text)
-      );
-      const box = row?.querySelector('input[type="checkbox"]');
-      if (!box) throw new Error(`面板里没有开关：${text}`);
-      if (box.checked !== want) box.click();
-    },
-    { text: label, want: checked }
+/**
+ * 点插件页面里的一个元素。
+ *
+ * 用 evaluate 派发 click，不用 Playwright 的 click：面板失焦就会收起，
+ * Playwright 的命中检测会一直重试到超时（见 test/e2e/panel.spec.js 的 clickIn）。
+ */
+async function clickStudio(frame, selector) {
+  await frame.locator(selector).evaluate((el) => el.click());
+}
+
+/** 等插件页面拿到主进程给的第一份数据。 */
+async function waitStudioReady(frame) {
+  await frame.locator('.studio').evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          if (window.__studio?.state) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - started > 20000) {
+            clearInterval(timer);
+            reject(new Error('插件页面没拿到数据'));
+          }
+        }, 100);
+      })
   );
 }
 
-/** 改输入框的值并提交。 */
-async function setInput(panel, value) {
-  await panel.evaluate((text) => {
-    const row = document.querySelector('#plugin-body .block-input');
-    if (!row) throw new Error('面板里没有输入框');
-    row.querySelector('input').value = text;
-    row.querySelector('button').click();
-  }, value);
+/** 读插件页面底部那行状态。 */
+async function studioStatus(frame) {
+  return frame.locator('#statusText').textContent().catch(() => '');
+}
+
+/** 改插件页面里的一个输入框，并触发它的 change。 */
+async function setStudioInput(frame, selector, value) {
+  await frame.locator(selector).evaluate(
+    (el, next) => {
+      // 先聚焦：页面重画时不会覆盖**正在输入**的框（见 studio.js 的 renderDrawer）。
+      el.focus();
+      el.value = next;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    value
+  );
+}
+
+/** 选一个下拉框的选项。 */
+async function selectStudio(frame, selector, value) {
+  await frame.locator(selector).evaluate(
+    (el, next) => {
+      el.value = next;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    value
+  );
 }
 
 /**
- * 读面板上的状态行。
+ * 设好输出目录。
  *
- * 录完一段之后，面板窗口会失焦收起来，这时候问它要东西**可能等不到回话**
- * （Chromium 会把藏起来的页面的渲染进程冻住）。所以这里自己加个时限，
- * 读不到就当没有——状态行只是用来给失败消息补一句说明的。
+ * 输出目录在**设置抽屉**里（主页面没有——这是有意的），
+ * 所以要先点开右上角的齿轮。
  */
-async function readStatus(panel) {
-  return Promise.race([
-    panel
-      .evaluate(() => document.getElementById('plugin-status')?.textContent || '')
-      .catch(() => ''),
-    new Promise((resolve) => setTimeout(() => resolve('（状态读不到了）'), 3000)),
-  ]);
+async function setOutputDir(frame, dir) {
+  await clickStudio(frame, '#gearBtn');
+  await frame.locator('#outputDir').evaluate(
+    (el, value) => {
+      el.focus();
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+    dir
+  );
+  // 等配置真的存下来了（写盘是异步的）。
+  //
+  // **locator.evaluate 的第一个参数是元素**，自己传的值是第二个——
+  // 写反了的话，拿到的是元素而不是路径，等一辈子也等不到。
+  await frame.locator('.studio').evaluate(
+    (_el, value) =>
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          if (window.__studio?.state?.outputDir === value) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - started > 15000) {
+            clearInterval(timer);
+            reject(new Error('输出目录没存上'));
+          }
+        }, 100);
+      }),
+    dir
+  );
+}
+
+/** 切到某个 tab（本地切换，不等主进程）。 */
+async function switchTab(frame, mode) {
+  await clickStudio(frame, `.tab[data-mode="${mode}"]`);
+  await frame.locator(`.pane[data-pane="${mode}"]`).evaluate((el) => {
+    if (el.hidden) throw new Error(`tab 没切到 ${mode}`);
+  });
+}
+
+/** 等录制按钮变成「停止录制」。 */
+async function waitRecording(frame) {
+  await frame.locator('#recordBtn').evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          if (document.getElementById('recordBtn')?.textContent.includes('停止')) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - started > 15000) {
+            clearInterval(timer);
+            reject(new Error('录制没开始'));
+          }
+        }, 100);
+      })
+  );
 }
 
 /**
@@ -182,27 +263,97 @@ test.describe('录屏插件', () => {
     ]);
   });
 
+  test('界面：三个 tab、设置在抽屉里、主页面没有输出目录', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+
+      // 三个 tab 都在。
+      const tabs = await frame.locator('.tab').evaluateAll((els) => els.map((e) => e.dataset.mode));
+      expect(tabs).toEqual(['screen', 'region', 'window']);
+
+      // 设置是**右上角的一张图**（不是一行字）。
+      expect(await frame.locator('#gearBtn img').count(), '设置按钮应该是一张图').toBeGreaterThan(0);
+
+      // 抽屉默认是关着的。
+      expect(await frame.locator('#drawer').evaluate((el) => el.hidden)).toBe(true);
+
+      // 输出目录**只在抽屉里**：主页面上没有这个输入框。
+      const onMainPage = await frame
+        .locator('.studio-body')
+        .evaluate((body) => Boolean(body.querySelector('#outputDir')));
+      expect(onMainPage, '主页面不该有输出目录').toBe(false);
+
+      // 点齿轮 → 抽屉滑出来，里面有输出目录与两个快捷键。
+      await clickStudio(frame, '#gearBtn');
+      await frame.locator('#drawer').evaluate((el) => {
+        if (el.hidden) throw new Error('抽屉没打开');
+      });
+      expect(await frame.locator('#outputDir').count()).toBe(1);
+      expect(await frame.locator('#hotkeyStart').count()).toBe(1);
+      expect(await frame.locator('#hotkeyStop').count()).toBe(1);
+    } finally {
+      await closeApp(app);
+    }
+  });
+
+  test('切 tab 不卡：切换是本地做的，不等主进程', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openRecorder(app, pet);
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+
+      // 切到窗口再切回来，量一量**本地切换**花了多久：
+      // 切 tab 只是改几个元素的 hidden 属性，不该过一次 IPC。
+      const ms = await frame.locator('.tab[data-mode="window"]').evaluate((el) => {
+        const started = performance.now();
+        el.click();
+        const shown = !document.querySelector('.pane[data-pane="window"]').hidden;
+        return { ms: performance.now() - started, shown };
+      });
+      expect(ms.shown, '点了就该换过去').toBe(true);
+      expect(ms.ms, `切 tab 花了 ${ms.ms.toFixed(1)}ms`).toBeLessThan(100);
+
+      const back = await frame.locator('.tab[data-mode="screen"]').evaluate((el) => {
+        const started = performance.now();
+        el.click();
+        const shown = !document.querySelector('.pane[data-pane="screen"]').hidden;
+        return { ms: performance.now() - started, shown };
+      });
+      expect(back.shown).toBe(true);
+      expect(back.ms, `切回来花了 ${back.ms.toFixed(1)}ms`).toBeLessThan(100);
+    } finally {
+      await closeApp(app);
+    }
+  });
+
   test('全屏录制产出 mp4；麦克风可用就录，不可用就说清楚', async () => {
     // 两段录放在**同一个应用实例**里：每段录完应用都要收尾一会儿
     // （Windows 的屏幕捕获会话松手要十几秒），起两次应用太慢。
     const { app, pet } = await launch();
     try {
       let panel = await openRecorder(app, pet);
+      let frame = studio(panel);
+      await waitStudioReady(frame);
       // 参数都自己设一遍：目录里可能还留着上一次的配置。
-      await clickButton(panel, '全屏');
-      await clickButton(panel, '视频');
-      await setInput(panel, OUT_DIR);
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="video"]');
+      await setOutputDir(frame, OUT_DIR);
 
       // —— 第一段：默认开着扬声器，系统声音（loopback）得录进去 ——
-      await clickButton(panel, '开始录制');
+      await clickStudio(frame, '#recordBtn');
+      await waitRecording(frame);
       await new Promise((r) => setTimeout(r, 3000));
-      await clickButton(panel, '停止录制');
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 2500));
 
       const files = await readdir(OUT_DIR);
       const mp4 = await newestRecording(OUT_DIR);
       // 出错时把插件的状态也带上：光说「没有 mp4」根本不知道卡在哪一步。
-      const status = await readStatus(panel);
+      const status = await studioStatus(frame);
       expect(mp4, `应该产出 mp4：${files.join('、')}；插件状态：${status}`).toBeTruthy();
       const buffer = await readFile(join(OUT_DIR, mp4));
       // mp4 的第一个 box 是 ftyp：看它就知道文件头是对的。
@@ -225,21 +376,21 @@ test.describe('录屏插件', () => {
       //   - 有麦克风 → 录出来的文件要有声音轨；
       //   - 没麦克风 → 状态里要说清楚为什么没声音，不能静默。
       panel = await openRecorder(app, pet);
-      await toggle(panel, '麦克风', true);
-      await toggle(panel, '扬声器', false);
-      await clickButton(panel, '开始录制');
+      frame = studio(panel);
+      await waitStudioReady(frame);
+      await selectStudio(frame, '#micSelect', '0');
+      await selectStudio(frame, '#speakerSelect', 'off');
+      await clickStudio(frame, '#recordBtn');
+      await waitRecording(frame);
       await new Promise((r) => setTimeout(r, 2500));
-      await clickButton(panel, '停止录制');
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 2500));
 
       const micFile = await newestRecording(OUT_DIR);
       const micTracks = parseMp4Tracks(await readFile(join(OUT_DIR, micFile))).tracks;
       const hasSound = micTracks.some((t) => t.type === 'soun');
 
-      // 面板收起的时候是不收异步更新的（藏起来的页面不刷新），
-      // 所以要重新打开一次才能看到插件留下的提示。
-      panel = await openRecorder(app, pet);
-      const micStatus = await readStatus(panel);
+      const micStatus = await studioStatus(frame);
       expect(
         hasSound || micStatus.includes('麦克风'),
         `要么录到了声音（${JSON.stringify(micTracks)}），要么说清楚为什么没声音：${micStatus}`
@@ -253,18 +404,21 @@ test.describe('录屏插件', () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
+      const frame = studio(panel);
+      await waitStudioReady(frame);
       // 参数都自己设一遍：几条用例共用同一个 userData，配置是连着的。
-      await clickButton(panel, '全屏');
-      await clickButton(panel, 'GIF');
-      await setInput(panel, OUT_DIR);
-      await clickButton(panel, '开始录制');
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="gif"]');
+      await setOutputDir(frame, OUT_DIR);
+      await clickStudio(frame, '#recordBtn');
+      await waitRecording(frame);
       await new Promise((r) => setTimeout(r, 3000));
-      await clickButton(panel, '停止录制');
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 3000));
 
       const files = await readdir(OUT_DIR);
       const gif = await newestRecording(OUT_DIR, '.gif');
-      const status = await readStatus(panel);
+      const status = await studioStatus(frame);
       expect(gif, `应该产出 GIF：${files.join('、')}；插件状态：${status}`).toBeTruthy();
 
       const buffer = await readFile(join(OUT_DIR, gif));
@@ -280,34 +434,28 @@ test.describe('录屏插件', () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
-      await clickButton(panel, '全屏');
-      await clickButton(panel, '视频');
-      await setInput(panel, OUT_DIR);
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="video"]');
+      await setOutputDir(frame, OUT_DIR);
 
-      await clickButton(panel, '开始录制');
+      await clickStudio(frame, '#recordBtn');
       // 「停止录制」一出现就点：这时捕获页很可能还在取流，
       // 停止会落在「开始」还没走完的那段路上。
-      await panel.waitForFunction(
-        () =>
-          [...document.querySelectorAll('#plugin-body .block-buttons button')].some((b) =>
-            b.textContent.includes('停止录制')
-          ),
-        null,
-        { timeout: 10000, polling: 50 }
-      );
-      await clickButton(panel, '停止录制');
+      await waitRecording(frame);
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 2000));
 
       // 应该回到「开始录制」：没卡在「已经在录了」。
-      const labels = await panel.evaluate(() =>
-        [...document.querySelectorAll('#plugin-body .block-buttons button')].map((b) => b.textContent)
-      );
-      expect(labels.join('|'), '录了又停之后应该还能再录').toContain('开始录制');
+      const label = await frame.locator('#recordBtn').textContent();
+      expect(label, '录了又停之后应该还能再录').toContain('开始录制');
 
       // 而且真的还能再录一段。
-      await clickButton(panel, '开始录制');
+      await clickStudio(frame, '#recordBtn');
+      await waitRecording(frame);
       await new Promise((r) => setTimeout(r, 2500));
-      await clickButton(panel, '停止录制');
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 3000));
       expect(await newestRecording(OUT_DIR), '第二段应该存下来了').toBeTruthy();
     } finally {
@@ -315,37 +463,31 @@ test.describe('录屏插件', () => {
     }
   });
 
-  test('工作台开着时快捷键才生效，关掉就注销', async () => {
+  test('快捷键：打开过录屏就一直有效，面板收起来也不注销', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
-      await clickButton(panel, '设置');
+      const frame = studio(panel);
+      await waitStudioReady(frame);
 
-      const workbench = await findWindow(app, 'workbench.html');
-      expect(workbench, '工作台应该出现').not.toBeNull();
-      await workbench.waitForLoadState('domcontentloaded');
-
-      // 快捷键已经填好了（默认 Control+Shift+R）
-      await workbench.waitForFunction(
-        () => (document.getElementById('hotkey')?.value || '').includes('+'),
-        null,
-        { timeout: 15000, polling: 100 }
-      );
-
-      // 工作台开着 → 快捷键注册上了
-      await new Promise((r) => setTimeout(r, 500));
+      // 打开录屏 → 快捷键注册上了（默认 Control+Shift+R）
+      await new Promise((r) => setTimeout(r, 800));
       const registered = await app.evaluate(({ globalShortcut }) =>
         globalShortcut.isRegistered('Control+Shift+R')
       );
-      expect(registered, '工作台开着的时候快捷键应该注册着').toBe(true);
+      expect(registered, '打开录屏之后快捷键应该注册着').toBe(true);
 
-      // 关掉工作台 → 注销
-      await workbench.evaluate(() => window.close());
-      await new Promise((r) => setTimeout(r, 1000));
-      const afterClose = await app.evaluate(({ globalShortcut }) =>
+      // 面板收起来（失焦自动收起）→ 快捷键**仍然**注册着。
+      //
+      // 这一条是这次改的关键：以前快捷键跟着「设置窗口」走，
+      // 在录屏自己的页面上按不动。面板一收起来就没了的话，
+      // 「开始录制」这种快捷键更没有意义——它的用处就是不开界面也能按。
+      await panel.evaluate(() => window.panel?.back?.());
+      await new Promise((r) => setTimeout(r, 1200));
+      const afterHide = await app.evaluate(({ globalShortcut }) =>
         globalShortcut.isRegistered('Control+Shift+R')
       );
-      expect(afterClose, '工作台关了快捷键就该注销').toBe(false);
+      expect(afterHide, '面板收起来之后快捷键仍然要有效').toBe(true);
     } finally {
       await closeApp(app);
     }
@@ -355,10 +497,12 @@ test.describe('录屏插件', () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
-      await clickButton(panel, '全屏');
-      await clickButton(panel, '视频');
-      await setInput(panel, OUT_DIR);
-      await clickButton(panel, '开始录制');
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="video"]');
+      await setOutputDir(frame, OUT_DIR);
+      await clickStudio(frame, '#recordBtn');
 
       const control = await findWindow(app, 'control.html');
       expect(control, '控制条应该出现').not.toBeNull();
@@ -382,74 +526,110 @@ test.describe('录屏插件', () => {
     }
   });
 
-  test('窗口录制：选一个窗口，它被关掉时录制自动停下来并保存', async () => {
+  test('窗口录制：列出能录的窗口（带图标），选了它就能录', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
-      await clickButton(panel, '全屏');
-      await clickButton(panel, '视频');
-      await setInput(panel, OUT_DIR);
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="video"]');
+      await setOutputDir(frame, OUT_DIR);
 
-      // 先把工作台开出来：它是个有稳定标题的窗口，待会儿录它、再把它关掉。
-      await clickButton(panel, '设置');
-      const workbench = await findWindow(app, 'workbench.html');
-      expect(workbench, '工作台应该出现').not.toBeNull();
-      await workbench.waitForLoadState('domcontentloaded');
-      await new Promise((r) => setTimeout(r, 800));
+      // 切到窗口模式：应该列出能录的窗口。
+      await switchTab(frame, 'window');
+      await frame.locator('#windowList li').first().waitFor({ timeout: 15000, polling: 200 });
 
-      // 切到窗口模式：面板里应该列出能录的窗口。
-      await clickButton(panel, '窗口');
-      await new Promise((r) => setTimeout(r, 1500));
-      const items = await panel.evaluate(() =>
-        [...document.querySelectorAll('#plugin-body .block-list li')].map((li) => li.textContent)
+      // 图标是**后台**取的（要跑一遍 PowerShell 枚举窗口，再读程序图标），
+      // 所以刚列出来时可能还没有——等它一会儿。
+      await frame
+        .locator('#windowList img.win-icon[src^="data:image/"]')
+        .first()
+        .waitFor({ timeout: 30000, polling: 200 });
+
+      const items = await frame.locator('#windowList li').evaluateAll((els) =>
+        els.map((li) => ({
+          label: li.querySelector('.label')?.textContent || '',
+          icon: li.querySelector('img.win-icon')?.getAttribute('src') || '',
+        }))
       );
       expect(items.length, '应该列出能录的窗口').toBeGreaterThan(0);
+      // 每个条目都要有图标位：有图标就显示图标，没有就用占位的小方块。
+      expect(
+        await frame.locator('#windowList img.win-icon').count(),
+        '窗口条目应该有图标'
+      ).toBe(items.length);
+      // 图标是主进程用程序路径读出来的（Windows 上 Electron 给不了 appIcon）。
+      const withIcon = items.filter((it) => it.icon.startsWith('data:image/'));
+      expect(withIcon.length, `这些窗口该有图标：${JSON.stringify(items.map((i) => i.label))}`).toBeGreaterThan(0);
 
-      // 选工作台那个窗口。
-      const index = items.findIndex((text) => text.includes('录屏设置'));
-      expect(index, `列表里应该有工作台：${JSON.stringify(items)}`).toBeGreaterThanOrEqual(0);
-      await panel.evaluate((i) => {
-        document.querySelectorAll('#plugin-body .block-list li')[i].click();
-      }, index);
+      // 选第一个窗口，录一段。
+      await clickStudio(frame, '#windowList li:first-child');
       await new Promise((r) => setTimeout(r, 500));
-
-      await clickButton(panel, '开始录制');
+      await clickStudio(frame, '#recordBtn');
+      await waitRecording(frame);
       await new Promise((r) => setTimeout(r, 2500));
-
-      // 关掉被录的那个窗口：录制应该自己停下来，把已有的内容存下来。
-      await workbench.evaluate(() => window.close());
-      await new Promise((r) => setTimeout(r, 4000));
+      await clickStudio(frame, '#recordBtn');
+      await new Promise((r) => setTimeout(r, 3000));
 
       const mp4 = await newestRecording(OUT_DIR);
-      const status = await readStatus(panel);
-      expect(mp4, `应该把已有内容存下来；插件状态：${status}`).toBeTruthy();
+      const status = await studioStatus(frame);
+      expect(mp4, `应该产出 mp4；插件状态：${status}`).toBeTruthy();
     } finally {
       await closeApp(app);
     }
   });
 
-  test('选区录制：框一块，录出来的就是那一块', async () => {
+  test('选区录制：遮罩盖满整块屏（含任务栏），框完的边框留到录完', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openRecorder(app, pet);
-      // 参数都自己设一遍：几条用例共用同一个 userData，配置是连着的。
-      await clickButton(panel, '全屏');
-      await clickButton(panel, '视频');
-      await clickButton(panel, '选区');
-      await setInput(panel, OUT_DIR);
-      await clickButton(panel, '开始录制');
+      const frame = studio(panel);
+      await waitStudioReady(frame);
+      await switchTab(frame, 'screen');
+      await clickStudio(frame, '#formatGroup button[data-format="video"]');
+      await setOutputDir(frame, OUT_DIR);
+      await switchTab(frame, 'region');
+      await clickStudio(frame, '#recordBtn');
 
       // 遮罩应该盖住一块屏幕，等用户在上面拉框。
       const picker = await findWindow(app, 'picker.html');
       expect(picker, '遮罩窗口应该出现').not.toBeNull();
       await picker.waitForLoadState('domcontentloaded');
 
+      // 遮罩要**盖满整块屏**（含任务栏那块）：
+      // 以前遮罩是画在桌宠上的，盖不到任务栏，用户框不到最下面一条。
+      //
+      // 窗口的位置与大小问主进程（Playwright 的 Page 没有 bounds()）。
+      const geometry = await app.evaluate(({ BrowserWindow, screen }) => {
+        const win = BrowserWindow.getAllWindows().find((w) =>
+          w.webContents.getURL().includes('picker.html')
+        );
+        const display = screen.getPrimaryDisplay();
+        return { bounds: win?.getBounds() || null, display: display.bounds };
+      });
+      expect(geometry.bounds, '拿不到遮罩窗口的位置').toBeTruthy();
+      expect(
+        Math.abs(geometry.bounds.width - geometry.display.width),
+        `遮罩宽 ${geometry.bounds.width}，屏幕宽 ${geometry.display.width}`
+      ).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs(geometry.bounds.height - geometry.display.height),
+        `遮罩高 ${geometry.bounds.height}，屏幕高 ${geometry.display.height}（任务栏那块也要盖到）`
+      ).toBeLessThanOrEqual(2);
+
+      // 选区是**透明**的：选中的那块不能蒙一层蓝。
+      expect(
+        await picker.locator('#sel').evaluate((el) => getComputedStyle(el).backgroundColor),
+        '选中的那块不该有背景色'
+      ).toBe('rgba(0, 0, 0, 0)');
+
       await picker.mouse.move(200, 200);
       await picker.mouse.down();
       await picker.mouse.move(600, 500, { steps: 8 });
       await picker.mouse.up();
 
-      // 遮罩上写着选区有多大（物理像素）。
+      // 遮罩上写着选区有多大（DIP）。
       const label = await picker.textContent('#size');
       const [selWidth, selHeight] = (label || '').match(/(\d+)\s*×\s*(\d+)/)?.slice(1).map(Number) || [];
       expect(selWidth, `遮罩上没写出选区大小：${label}`).toBeGreaterThan(0);
@@ -460,16 +640,22 @@ test.describe('录屏插件', () => {
 
       // 遮罩必须在开始录制**之前**关掉：不然那层暗色会被录进画面。
       await new Promise((r) => setTimeout(r, 1500));
-      const stillThere = await findWindow(app, 'picker.html');
-      expect(stillThere, '遮罩应该已经关掉了').toBeNull();
+      expect(await findWindow(app, 'picker.html'), '遮罩应该已经关掉了').toBeNull();
+
+      // 框完的边框要**留在桌面上**，直到录制结束。
+      const frameWindow = await findWindow(app, 'region-frame.html');
+      expect(frameWindow, '选区边框应该留在桌面上').not.toBeNull();
 
       await new Promise((r) => setTimeout(r, 2000));
-      await clickButton(panel, '停止录制');
+      await clickStudio(frame, '#recordBtn');
       await new Promise((r) => setTimeout(r, 3000));
+
+      // 录完了，边框就该撤掉。
+      expect(await findWindow(app, 'region-frame.html'), '录完了边框应该撤掉').toBeNull();
 
       const files = await readdir(OUT_DIR);
       const mp4 = await newestRecording(OUT_DIR);
-      const status = await readStatus(panel);
+      const status = await studioStatus(frame);
       expect(mp4, `应该产出 mp4：${files.join('、')}；插件状态：${status}`).toBeTruthy();
 
       const { tracks } = parseMp4Tracks(await readFile(join(OUT_DIR, mp4)));

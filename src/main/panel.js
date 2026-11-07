@@ -27,6 +27,7 @@ import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin, builtinPage, builtinActio
  *    否则用户点的第一个插件会打开成一片空白。
  * 3. **失焦即收**：点面板外面就收起（带一小段抖动保护，
  *    免得刚弹出时的假失焦把它立刻关掉）。
+ *    （自动化测试里例外——见 IS_E2E。）
  */
 
 /** 面板与桌宠之间的间距（像素）。 */
@@ -40,6 +41,15 @@ const MIN_HEIGHT = 160;
 
 /** 失焦后多久才收起来：躲开「刚弹出时的假失焦」。 */
 const BLUR_GRACE_MS = 300;
+
+/**
+ * 是不是在跑自动化测试。
+ *
+ * 测试里**不能**失焦就收：自动化环境拿不到系统焦点（应用不是前台窗口），
+ * 面板一失焦就自己藏起来，界面落点跟着摘掉——
+ * 插件页面就再也收不到周期数据，测「界面会不会跟着更新」根本无从下手。
+ */
+const IS_E2E = Boolean(process.env.DESK_PET_E2E);
 
 export function createPanelController({
   rootDir,
@@ -238,6 +248,11 @@ export function createPanelController({
       // 刚弹出时的失焦是假的：show() 与 focus() 之间会抖一下。
       if (Date.now() - shownAt < BLUR_GRACE_MS) return;
       if (!win || win.isDestroyed() || !win.isVisible()) return;
+      // **E2E 里不自动收起**：自动化环境拿不到系统的焦点
+      // （应用不是前台窗口），面板一失焦就自己藏起来了——
+      // 界面落点跟着摘掉，插件页面就再也收不到周期数据，
+      // 测「录制中界面会不会更新」这类东西根本没法测。
+      if (IS_E2E) return;
       hide();
     });
     // 抓住这个窗口自己：旧窗口的 closed 事件不能把新窗口的引用清掉

@@ -25,6 +25,9 @@ test('规整后的配置：认得的字段留下，认不出的退回默认', ()
     gifWidth: 10,
     gifFps: 60,
     hotkey: '  Control+Shift+R  ',
+    stopHotkey: '  Control+Shift+S  ',
+    micDeviceIndex: 3,
+    windowId: 'window:123:0',
     outputDir: 123,
   });
   assert.equal(c.mode, 'region');
@@ -35,7 +38,30 @@ test('规整后的配置：认得的字段留下，认不出的退回默认', ()
   assert.equal(c.gifWidth, 160, 'GIF 宽度夹到下限 160');
   assert.equal(c.gifFps, 30, 'GIF 帧率夹到上限 30');
   assert.equal(c.hotkey, 'Control+Shift+R', '快捷键两边空白去掉');
+  assert.equal(c.stopHotkey, 'Control+Shift+S', '停止快捷键也一样');
+  assert.equal(c.micDeviceIndex, 3, '第几个麦克风');
+  assert.equal(c.windowId, 'window:123:0', '选中的窗口');
   assert.equal(c.outputDir, '', '不是字符串就当没设');
+});
+
+test('停止录制的快捷键：认不出就退回默认', () => {
+  assert.equal(normalizeConfig({}).stopHotkey, DEFAULT_CONFIG.stopHotkey);
+  assert.equal(normalizeConfig({ stopHotkey: 42 }).stopHotkey, DEFAULT_CONFIG.stopHotkey);
+  assert.equal(normalizeConfig({ stopHotkey: '   ' }).stopHotkey, '', '空串就是不要这个键');
+});
+
+test('麦克风序号：夹在 0 到 64 之间', () => {
+  assert.equal(normalizeConfig({ micDeviceIndex: -5 }).micDeviceIndex, 0);
+  assert.equal(normalizeConfig({ micDeviceIndex: 999 }).micDeviceIndex, 64);
+  assert.equal(normalizeConfig({ micDeviceIndex: 'x' }).micDeviceIndex, DEFAULT_CONFIG.micDeviceIndex);
+});
+
+test('选中的窗口与选中的显示器各记各的', () => {
+  const c = normalizeConfig({ sourceId: 'screen:0', windowId: 'window:7:0' });
+  assert.equal(c.sourceId, 'screen:0');
+  assert.equal(c.windowId, 'window:7:0');
+  // 少写一个也不能串：另一个模式的目标不是同一个东西。
+  assert.equal(normalizeConfig({ windowId: 'window:7:0' }).sourceId, '');
 });
 
 test('认不出的模式与格式退回默认', () => {
