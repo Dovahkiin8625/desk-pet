@@ -6,6 +6,7 @@
 //   3. 用户自己装的插件（userData 里的）也走同一条路。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { rm, mkdir, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -63,6 +64,20 @@ async function openPanel(app, pet) {
 }
 
 /**
+ * 固件插件记下来的 tick 次数。
+ *
+ * 数日志的行数——插件页面被撤掉之后，页面上那个计数就没了，
+ * 日志还在（插件自己写的）。
+ */
+function tickCount(logPath) {
+  try {
+    return readFileSync(logPath, 'utf8').split('\n').filter((l) => l.trim()).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * 摆一个「带自定义页面」的用户插件。
  *
  * 摆在 userData/plugins/ 下——用户自己的插件就放那儿（README「插件系统」）。
@@ -91,7 +106,21 @@ async function makeUserPluginWithPage() {
   );
   await writeFile(
     join(dir, 'main.js'),
-    `export default function createPlugin() {
+    `// tick() 被调用的次数。
+//
+// **要变的**：一直返回同一个常量的话，
+// 「多了一个定时器」这种问题测不出来——两个定时器推的东西一模一样。
+// 带上计数，调用次数就看得见了。
+//
+// 也**记到文件里**：面板回到搜索视图时插件页面会被撤掉，
+// 页面上那个计数就没了——文件里的还在，测试能接着数。
+import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+let tickCount = 0;
+
+export default function createPlugin(ctx) {
+  const logPath = join(ctx.plugin.dir, 'tick.log');
   return {
     page() {
       return { pluginId: 'e2e-page', title: '测试页面', blocks: [] };
@@ -100,7 +129,13 @@ async function makeUserPluginWithPage() {
       return { hello: 'from-plugin-data' };
     },
     async tick() {
-      return { hello: 'from-plugin-tick' };
+      tickCount += 1;
+      try {
+        appendFileSync(logPath, tickCount + '\\n');
+      } catch (err) {
+        /* 记不上就算了，计数本身还在 */
+      }
+      return { hello: 'from-plugin-tick', n: tickCount };
     },
     async act(ctx, actionId, payload) {
       if (actionId === 'ping') return { pong: payload?.from || '' };
@@ -122,6 +157,7 @@ async function makeUserPluginWithPage() {
     <div id="received"></div>
     <div id="pushed"></div>
     <div id="ticked"></div>
+    <div id="tick-count"></div>
     <script type="module">
       import { bindSurface } from '/src/renderer/ui/pluginPage.js';
       const surface = bindSurface();
@@ -135,6 +171,8 @@ async function makeUserPluginWithPage() {
       });
       surface.onTick((data) => {
         document.getElementById('ticked').textContent = String(data?.hello || '');
+        // tick() 被调用的次数：用来盯「一个插件只有一个定时器」。
+        document.getElementById('tick-count').textContent = String(data?.n ?? '');
       });
       // 插件页面把底部那行字交给壳（postMessage）。
       surface.setStatus('来自插件页面的状态');
@@ -215,6 +253,89 @@ test.describe('插件界面（surface）', () => {
       // 插件页面用助手把动作送到插件：iframe → 父页面 → IPC → 插件 → 回来。
       await frame.locator('#send').click();
       await expect(frame.locator('#received')).toHaveText('e2e');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('一个插件只有一个刷新定时器：面板与独立窗口同时开着也不翻倍', async () => {
+    await makeUserPluginWithPage();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'e2e-page');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('e2e-page'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("测试页面")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'e2e-page', null, {
+        timeout: 10000,
+      });
+
+      // 面板工作台这边开着插件（它有自带页面 → 面板挂了界面落点）。
+      const frame = panel.frameLocator('#plugin-frame');
+      await expect(frame.locator('#marker')).toHaveText('自定义页面');
+
+      // 再开一个独立窗口：**同一个插件**现在挂着两处界面。
+      // 但定时器应该**只有一个**——界面路由的定时器按插件算，不按界面算。
+      await panel.evaluate(() => document.querySelector('#detach')?.click());
+      const pluginWin = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(pluginWin, '插件的独立窗口没有出现').not.toBeNull();
+      await pluginWin.waitForLoadState('domcontentloaded');
+      const winFrame = pluginWin.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('#marker')).toHaveText('自定义页面');
+
+      // 固件的 tick() 带一个自增计数：数它被调了几次。
+      //
+      // 清单里 refreshMs=500 → 三秒里**一个**定时器该调 6 次左右；
+      // 两个定时器（每处界面一个）就是 12 次左右。
+      const readCount = async (loc) => Number(await loc.textContent() || 0);
+      const before = await readCount(winFrame.locator('#tick-count'));
+      await new Promise((r) => setTimeout(r, 3000));
+      const after = await readCount(winFrame.locator('#tick-count'));
+      const calls = after - before;
+      // 上限给得宽一点（机器慢时定时器可能少推几拍），
+      // 但**翻倍**是抓得到的：两个定时器 → 12 次左右。
+      expect(calls, `三秒里 tick() 被调了 ${calls} 次（一个定时器该是 6 次左右）`).toBeLessThan(10);
+      // 也不能是 0——那说明定时器根本没起来。
+      expect(calls, 'tick() 压根没被调用：定时器没起来').toBeGreaterThan(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('面板回到搜索视图：插件的界面落点要摘掉（定时器不再推它）', async () => {
+    await makeUserPluginWithPage();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'e2e-page');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('e2e-page'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("测试页面")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'e2e-page', null, {
+        timeout: 10000,
+      });
+
+      // 插件在面板里开着：定时器在推它。
+      const logPath = join(USER_DATA, 'plugins', 'e2e-page', 'tick.log');
+      await expect.poll(() => tickCount(logPath), { timeout: 10000 }).toBeGreaterThan(0);
+
+      // 回到搜索视图 = **不再看**这个插件的界面了。
+      // 界面落点必须摘掉：不然定时器会一直按 refreshMs 刷新它，
+      // 而「我的界面开着」这个信号也永远送不到插件那里。
+      await panel.click('#back');
+      await panel.waitForFunction(() => window.__panel?.view === 'search', null, { timeout: 10000 });
+
+      // 摘掉了：固件的 tick() 不该再被调用。
+      // （插件页面这时已经撤了——数的是插件自己记下来的日志。）
+      const after = tickCount(logPath);
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(
+        tickCount(logPath),
+        '回到搜索视图之后还在推这个插件：界面落点没有摘掉'
+      ).toBe(after);
     } finally {
       await app.close();
     }

@@ -188,7 +188,10 @@
       display: block;
       flex: 0 1 auto;
       min-height: 0;
-      max-height: 640px;
+      /* 上限由 main.js 按 MAX_VIEW_HEIGHT 设（这里是兜底）：
+         面板的窗口高度就是按它夹的，iframe 放得比它高，
+         那一段在面板里够不着（积木区这时是藏着的）。 */
+      max-height: 560px;
     }
     #plugin-frame[hidden] { display: none; }
   </style>

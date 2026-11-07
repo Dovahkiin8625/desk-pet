@@ -64,6 +64,17 @@ export async function createPluginHost({
   /** 插件界面开合的回调（插件想知道「我的界面开着吗」）。 */
   const surfaceListeners = new Set();
 
+  /**
+   * 订阅界面开合。返回取消订阅的函数。
+   *
+   * 插件通过 `ctx.host.onSurfaceChange()` 用它——
+   * 录屏的快捷键只在界面开着时才生效（见第二期计划）。
+   */
+  function onSurfaceChange(cb) {
+    surfaceListeners.add(cb);
+    return () => surfaceListeners.delete(cb);
+  }
+
   let prefs = await readJson(userDataDir, PREFS_FILE, { disabled: [] }, '插件启用状态');
   const disabled = new Set(
     Array.isArray(prefs?.disabled) ? prefs.disabled.filter((x) => typeof x === 'string') : []
@@ -96,6 +107,14 @@ export async function createPluginHost({
         /** 把插件分离成独立窗口 / 小部件。 */
         openWindow: (id, mode) => windowOpener?.open(id, mode) || { ok: false },
         closeWindow: (id) => windowOpener?.close(id) || { ok: false },
+        /**
+         * 插件的界面开合了：第一个界面挂上来 / 最后一个摘掉。
+         *
+         * 插件靠它知道「我的界面现在开着吗」——
+         * 录屏的快捷键只在界面开着时才生效。
+         * 返回取消订阅的函数。
+         */
+        onSurfaceChange: (cb) => onSurfaceChange(cb),
       },
     };
   }
@@ -486,10 +505,7 @@ export async function createPluginHost({
       }
     },
     /** 订阅界面开合。返回取消订阅的函数。 */
-    onSurfaceChange: (cb) => {
-      surfaceListeners.add(cb);
-      return () => surfaceListeners.delete(cb);
-    },
+    onSurfaceChange: (cb) => onSurfaceChange(cb),
     /**
      * 某个形态实际生效的窗口规格（尺寸、刷新间隔……）。
      *

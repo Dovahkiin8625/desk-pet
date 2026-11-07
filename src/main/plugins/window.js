@@ -29,7 +29,7 @@ export function createPluginWindowController({
   getDisplays,
   surfaces,
 }) {
-  /** pluginId → { win, mode, ready, pluginId, contentsId, ownPage, surface }。 */
+  /** pluginId → { win, mode, pluginId, contentsId, ownPage, surface }。 */
   const windows = new Map();
   /** webContents.id → pluginId：IPC 来了要认得出是哪个窗口。 */
   const byContents = new Map();
@@ -164,7 +164,7 @@ export function createPluginWindowController({
     // 表现为「点了退出，程序却不退」）。这里读一次，存下来就够用了。
     const contentsId = win.webContents.id;
 
-    const entry = { win, mode, ready: false, pluginId, contentsId, ownPage, surface: null };
+    const entry = { win, mode, pluginId, contentsId, ownPage, surface: null };
     windows.set(pluginId, entry);
     byContents.set(contentsId, pluginId);
 

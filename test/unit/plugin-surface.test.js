@@ -84,6 +84,31 @@ test('摘掉一个 surface：另一个还收得到', () => {
   assert.equal(b.received.length, 1);
 });
 
+test('一个插件只有一个定时器：挂着几个界面都只刷一次', async () => {
+  // **定时器按插件算，不按界面算。**
+  //
+  // 两处界面同时开着同一个插件时，宿主只该被问一次「这一轮推什么」——
+  // 问两次就是两份 tick（既白费力气，又让页面收到重复的推送）。
+  const { host, calls } = fakeHost({ refreshMs: 20 });
+  const ctl = createSurfaceController({ host });
+  const a = fakeSurface('panel');
+  const b = fakeSurface('window');
+  ctl.attach('todos', a.surface);
+  ctl.attach('todos', b.surface);
+  await new Promise((r) => setTimeout(r, 70));
+  // 70ms / 20ms ≈ 3 次。**不是 6 次**（两个界面各起一个定时器的话）。
+  assert.ok(
+    calls.tick <= 4,
+    `一个插件只该有一个定时器：70ms 内刷新了 ${calls.tick} 次（两个定时器会是 6 次左右）`
+  );
+  // 但两份数据都该送到——两处界面看到的数据必须一致。
+  assert.ok(a.received.length >= 2, '面板那边没收到');
+  assert.ok(b.received.length >= 2, '窗口那边没收到');
+  assert.equal(a.received.length, b.received.length, '两处收到的次数应该一样');
+  ctl.detach('todos', a.surface);
+  ctl.detach('todos', b.surface);
+});
+
 test('refreshMs 为 0 的插件不起定时器', () => {
   const { host, calls } = fakeHost({ refreshMs: 0 });
   const ctl = createSurfaceController({ host });

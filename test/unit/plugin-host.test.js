@@ -591,3 +591,46 @@ test('宿主：界面开合会通知订阅者，取消订阅后不再收到', as
     await rm(userData, { recursive: true, force: true });
   }
 });
+
+test('插件能通过 ctx.host.onSurfaceChange 订阅界面开合', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    // 插件把订阅到的通知记在自己的工厂闭包里——
+    // 宿主要能把它**送到插件手里**（ctx.host.onSurfaceChange）。
+    await makePlugin(
+      root,
+      'todo',
+      { id: 'todo', name: '待办' },
+      `let seen = [];
+export default (ctx) => {
+  ctx.host.onSurfaceChange((pluginId, open) => seen.push({ pluginId, open }));
+  return {
+    page: () => null,
+    seen: () => seen,
+  };
+};
+`
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    // 插件**真的**能订阅到：ctx.host 上有这个东西。
+    const record = host.get('todo');
+    assert.ok(record?.instance, '插件没加载起来');
+    host.surfaceChanged('todo', true);
+    host.surfaceChanged('todo', false);
+    assert.deepEqual(record.instance.seen(), [
+      { pluginId: 'todo', open: true },
+      { pluginId: 'todo', open: false },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});

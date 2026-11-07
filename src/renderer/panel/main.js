@@ -1,5 +1,5 @@
 import { searchPlugins, searchApps } from '../../shared/fuzzy.js';
-import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
+import { PANEL_VIEW, SEARCH_VIEW_HEIGHT, MAX_VIEW_HEIGHT } from '../../shared/panel.js';
 import { renderPage } from '../ui/blocks.js';
 
 /**
@@ -33,6 +33,14 @@ const closeEl = document.getElementById('close');
 const detachEl = document.getElementById('detach');
 const widgetEl = document.getElementById('widget');
 const pluginFrameEl = document.getElementById('plugin-frame');
+
+// iframe 的高度上限：跟面板窗口自己的一样（MAX_VIEW_HEIGHT）。
+//
+// **在这里设**，不在 CSS 里写死一个数——
+// CSS 那边写死了，改一个数就要改两处，容易漏掉一处，
+// 于是 iframe 比窗口还高：多出来的那一截在面板里够不着
+//（积木区这时是藏着的，用户就是「看得到却点不到」）。
+pluginFrameEl.style.maxHeight = `${MAX_VIEW_HEIGHT}px`;
 
 /** 插件清单（主进程一次性下发）。 */
 let plugins = [];
@@ -422,8 +430,11 @@ window.addEventListener('message', (event) => {
   }
   if (data.type === 'desk-pet:surface:height') {
     // 插件页面自己报高度：窗口要按内容撑开。
-    // 上限 640px：再高就滚起来，别把面板撑出屏幕。
-    const h = Math.min(640, Math.max(0, Number(data.height) || 0));
+    //
+    // 上限用面板窗口自己的上限（MAX_VIEW_HEIGHT）：
+    // 面板的窗口高度就是按它夹的，iframe 放得比它高，
+    // 到上限那一段就永远够不着（积木区这时是藏着的）。
+    const h = Math.min(MAX_VIEW_HEIGHT, Math.max(0, Number(data.height) || 0));
     if (h > 0) pluginFrameEl.style.height = `${h}px`;
     reportHeight();
   }

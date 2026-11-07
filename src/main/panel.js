@@ -294,7 +294,7 @@ export function createPanelController({
     // 插件自带页面时，第一份数据走界面路由：
     // 插件页面在 iframe 里，**加载完**才订阅数据，推早了就丢了
     // （preload 那边留了一份，订阅时补上）。
-    if (plugins.pageUrl(pluginId)) {
+    if (ownPage) {
       const data = await plugins.data(pluginId);
       surfaces?.broadcast(pluginId, 'data', data);
     }
@@ -318,6 +318,8 @@ export function createPanelController({
       hide();
       return;
     }
+    // 内置功能不是插件：面板不再显示任何插件的界面，界面落点要摘掉。
+    detachPanelSurface();
     currentPluginId = pluginId;
     sendView(makePluginView(page));
   }
@@ -458,6 +460,10 @@ export function createPanelController({
   // 回到搜索视图。
   ipcMain.on('panel:back', (event) => {
     if (!win || event.sender !== win.webContents) return;
+    // 回到搜索视图 = 不再看任何插件的界面：界面落点要摘掉。
+    // 不摘的话，插件的 tick 定时器会一直按 refreshMs 刷新它，
+    // 而「我的界面开着」这个信号也永远送不到插件那里。
+    detachPanelSurface();
     currentPluginId = null;
     sendView(makeSearchView());
   });

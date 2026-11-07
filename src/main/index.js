@@ -1274,6 +1274,11 @@ app.whenReady().then(async () => {
  */
 app.on('before-quit', () => {
   pluginWindows?.destroyAll?.();
+  // 界面路由的定时器**自己**停掉。
+  //
+  // 不停的话，它们是靠窗口的 `closed` → `detach` 顺带死的——
+  // 那是**碰巧**（面板还开着的时候就没有窗口会关）。
+  pluginSurfaces?.stopAll?.();
 });
 
 // 退出前把待写入的设置落盘，否则用户在 300ms 防抖窗口内退出就会丢掉改动。
