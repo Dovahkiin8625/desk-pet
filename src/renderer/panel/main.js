@@ -1,5 +1,5 @@
 import { searchPlugins, searchApps } from '../../shared/fuzzy.js';
-import { PANEL_VIEW, SEARCH_VIEW_HEIGHT, MAX_VIEW_HEIGHT } from '../../shared/panel.js';
+import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
 import { renderPage } from '../ui/blocks.js';
 
 /**
@@ -33,14 +33,6 @@ const closeEl = document.getElementById('close');
 const detachEl = document.getElementById('detach');
 const widgetEl = document.getElementById('widget');
 const pluginFrameEl = document.getElementById('plugin-frame');
-
-// iframe 的高度上限：跟面板窗口自己的一样（MAX_VIEW_HEIGHT）。
-//
-// **在这里设**，不在 CSS 里写死一个数——
-// CSS 那边写死了，改一个数就要改两处，容易漏掉一处，
-// 于是 iframe 比窗口还高：多出来的那一截在面板里够不着
-//（积木区这时是藏着的，用户就是「看得到却点不到」）。
-pluginFrameEl.style.maxHeight = `${MAX_VIEW_HEIGHT}px`;
 
 /** 插件清单（主进程一次性下发）。 */
 let plugins = [];
@@ -92,6 +84,98 @@ function appendHighlighted(el, text, positions, field) {
 }
 
 /**
+ * 插件自带页面报来的**内容高度**（像素）。
+ *
+ * 是页面自己量的（它知道自己有多高），不是这里量的。
+ * 0 = 还没收到（页面刚装上，还没来得及量）。
+ */
+let pluginContentHeight = 0;
+
+/**
+ * 面板自己占掉的高度：标题栏、副标题、状态栏、边框。
+ *
+ * 拿「卡片高度 − iframe 高度」来算：卡片的其余部分都是面板自己的，
+ * iframe 是插件页面的，两者的差就是面板自己要的。
+ */
+function measureChrome() {
+  const card = panelEl.getBoundingClientRect().height;
+  const frame = pluginFrameEl.hidden ? 0 : pluginFrameEl.getBoundingClientRect().height;
+  return Math.max(0, card - frame);
+}
+
+/**
+ * body 上下那圈留白（阴影用的）。
+ *
+ * 数值从样式里读，别写死——改了 CSS 忘了改这里，底部就会被切。
+ */
+function measureBodyPadding() {
+  const style = getComputedStyle(document.body);
+  return {
+    top: parseFloat(style.paddingTop) || 0,
+    bottom: parseFloat(style.paddingBottom) || 0,
+  };
+}
+
+/**
+ * 把高度报给主进程，拿回**实际**的窗口高度。
+ *
+ * 一定接住拒绝：invoke 在窗口被拆掉时会拒绝，
+ * 而渲染层没有全局 unhandledrejection 兜底——拒绝会变成未处理错误。
+ *
+ * @param {number} height 想要多高的窗口
+ * @returns {Promise<number>} 主进程定的窗口高度（拿不到就是 0）
+ */
+function reportSize(height) {
+  try {
+    return Promise.resolve(window.panel?.reportSize?.(height)).catch(() => 0);
+  } catch {
+    return Promise.resolve(0);
+  }
+}
+
+/**
+ * 把 iframe 收到窗口**装得下**的高度。
+ *
+ * 装不下的部分在 iframe 内部滚动——**不能让它溢出窗口**：
+ * 窗口外的部分既看不见也点不到（底部的按钮就在那儿）。
+ *
+ * @param {number} windowHeight 窗口实际有多高（主进程回给我们的那个数）
+ */
+function fitPluginFrame(windowHeight) {
+  if (pluginFrameEl.hidden) return;
+  const padding = measureBodyPadding();
+  const budget = Math.max(
+    0,
+    Number(windowHeight) - padding.top - padding.bottom - measureChrome()
+  );
+  pluginFrameEl.style.height = `${Math.min(pluginContentHeight, budget)}px`;
+}
+
+/**
+ * 摆好插件自带页面，并把窗口要开多高报给主进程。
+ *
+ * 三步的顺序不能乱：
+ * 1. 先按**内容高度**摆 iframe——只有这样量出来的卡片高度才等于内容的高度；
+ * 2. 报高度，主进程按屏幕装不装得下夹一下，回一个**实际窗口高度**；
+ * 3. 再按实际窗口高度收一收 iframe（见 fitPluginFrame）。
+ *
+ * 第 3 步是「显示不全」的解药：以前 iframe 一直按内容摆，
+ * 窗口却有上限，超出的那一截直接被窗口裁掉——
+ * 录屏的工作台就是这样：底部（状态栏、录制按钮）被切掉一截。
+ */
+async function layoutPluginFrame(contentHeight) {
+  pluginContentHeight = Math.max(0, Number(contentHeight) || 0);
+  // 先按内容摆：量出来的卡片高度才是「内容有多高」。
+  pluginFrameEl.style.height = `${pluginContentHeight}px`;
+  const padding = measureBodyPadding();
+  const needed = Math.ceil(
+    measureChrome() + pluginContentHeight + padding.top + padding.bottom
+  );
+  const granted = await reportSize(needed);
+  fitPluginFrame(Number(granted) || window.innerHeight);
+}
+
+/**
  * 把内容高度报给主进程：窗口要按内容撑开。
  *
  * 插件视图里卡片按内容收缩，窗口跟着变矮——
@@ -105,20 +189,29 @@ function appendHighlighted(el, text, positions, field) {
 function reportHeight() {
   requestAnimationFrame(() => {
     if (panelEl.dataset.view !== PANEL_VIEW.PLUGIN) {
-      window.panel?.reportSize?.(SEARCH_VIEW_HEIGHT);
+      void reportSize(SEARCH_VIEW_HEIGHT);
       return;
     }
+    // 插件自带页面：高度由**页面报来的内容高度**决定。
+    //
+    // 不在这里量 iframe：它是被窗口裁过的，拿它当内容高度，
+    // 窗口就会越缩越小（缩 → iframe 更矮 → 再缩……）。
+    if (!pluginFrameEl.hidden) {
+      // 页面还没报过高度：先别动窗口（它多半正在加载）。
+      // 一报告就把窗口压扁，接着又撑回去，看着闪。
+      if (pluginContentHeight > 0) void layoutPluginFrame(pluginContentHeight).catch(() => {});
+      return;
+    }
+    // 积木界面：卡片按内容收缩，窗口跟着变矮。
+    //
     // 卡片的高度（border-box，含边框）。
     // 往上取整：窗口要装得下卡片，少一像素就会把底部切掉。
     const needed = panelEl.getBoundingClientRect().height;
     if (needed <= 0) return;
     // 加上 body 的内边距：卡片四周留的那一圈是给阴影用的，
     // 窗口得把它们也算进去，否则卡片会被窗口切掉一截。
-    // 数值从样式里读，别写死——改了 CSS 忘了改这里，底部就会被切。
-    const style = getComputedStyle(document.body);
-    const padTop = parseFloat(style.paddingTop) || 0;
-    const padBottom = parseFloat(style.paddingBottom) || 0;
-    window.panel?.reportSize?.(Math.ceil(needed) + padTop + padBottom);
+    const padding = measureBodyPadding();
+    void reportSize(Math.ceil(needed) + padding.top + padding.bottom);
   });
 }
 
@@ -261,6 +354,8 @@ function renderPlugin(page) {
     pluginFrameEl.hidden = true;
     pluginFrameEl.removeAttribute('src');
     pluginBodyEl.hidden = false;
+    // 换成了积木界面：插件页面的高度不再作数。
+    pluginContentHeight = 0;
     window.panel?.setCurrentPlugin?.('');
 
     // 块怎么画是共用的一份（src/renderer/ui/blocks.js）：
@@ -305,6 +400,7 @@ function renderSearch() {
   pluginFrameEl.hidden = true;
   pluginFrameEl.removeAttribute('src');
   pluginBodyEl.hidden = false;
+  pluginContentHeight = 0;
   window.panel?.setCurrentPlugin?.('');
   searchEl.hidden = false;
   pluginEl.hidden = true;
@@ -431,12 +527,11 @@ window.addEventListener('message', (event) => {
   if (data.type === 'desk-pet:surface:height') {
     // 插件页面自己报高度：窗口要按内容撑开。
     //
-    // 上限用面板窗口自己的上限（MAX_VIEW_HEIGHT）：
-    // 面板的窗口高度就是按它夹的，iframe 放得比它高，
-    // 到上限那一段就永远够不着（积木区这时是藏着的）。
-    const h = Math.min(MAX_VIEW_HEIGHT, Math.max(0, Number(data.height) || 0));
-    if (h > 0) pluginFrameEl.style.height = `${h}px`;
-    reportHeight();
+    // 这里**不夹上限**：窗口能开多高由主进程说了算（它按屏幕算），
+    // 主进程回一个实际高度，页面再按它把 iframe 摆好——
+    // 装不下的部分在 iframe 里滚，不会被窗口裁掉。
+    const h = Math.max(0, Number(data.height) || 0);
+    if (h > 0) void layoutPluginFrame(h).catch(() => {});
   }
 });
 

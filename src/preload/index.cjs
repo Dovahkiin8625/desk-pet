@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('pet', {
   },
   showContextMenu: () => ipcRenderer.invoke('pet:showContextMenu'),
   openSettings: () => ipcRenderer.invoke('pet:openSettings'),
-  // 弹出插件面板：左键点桌宠时走这条路。
+  // 弹出插件面板：**双击**桌宠时走这条路。
   openPanel: () => ipcRenderer.invoke('pet:openPanel'),
   // 报告「桌宠被点了」：主进程据此决定要不要念一句台词。
   //

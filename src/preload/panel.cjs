@@ -79,7 +79,11 @@ contextBridge.exposeInMainWorld('panel', {
   reportReady: () => ipcRenderer.send('panel:ready'),
   // 内容画完之后把高度报回去：窗口要按内容撑开。
   // 不然窗口下半截是透明的，而透明的那部分仍会吃掉桌面的点击。
-  reportSize: (height) => ipcRenderer.send('panel:size', { height }),
+  //
+  // **用 invoke 而不是 send**：主进程会把高度**夹到屏幕装得下的上限**，
+  // 页面得知道自己实际拿到了多少高度，才好把超出的部分放进内部滚动。
+  // （只报不回的，页面只能按内容摆 iframe，多出来的那一截会被窗口裁掉。）
+  reportSize: (height) => ipcRenderer.invoke('panel:size', { height }),
   // 打开一个插件（点结果或按回车）。
   open: (pluginId) => ipcRenderer.send('panel:open', pluginId),
   // 把插件分离出去：`window` = 独立窗口，`widget` = 桌面小部件。

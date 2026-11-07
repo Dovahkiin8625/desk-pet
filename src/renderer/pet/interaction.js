@@ -1,6 +1,7 @@
 import { createDragController } from '../ui/drag.js';
 import { hitZoneAt } from './hitZone.js';
 import { reactionFor } from './behavior.js';
+import { createDoubleTapDetector } from './doubleTap.js';
 
 /**
  * 本模块是画布上**唯一**的指针事件入口——拖拽、点击、悬停、右键全部由此统一分发。
@@ -15,6 +16,7 @@ export function attachInteraction({
   getModel,
   getManifest,
   onTap,
+  onDoubleTap,
   onHover,
   onDragStart,
   onDragMove,
@@ -38,12 +40,34 @@ export function attachInteraction({
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
+  // 双击判定器：**双击**才弹输入框（插件面板），单击留给摸头。
+  //
+  // 判定器住在这一层（而不是渲染层主文件）有两个缘故：
+  //
+  // 1. 它要看**每一次**抬手，包括「已经不在形象上」的那些；
+  // 2. 双击是**指针语义**，跟「摸头」这种反应不是一回事。
+  const doubleTap = createDoubleTapDetector();
+
   const drag = createDragController({
     onTap: (clientX, clientY) => {
+      const { x, y } = local(clientX, clientY);
+
+      // 双击判定**先于**「点在不在形象上」。
+      //
+      // 摸头之后头会动：刚才点中的那个像素可能已经不是形象了
+      //（多半是头的边缘）。用户明明双击了，判定却因为「不在形象上」
+      // 而丢掉——面板就永远弹不出来。
+      //
+      // 第二下也不再重复摸头：双击的语义是「我要搜索」，
+      // 不是「摸两下头」——两声反馈叠在一起只是吵。
+      if (doubleTap.isDoubleTap(x, y)) {
+        onDoubleTap?.({ x, y });
+        return;
+      }
+
       const model = getModel();
       const manifest = getManifest();
       if (!model || !manifest) return;
-      const { x, y } = local(clientX, clientY);
       // 可点击区域由**形象**决定：点在形象的透明留白上不算点到桌宠。
       //
       // 判定用渲染结果的 alpha（见 pet/silhouette.js），不是包围盒——
@@ -57,6 +81,9 @@ export function attachInteraction({
       onTap?.({ zone, x, y, reaction });
     },
     onDragStart: (clientX, clientY) => {
+      // 拖过之后，上一下点击不算数了：
+      // 拖了半天再点一下，不该被当成「双击」。
+      doubleTap.reset();
       onInteract?.();
       onDragStart?.(local(clientX, clientY));
     },

@@ -6,6 +6,7 @@ import { buildPanelPage, MODE_LABELS } from './lib/page.js';
 import { createWindows } from './lib/windows.js';
 import { createCaptureSession } from './lib/capture.js';
 import { createWindowIconResolver } from './lib/window-icons.js';
+import { createTargetCache, targetKind } from './lib/targets.js';
 import { registerIpc } from './lib/ipc.js';
 import { setHotkeys, clearHotkeys } from './lib/hotkey.js';
 
@@ -29,15 +30,25 @@ export default function createScreenRecorderPlugin(ctx) {
   let status = '';
   /** 附注（目标没了、没有麦克风……），存好文件时一起显示。 */
   let note = '';
-  /** 可录的目标（显示器/窗口），随模式变。 */
-  let targets = { screen: [], window: [] };
+  /**
+   * 可录的目标（显示器/窗口），随模式变。
+   *
+   * **按目标的种类分桶，不按模式分桶**：模式有三个，
+   * 目标只有两类（选区用的是显示器）。所以问缓存要东西的时候
+   * 要说「哪个模式」，由它翻译成「哪一类目标」。
+   */
+  const targets = createTargetCache();
   /** 窗口列表变了就加一：变了才往界面上推（别每秒推一兆图标）。 */
   let windowsVersion = 0;
   let sentWindowsVersion = -1;
-  /** 选中的那块屏的预览图（data URL）。 */
-  let preview = '';
-  /** 预览图对应哪块屏（换了才重取）。 */
-  let previewFor = '';
+  /**
+   * 屏幕预览图变了就加一：变了才往界面上推。
+   *
+   * 预览图每块屏几十 KB，**不能跟着每半秒的状态一起推**——
+   * 那等于每秒推一遍几块屏的图。
+   */
+  let previewsVersion = 0;
+  let sentPreviewsVersion = -1;
   /** 正在录吗。 */
   let recording = false;
   /** 已经录了多久（毫秒）。 */
@@ -64,9 +75,17 @@ export default function createScreenRecorderPlugin(ctx) {
   });
   const icons = createWindowIconResolver();
 
+  /**
+   * 录制文件实际存到哪个文件夹。
+   *
+   * 没设目录就是系统的「视频」文件夹。
+   * 界面上要把它显示出来——不然用户以为「留空＝不存」。
+   */
+  const getOutputDir = () => (config?.outputDir || '').trim() || app.getPath('videos');
+
   const capture = createCaptureSession({
     windows,
-    getOutputDir: () => (config?.outputDir || '').trim() || app.getPath('videos'),
+    getOutputDir,
     onState: (state) => {
       const wasRecording = recording;
       recording = state.recording;
@@ -93,7 +112,7 @@ export default function createScreenRecorderPlugin(ctx) {
       const changed =
         wasRecording !== recording || state.file || state.error || state.warning || state.cancelled;
       if (!changed) return;
-      update(buildPanelPage(ctx.ui, { config, targets: targets[config?.mode] || [], recording, status }));
+      update(buildPanelPage(ctx.ui, { config, targets: targets.get(config?.mode), recording, status }));
     },
   });
 
@@ -236,7 +255,7 @@ export default function createScreenRecorderPlugin(ctx) {
 
   /** 往积木面板推一份页面（自己的页面不靠它，那边有 tick）。 */
   function pushPanel() {
-    update(buildPanelPage(ctx.ui, { config, targets: targets[config?.mode] || [], recording, status }));
+    update(buildPanelPage(ctx.ui, { config, targets: targets.get(config?.mode), recording, status }));
   }
 
   /**
@@ -244,26 +263,33 @@ export default function createScreenRecorderPlugin(ctx) {
    *
    * 列一次要半秒上下，所以**缓存起来**：切 tab 不重新列，
    * 用户要最新的自己点「刷新」。
+   *
+   * 传进来的是**模式**，缓存按**目标的种类**分桶——
+   * 选区模式用的是显示器（见 lib/targets.js 的说明）。
    */
   async function loadTargets(mode, { force = false } = {}) {
-    if (!force && targets[mode].length) return targets[mode];
-    try {
-      targets[mode] = await capture.listTargets(mode);
-    } catch (err) {
-      console.warn('[录屏] 列目标失败：', err?.message);
-      targets[mode] = [];
-    }
-    if (mode === 'window') {
+    const { list, listed } = await targets.load(mode, (kind) => capture.listTargets(kind), {
+      force,
+    });
+    // 只有真的列了一遍才动后面那些：没重列的话它们早就在列表里了。
+    if (!listed) return list;
+    if (targetKind(mode) === 'window') {
       windowsVersion += 1;
       // 图标在后台慢慢取：读一遍窗口的图标要一秒多，不能挡着界面。
-      void collectIcons();
+      //
+      // **晚一点再开始**：PowerShell 启动 + 枚举进程挺吃 CPU，
+      // 与预览图那一下撞在一起，界面会明显地顿一下。
+      setTimeout(() => void collectIcons(), 600);
+    } else {
+      // 显示器重新列了 → 预览图也换了（预览图就是列显示器时顺带抓的）。
+      previewsVersion += 1;
     }
-    return targets[mode];
+    return list;
   }
 
   /** 给窗口列表配图标（后台跑）。 */
   async function collectIcons() {
-    const list = targets.window;
+    const list = targets.get('window');
     if (!list.length) return;
     try {
       const map = await icons.iconsFor(list.map((t) => t.label));
@@ -277,23 +303,30 @@ export default function createScreenRecorderPlugin(ctx) {
     windowsVersion += 1;
   }
 
-  /** 取（并缓存）选中的那块屏的预览图。 */
-  async function refreshPreview(force = false) {
-    const cfg = await ensureConfig();
-    const screen = targets.screen.find((t) => t.id === cfg.sourceId) || targets.screen[0];
-    const key = screen?.id || '';
-    if (!key) {
-      preview = '';
-      previewFor = '';
-      return;
-    }
-    if (!force && previewFor === key && preview) return;
-    try {
-      preview = await capture.preview(screen.displayId);
-      previewFor = key;
-    } catch (err) {
-      console.warn('[录屏] 取屏幕预览失败：', err?.message);
-    }
+  /**
+   * 每块屏的预览图（data URL）。
+   *
+   * **不走 `buildState()`**：预览图每块屏几十 KB，
+   * 跟着每个动作的回包一起传就是每秒传几遍。
+   * 它自己一条通道：首份数据给一次，之后变了才推。
+   */
+  function currentPreviews() {
+    return targets.get('screen').map((t) => ({ id: t.id, preview: t.preview || '' }));
+  }
+
+  /**
+   * 当前选中的是哪块屏。
+   *
+   * 配置里没存过（第一次用），或者存的那块已经拔掉了：
+   * 就当是**列表里的第一块**（主显示器，列目标时排第一）。
+   *
+   * 界面上**一定要有一块是选中的**：全是灰的看不出现在录的是哪块。
+   * 录的时候挑的也是这一块（见 startRecordingInner）——两处必须一致。
+   */
+  function effectiveScreenId(cfg) {
+    const screens = targets.get('screen');
+    if (!screens.length) return cfg.sourceId || '';
+    return screens.find((t) => t.id === cfg.sourceId)?.id || screens[0].id;
   }
 
   /**
@@ -314,6 +347,8 @@ export default function createScreenRecorderPlugin(ctx) {
       /** 快捷键现在生效吗（用户打开过录屏之后就一直生效）。 */
       hotkeysArmed: hotkeyArmed,
       outputDir: cfg.outputDir || '',
+      /** 实际会存到哪儿（没设目录＝系统的视频文件夹）。 */
+      outputDirResolved: getOutputDir(),
       hotkey: cfg.hotkey || '',
       stopHotkey: cfg.stopHotkey || '',
       fps: cfg.fps,
@@ -322,10 +357,13 @@ export default function createScreenRecorderPlugin(ctx) {
       mic: cfg.mic,
       micDeviceIndex: cfg.micDeviceIndex,
       speaker: cfg.speaker,
-      screens: targets.screen.map((t) => ({ id: t.id, label: t.label })),
-      selectedScreenId: cfg.sourceId || '',
-      preview,
-      windows: targets.window.map((t) => ({ id: t.id, label: t.label, icon: t.icon || '' })),
+      screens: targets.get('screen').map((t) => ({
+        id: t.id,
+        label: t.label,
+        meta: t.meta || '',
+      })),
+      selectedScreenId: effectiveScreenId(cfg),
+      windows: targets.get('window').map((t) => ({ id: t.id, label: t.label, icon: t.icon || '' })),
       selectedWindowId: cfg.windowId || '',
       regionSize,
     };
@@ -336,7 +374,7 @@ export default function createScreenRecorderPlugin(ctx) {
     if (currentCtx?.update) update = currentCtx.update;
     const cfg = await ensureConfig();
     await loadTargets(cfg.mode);
-    return buildPanelPage(ctx.ui, { config: cfg, targets: targets[cfg.mode], recording, status });
+    return buildPanelPage(ctx.ui, { config: cfg, targets: targets.get(cfg.mode), recording, status });
   }
 
   /** 标题那几个字段（自己的页面用）。**要便宜**：别在这儿列系统窗口。 */
@@ -352,10 +390,16 @@ export default function createScreenRecorderPlugin(ctx) {
   /** 自己页面的首份数据。 */
   async function data() {
     const cfg = await ensureConfig();
-    await loadTargets(cfg.mode);
-    await loadTargets(cfg.mode === 'window' ? 'screen' : 'window');
-    await refreshPreview();
-    return buildState();
+    // 两类目标**并发**列：列显示器与列窗口互不相干，
+    // 排队做就是白等一倍时间（各要 0.4 秒上下）。
+    await Promise.all([
+      loadTargets(cfg.mode),
+      loadTargets(cfg.mode === 'window' ? 'screen' : 'window'),
+    ]);
+    // 预览图跟着首份数据一起给：它就是列显示器时顺带抓的，
+    // 已经在手里了——单独走一条通道推反而慢半拍。
+    sentPreviewsVersion = previewsVersion;
+    return { ...(await buildState()), previews: currentPreviews() };
   }
 
   /** 自己页面的周期刷新：只给会变的那些。 */
@@ -364,7 +408,12 @@ export default function createScreenRecorderPlugin(ctx) {
     // 窗口列表变了才推（里面有图标，别每秒推一遍）。
     if (windowsVersion !== sentWindowsVersion) {
       sentWindowsVersion = windowsVersion;
-      payload.windows = targets.window.map((t) => ({ id: t.id, label: t.label, icon: t.icon || '' }));
+      payload.windows = targets.get('window').map((t) => ({ id: t.id, label: t.label, icon: t.icon || '' }));
+    }
+    // 预览图：每块屏几十 KB，**变了才推**。
+    if (previewsVersion !== sentPreviewsVersion) {
+      sentPreviewsVersion = previewsVersion;
+      payload.previews = currentPreviews();
     }
     return payload;
   }
@@ -392,13 +441,13 @@ export default function createScreenRecorderPlugin(ctx) {
         // 换了模式，能录的目标也换了（显示器 / 窗口）——
         // 不列一遍的话，界面上还是上一个模式的列表。
         await loadTargets(mode);
-        if (mode === 'screen') await refreshPreview();
         break;
       }
       case 'select-screen': {
-        const id = String(payload?.id || '');
-        await save({ sourceId: id });
-        await refreshPreview(true);
+        // **不重抓预览**：预览图是列显示器时一次抓齐的，
+        // 选哪块屏不用再截一次屏——截一次要 0.5 秒，
+        // 堵在动作里就是一次实打实的卡顿。
+        await save({ sourceId: String(payload?.id || '') });
         break;
       }
       case 'select-window': {
@@ -457,7 +506,6 @@ export default function createScreenRecorderPlugin(ctx) {
       case 'refresh': {
         await loadTargets(cfg.mode, { force: true });
         await loadTargets(cfg.mode === 'window' ? 'screen' : 'window', { force: true });
-        await refreshPreview(true);
         break;
       }
       default:
@@ -509,8 +557,18 @@ export default function createScreenRecorderPlugin(ctx) {
     // 选区模式：先让用户框一块，框完才开始录。
     if (cfg.mode === 'region') {
       // 遮罩开在**用户选的那块屏**上：列表里选了哪块，就在那块上框。
-      const chosen = targets.screen.find((t) => t.id === cfg.sourceId);
-      const region = await capture.pickRegion(chosen?.displayId);
+      const screens = targets.get('screen');
+      const chosen = screens.find((t) => t.id === cfg.sourceId) || screens[0];
+      if (!chosen) {
+        status = '没有可录的屏幕';
+        return;
+      }
+      // 源 id 一并给过去：录的时候要从那块屏身上取流。
+      // 让捕获那边再列一次要多花 0.5 秒，还可能列到不同的源 id。
+      const region = await capture.pickRegion({
+        displayId: chosen.displayId,
+        sourceId: chosen.id,
+      });
       if (!region) {
         status = '没选区域';
         return;
@@ -544,6 +602,8 @@ export default function createScreenRecorderPlugin(ctx) {
         ? list.find((t) => t.id === cfg.windowId) || list[0]
         : list.find((t) => t.id === cfg.sourceId) || list[0];
     if (cfg.mode === 'window') await save({ windowId: picked.id });
+    // 显示器也存一下：存的与录的一致，下次打开还是这一块。
+    else await save({ sourceId: picked.id });
     try {
       await capture.start({
         mode: cfg.mode,

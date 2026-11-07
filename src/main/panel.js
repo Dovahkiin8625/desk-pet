@@ -2,18 +2,19 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { placeBesidePet } from './placement.js';
+import { maxPanelHeight } from './panelHeight.js';
 import {
   makeSearchView,
   makePluginView,
   SEARCH_VIEW_HEIGHT,
-  MAX_VIEW_HEIGHT,
+  FALLBACK_VIEW_HEIGHT,
 } from '../shared/panel.js';
 import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin, builtinPage, builtinAction } from './builtins.js';
 
 /**
  * 插件面板：桌宠的「uTools 式」入口。
  *
- * 左键点一下桌宠，这个面板就弹在桌宠旁边：
+ * **双击**一下桌宠，这个面板就弹在桌宠旁边：
  * 上面一个搜索框，下面一列模糊匹配出来的插件；
  * 点一下或者按回车，就打开那个插件的界面（同一个窗口换内容）。
  *
@@ -487,16 +488,28 @@ export function createPanelController({
   //
   // 不按内容撑开的话，插件页面下方会剩下一截**透明**的窗口——
   // Windows 没有逐像素命中测试，那一截照样会吃掉桌面的点击。
-  ipcMain.on('panel:size', (event, payload) => {
-    if (!win || event.sender !== win.webContents) return;
+  //
+  // **回一个实际的高度**：内容比屏幕还高时窗口会被上限夹住，
+  // 页面得知道自己实际拿到了多少，才好把超出部分放进内部滚动
+  // （不回的话，页面按内容摆 iframe，多出来的那一截就被窗口裁掉了）。
+  ipcMain.handle('panel:size', (event, payload) => {
+    if (!win || event.sender !== win.webContents) return 0;
+    const cap = maxPanelHeight({
+      displays: getDisplays?.() || [],
+      petRect: getPetRect?.() || null,
+      fallback: FALLBACK_VIEW_HEIGHT,
+      minimum: MIN_HEIGHT,
+    });
     const height = Math.round(
-      Math.min(MAX_VIEW_HEIGHT, Math.max(MIN_HEIGHT, Number(payload?.height) || MIN_HEIGHT))
+      Math.min(cap, Math.max(MIN_HEIGHT, Number(payload?.height) || MIN_HEIGHT))
     );
     const [w, h] = win.getSize();
-    if (h === height) return;
-    win.setBounds({ ...win.getBounds(), width: w, height });
-    // 尺寸变了，位置要重新摆（否则会跟桌宠错开）。
-    place();
+    if (h !== height) {
+      win.setBounds({ ...win.getBounds(), width: w, height });
+      // 尺寸变了，位置要重新摆（否则会跟桌宠错开）。
+      place();
+    }
+    return height;
   });
 
   // 关掉面板（Esc 或点右上角的 ×）。

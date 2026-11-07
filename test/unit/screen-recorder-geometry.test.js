@@ -58,3 +58,49 @@ test('夹在边界内：拖出窗口的部分被切掉', () => {
   assert.equal(clamped.width, 800);
   assert.equal(clamped.height, 600);
 });
+
+test('装进画布：一样大就原样放进去', () => {
+  const fit = G.fitContain({ width: 800, height: 600 }, { width: 800, height: 600 });
+  assert.deepEqual(plain(fit), { x: 0, y: 0, width: 800, height: 600 });
+});
+
+test('装进画布：窄的按宽度缩放，上下留边', () => {
+  // 源比画布宽（1600×400 装进 800×600）：按宽度缩一半（高度只剩 200），
+  // 上下各留 (600-200)/2 = 200。
+  const fit = G.fitContain({ width: 1600, height: 400 }, { width: 800, height: 600 });
+  assert.deepEqual(plain(fit), { x: 0, y: 200, width: 800, height: 200 });
+});
+
+test('装进画布：高的按高度缩放，左右留边', () => {
+  // 400×1600 装进 800×600：按高度缩（1600→600 是 0.375），宽只剩 150。
+  const fit = G.fitContain({ width: 400, height: 1600 }, { width: 800, height: 600 });
+  assert.deepEqual(plain(fit), { x: 325, y: 0, width: 150, height: 600 });
+});
+
+test('装进画布：比例不变——这是录窗口改尺寸后不塌的关键', () => {
+  // 窗口从 886×692 改成 900×700，画布还是 886×692：
+  // 新画面要缩放适配进去，比例得跟原来一样（差一点点是取整的误差）。
+  const canvas = { width: 886, height: 692 };
+  const fit = G.fitContain({ width: 900, height: 700 }, canvas);
+  const before = 886 / 692;
+  const after = fit.width / fit.height;
+  assert.ok(
+    Math.abs(before - after) < 0.01,
+    `比例变了：${before} → ${after}（${JSON.stringify(fit)}）`
+  );
+  // 装得下：不能超出画布。
+  assert.ok(fit.width <= canvas.width && fit.height <= canvas.height);
+  assert.ok(fit.x >= 0 && fit.y >= 0);
+  assert.ok(fit.x + fit.width <= canvas.width);
+  assert.ok(fit.y + fit.height <= canvas.height);
+});
+
+test('装进画布：源比画布小的时候放大，但不超过画布', () => {
+  const fit = G.fitContain({ width: 400, height: 300 }, { width: 800, height: 600 });
+  assert.deepEqual(plain(fit), { x: 0, y: 0, width: 800, height: 600 });
+});
+
+test('装进画布：尺寸不认得的时候别乱算', () => {
+  const fit = G.fitContain({ width: 0, height: 0 }, { width: 800, height: 600 });
+  assert.deepEqual(plain(fit), { x: 0, y: 0, width: 800, height: 600 });
+});

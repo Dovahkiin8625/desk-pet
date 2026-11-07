@@ -46,7 +46,7 @@ export function registerIpc({
   ipcMain.handle('pet:deleteModel', (e, modelId) => deleteModel(e, modelId));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
-  // 左键点桌宠 → 弹出插件面板。
+  // 双击桌宠 → 弹出插件面板。
   ipcMain.handle('pet:openPanel', () => onOpenPanel());
   // 桌宠被点了 → 主进程据此念一句台词。
   //

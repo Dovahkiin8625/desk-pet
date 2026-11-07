@@ -53,7 +53,7 @@ let saveTimer = null;
 // 气泡窗口与桌面助理：第二、三部分（交互与动作系统 / 桌面助理功能）。
 let bubble = null;
 let assistant = null;
-// 插件面板与插件注册表：左键点桌宠弹出来的那个搜索框。
+// 插件面板与插件注册表：双击桌宠弹出来的那个搜索框。
 let panel = null;
 let plugins = null;
 // 插件的独立窗口与桌面小部件。
@@ -866,10 +866,10 @@ function showContextMenu() {
 }
 
 /**
- * 打开插件面板：左键点桌宠时走这条路。
+ * 打开插件面板：双击桌宠时走这条路。
  *
  * 面板**懒创建**（见 src/main/panel.js）：它就摆在桌宠旁边，
- * 用户点一下角色就该有个搜索框；功能入口则从右键菜单搬到了这里。
+ * 用户双击一下角色就该有个搜索框；功能入口则从右键菜单搬到了这里。
  */
 function openPanel() {
   panel?.show();
@@ -934,7 +934,7 @@ app.whenReady().then(async () => {
     deleteModel: (event, modelId) => deleteModel(event, modelId),
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
-    // 左键点桌宠：弹出插件面板。
+    // 双击桌宠：弹出插件面板。
     onOpenPanel: openPanel,
     // 桌宠被点了：主进程据此念一句台词（读的是预先生成好的缓存）。
     onTap: () => {
@@ -1214,7 +1214,7 @@ app.whenReady().then(async () => {
   });
   apps.warm();
 
-  // 插件面板：左键点桌宠弹出来的搜索框。**懒创建**——
+  // 插件面板：双击桌宠弹出来的搜索框。**懒创建**——
   // 启动时它不在，E2E 的 app.firstWindow() 才认得出桌宠。
   panel = createPanelController({
     rootDir: ROOT,

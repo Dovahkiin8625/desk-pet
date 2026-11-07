@@ -20,10 +20,14 @@
     canvasStream: null,
     drawTimer: null,
     video: null,
+    sourceVideo: null,
     audioContext: null,
     stopped: false,
     cancelled: false,
   };
+
+  /** 等源的第一帧：没有帧就没有画面尺寸，也就没法开录。 */
+  const SOURCE_TIMEOUT_MS = 15000;
 
   function report(type, payload) {
     window.rec.send({ type, payload });
@@ -51,45 +55,25 @@
         stop();
       });
 
-      const settings = videoTrack.getSettings();
-      const trackWidth = settings.width || 1280;
-      const trackHeight = settings.height || 720;
-
       // GIF 走的是**完全不同的**一路：MediaRecorder 产不出 GIF，
       // 这里自己逐帧取像素、量化、编码。
       //
       // 这个分支要放在「选区裁剪」之前：GIF 自己管缩放与裁剪，
       // 别让前面的 canvas 裁剪把它处理两遍。
       if (payload.format === 'gif') {
-        await beginGif(payload, stream, videoTrack);
+        await beginGif(payload, stream);
         if (state.stopped) report('cancelled', {});
         return;
       }
 
-      // 选区：把整屏流裁一块出来。
+      // 画面从哪儿来：直接用源，还是先过一块画布。
       let outputTrack = videoTrack;
       if (payload.crop && payload.snapshotSize) {
-        const crop = G.scaleRect(payload.crop, payload.snapshotSize, {
-          width: trackWidth,
-          height: trackHeight,
-        });
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(2, crop.width);
-        canvas.height = Math.max(2, crop.height);
-        const ctx = canvas.getContext('2d');
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.muted = true;
-        await video.play();
-        const draw = () => {
-          ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
-        };
-        state.canvas = canvas;
-        state.drawTimer = setInterval(draw, 1000 / (payload.fps || 30));
-        draw();
-        // captureStream 只能调一次：调两次会多出一条轨，白占一份带宽。
-        state.canvasStream = canvas.captureStream(payload.fps || 30);
-        outputTrack = state.canvasStream.getVideoTracks()[0];
+        // 选区：把整屏流裁一块出来。
+        outputTrack = await startCropCanvas(payload, stream);
+      } else if (payload.mode === 'window') {
+        // 窗口：源会跟着窗口改尺寸，得先过一块固定大小的画布。
+        outputTrack = await startWindowCanvas(payload, stream);
       }
 
       const mime = pickMime();
@@ -140,7 +124,9 @@
         if (state.cancelled) return;
         const blob = new Blob(state.chunks, { type: mime });
         blob.arrayBuffer().then((buffer) => {
-          reportSaved(buffer, 'mp4');
+          // **后缀要跟着实际格式走**：容器不是 mp4 时还叫 .mp4，
+          // 播放器按后缀猜格式就打不开了。
+          reportSaved(buffer, mime.includes('mp4') ? 'mp4' : 'webm');
         });
         // 音频上下文在录器真的停下来之后再关：提前关会把最后一段声音切掉。
         closeAudio();
@@ -158,6 +144,132 @@
     } catch (err) {
       report('error', { message: err?.message || String(err) });
     }
+  }
+
+  /**
+   * 打开源，并且拿到它的**真实画面尺寸**。
+   *
+   * **尺寸不能用 track.getSettings() 拿**：对窗口来说，那报的是
+   * 「逻辑表面」的尺寸——实测一个 886×692 的窗口报的是 2560×1440，
+   * 跟真正送来的帧根本不是一回事。拿它算比例，录出来是拉变形的。
+   *
+   * 真正送来的帧有多大，看 <video> 自己（videoWidth）。
+   *
+   * @param {MediaStream} stream
+   * @returns {Promise<{video:HTMLVideoElement,size:() => {width:number,height:number}}>}
+   */
+  async function openSource(stream) {
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    await video.play();
+    // 等第一帧：没有帧就不知道画面多大（也就没法定画布多大）。
+    const deadline = Date.now() + SOURCE_TIMEOUT_MS;
+    while (!video.videoWidth && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!video.videoWidth) throw new Error('等不到画面');
+    state.sourceVideo = video;
+    return {
+      video,
+      // 尺寸会变：窗口一改大小，送来的帧就换了个尺寸。
+      size: () => ({ width: video.videoWidth, height: video.videoHeight }),
+    };
+  }
+
+  /**
+   * 选区：把整屏流裁一块出来，画到一块**固定大小**的画布上。
+   *
+   * 画布大小从头到尾不变，所以录出来的文件始终是用户框的那一块。
+   *
+   * @returns {Promise<MediaStreamTrack>} 画布那条轨（录它，别录源）
+   */
+  async function startCropCanvas(payload, stream) {
+    const source = await openSource(stream);
+    const fps = payload.fps || 30;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // 裁剪块按**当前**的画面尺寸算：屏幕换了分辨率，框的那块也跟着换算。
+    const cropOf = (size) => G.scaleRect(payload.crop, payload.snapshotSize, size);
+    const first = cropOf(source.size());
+    canvas.width = Math.max(2, first.width);
+    canvas.height = Math.max(2, first.height);
+
+    const draw = () => {
+      const crop = cropOf(source.size());
+      const fit = G.fitContain(crop, { width: canvas.width, height: canvas.height });
+      ctx.drawImage(
+        source.video,
+        crop.x,
+        crop.y,
+        crop.width,
+        crop.height,
+        fit.x,
+        fit.y,
+        fit.width,
+        fit.height
+      );
+    };
+
+    state.canvas = canvas;
+    state.drawTimer = setInterval(draw, 1000 / fps);
+    draw();
+    // captureStream 只能调一次：调两次会多出一条轨，白占一份带宽。
+    state.canvasStream = canvas.captureStream(fps);
+    return state.canvasStream.getVideoTracks()[0];
+  }
+
+  /**
+   * 窗口模式：先把画面画到一块**固定大小**的画布上，再录画布。
+   *
+   * **为什么不能直接录源**：窗口一改尺寸，源送来的帧就换了个大小，
+   * 而 Chromium 的 MediaRecorder 处理不了「录到一半画面变了尺寸」——
+   * 容器里记的还是开头那个分辨率，后面的帧全成了灰的
+   * （实测 886×692 的窗口录成 486×392，ffmpeg 解出来一堆解码错误，
+   * 浏览器里放出来是一块死灰）。
+   *
+   * 所以画布的大小从头到尾不变：窗口改了尺寸，就把新画面缩放适配
+   * 进画布（比例不变，多出来的留黑边）。跟 OBS 一个路子——
+   * 画布多大，录出来就多大。
+   *
+   * @returns {Promise<MediaStreamTrack>} 画布那条轨（录它，别录源）
+   */
+  async function startWindowCanvas(payload, stream) {
+    const source = await openSource(stream);
+    const fps = payload.fps || 30;
+    const start = source.size();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(2, start.width);
+    canvas.height = Math.max(2, start.height);
+    const ctx = canvas.getContext('2d');
+
+    const draw = () => {
+      const size = source.size();
+      const fit = G.fitContain(size, { width: canvas.width, height: canvas.height });
+      // 缩放适配会留边，边上补黑：留透明的话编码出来是花的。
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(
+        source.video,
+        0,
+        0,
+        size.width,
+        size.height,
+        fit.x,
+        fit.y,
+        fit.width,
+        fit.height
+      );
+    };
+
+    state.canvas = canvas;
+    state.drawTimer = setInterval(draw, 1000 / fps);
+    draw();
+    // captureStream 只能调一次：调两次会多出一条轨，白占一份带宽。
+    state.canvasStream = canvas.captureStream(fps);
+    return state.canvasStream.getVideoTracks()[0];
   }
 
   /**
@@ -204,32 +316,30 @@
    * 所以这里自己逐帧取像素、量化、编码（web/gif.js）。
    *
    * GIF 没有音频——格式本身不支持，界面上要写明。
+   *
+   * @param {object} payload
+   * @param {MediaStream} stream
    */
-  async function beginGif(payload, stream, videoTrack) {
-    const settings = videoTrack.getSettings();
-    const trackWidth = settings.width || 1280;
-    const trackHeight = settings.height || 720;
+  async function beginGif(payload, stream) {
+    const source = await openSource(stream);
 
     // 裁剪块要先算出来：目标尺寸要按**裁剪后**的比例算，
     // 按整条轨的比例算的话，选区会被拉变形。
-    let crop = null;
-    if (payload.crop && payload.snapshotSize) {
-      crop = G.scaleRect(payload.crop, payload.snapshotSize, {
-        width: trackWidth,
-        height: trackHeight,
-      });
-    }
-    const sourceWidth = crop ? crop.width : trackWidth;
-    const sourceHeight = crop ? crop.height : trackHeight;
+    //
+    // 每一帧都重算：屏幕（或者被录的窗口）改了尺寸，
+    // 框的那一块在画面里的位置也跟着变了。
+    const cropOf = (size) =>
+      payload.crop && payload.snapshotSize
+        ? G.scaleRect(payload.crop, payload.snapshotSize, size)
+        : null;
+    const first = source.size();
+    const firstCrop = cropOf(first);
+    const sourceWidth = firstCrop ? firstCrop.width : first.width;
+    const sourceHeight = firstCrop ? firstCrop.height : first.height;
 
     // 目标尺寸：宽度不超过配置值，高度按比例。
     const targetWidth = Math.max(2, Math.min(payload.gif?.width || 480, sourceWidth));
     const targetHeight = Math.max(2, Math.round((targetWidth * sourceHeight) / sourceWidth));
-
-    const video = document.createElement('video');
-    video.srcObject = stream;
-    video.muted = true;
-    await video.play();
 
     const canvas = document.createElement('canvas');
     canvas.width = targetWidth;
@@ -241,11 +351,21 @@
 
     const frameMs = Math.round(1000 / (payload.gif?.fps || 12));
     state.drawTimer = setInterval(() => {
-      if (crop) {
-        ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, targetWidth, targetHeight);
-      } else {
-        ctx.drawImage(video, 0, 0, trackWidth, trackHeight, 0, 0, targetWidth, targetHeight);
-      }
+      const size = source.size();
+      const crop = cropOf(size);
+      const region = crop || { x: 0, y: 0, width: size.width, height: size.height };
+      const fit = G.fitContain(region, { width: targetWidth, height: targetHeight });
+      ctx.drawImage(
+        source.video,
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        fit.x,
+        fit.y,
+        fit.width,
+        fit.height
+      );
       const image = ctx.getImageData(0, 0, targetWidth, targetHeight);
       encoder.addFrame(image.data, frameMs);
     }, frameMs);
@@ -297,6 +417,13 @@
       state.pendingStop = true;
     }
     if (state.video) state.video.getTracks().forEach((t) => t.stop());
+    // 那个 <video> 也要停：捕获页是**复用**的，
+    // 不停的话解码器一直占着，下一段录制才开始解码。
+    if (state.sourceVideo) {
+      state.sourceVideo.pause();
+      state.sourceVideo.srcObject = null;
+      state.sourceVideo = null;
+    }
     // canvas 裁剪那条轨也要停：它不是源轨的附属，源轨停了它不一定停。
     if (state.canvasStream) {
       state.canvasStream.getTracks().forEach((t) => t.stop());

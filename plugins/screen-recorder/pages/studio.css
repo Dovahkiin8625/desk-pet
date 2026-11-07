@@ -151,38 +151,99 @@ body:not(.dp-panel) .studio {
   display: none;
 }
 
-/* 预览图：屏幕长什么样，录下来就是长什么样。 */
-.preview {
-  position: relative;
-  display: grid;
-  place-items: center;
-  min-height: 120px;
-  padding: 8px;
-  border: 1px solid var(--dp-border-soft);
-  border-radius: var(--dp-radius);
-  background: var(--dp-surface);
-  overflow: hidden;
+/*
+ * 屏幕：每块屏一张预览图，点一下就选中。
+ *
+ * **预览图是抓屏抓来的**，所以它比别的控件大——
+ * 用户要靠它分清「哪一块是要录的那块」，糊了就没意义了。
+ */
+.screen-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.preview img {
-  max-width: 100%;
-  max-height: 260px;
-  border-radius: 4px;
-  display: block;
-}
-
-.preview img:not([src]) {
+.screen-picker[hidden] {
   display: none;
 }
 
-.preview-tip {
-  position: absolute;
+.screen-grid {
+  display: grid;
+  /*
+   * 自动列数：窄的时候一块屏一行，宽的时候两块并排。
+   * 最小 150px 是因为再窄就看不清屏幕上有什么了。
+   */
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.screen-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--dp-border-soft);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.screen-card:hover {
+  border-color: var(--dp-border);
+}
+
+/* 选中的那块：边框与底色都亮起来，一眼就看得出来。 */
+.screen-card.active {
+  border-color: var(--dp-accent-strong);
+  background: var(--dp-accent);
+  box-shadow: 0 0 0 1px var(--dp-accent-strong);
+}
+
+.screen-card .thumb {
+  display: grid;
+  place-items: center;
+  height: 84px;
+  border-radius: var(--dp-radius-sm);
+  background: var(--dp-surface-hover);
+  overflow: hidden;
+}
+
+.screen-card .thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+/* 预览图还没到：占个位，别让卡片忽高忽低。 */
+.screen-card .thumb.pending {
   color: var(--dp-text-faint);
   font-size: 12px;
 }
 
-.preview img[src] + .preview-tip {
-  display: none;
+.screen-card .label {
+  font-size: 12px;
+  font-weight: 600;
+  /* 型号可能挺长：截断，别把卡片撑开。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-card .meta {
+  font-size: 11px;
+  color: var(--dp-text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dp-text-soft);
 }
 
 /* 选区那一栏 */
@@ -321,7 +382,7 @@ body:not(.dp-panel) .studio {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(300px, 82%);
+  width: min(340px, 88%);
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -369,14 +430,185 @@ body:not(.dp-panel) .studio {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 4px 14px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
-.drawer-body .dp-button {
+/*
+ * 一块设置。
+ *
+ * 抽屉里的东西按**功能**分块：存放位置、快捷键、录制质量。
+ * 块与块之间用一条淡线分开——一眼能看出「这是三件不同的事」，
+ * 而不是八个平铺的输入框。
+ */
+.set-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--dp-border-soft);
+}
+
+.set-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* 块里的小标题（用主题里那份分节标题，别再写一份）。 */
+.set-group .dp-section-title {
+  margin: 0;
+  /* 抽屉窄，标题得比正文更显眼一点，才分得出「这是三件不同的事」。 */
+  font-size: 13px;
+  color: var(--dp-text);
+}
+
+.set-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dp-text-faint);
+  /* 路径可能很长，断了换行，别把布局撑破。 */
+  word-break: break-all;
+}
+
+/*
+ * 存放位置那一行。
+ *
+ * 「浏览…」是**贴着输入框的小按钮**：不能跟「打开输出文件夹」一样拉满整行——
+ * 拉满的话输入框被挤得只剩一条缝，看着就像坏了。
+ */
+.dir-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.dir-row .dp-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.dir-row .dp-button {
+  flex: none;
+}
+
+/* 抽屉里占满一行的按钮（只有「打开输出文件夹」）。 */
+.set-group > .dp-button {
   width: 100%;
+}
+
+/* —— 快捷键 —— */
+
+.hk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hk-name {
+  flex: none;
+  font-size: 13px;
+  color: var(--dp-text-soft);
+}
+
+/*
+ * 键帽。
+ *
+ * 用 <kbd> 而不是输入框：这两个值**只能靠「改」来改**，
+ * 摆成输入框会让人以为能直接打字（打了也没用）。
+ * 底下多一条边是键帽的立体感。
+ */
+.hk-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border: 1px solid var(--dp-border);
+  border-bottom-width: 2px;
+  border-radius: var(--dp-radius-sm);
+  background: var(--dp-surface);
+  color: var(--dp-text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 正在等用户按键：键帽亮起来。 */
+.hk-key.capturing {
+  border-color: var(--dp-accent-strong);
+  background: var(--dp-accent);
+  color: var(--dp-accent-ink);
+}
+
+.dp-button.small {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* —— 录制质量 —— */
+
+.q-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--dp-border-soft);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+}
+
+/* 不是当前格式的那块：淡掉，但**不藏**——
+   藏起来的话，用户得先切格式才看得见这些数字。 */
+.q-block[data-active='false'] {
+  opacity: 0.55;
+}
+
+.q-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dp-text-soft);
+}
+
+.q-tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--dp-accent);
+  color: var(--dp-accent-ink);
+  font-size: 11px;
+}
+
+.q-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--dp-text-soft);
+}
+
+.q-name {
+  flex: none;
+  width: 3em;
+}
+
+.q-row .dp-input {
+  flex: none;
+  width: 76px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.q-unit {
+  font-size: 12px;
+  color: var(--dp-text-faint);
 }
 
 /* —— 窄的时候竖着排 —— */

@@ -22,8 +22,19 @@ export const PANEL_VIEW = Object.freeze({
  */
 export const SEARCH_VIEW_HEIGHT = 380;
 
-/** 面板高度的上限：内容再长也在面板内部滚动，不让窗口顶出屏幕。 */
-export const MAX_VIEW_HEIGHT = 560;
+/**
+ * 面板高度的**兜底**上限（像素）。
+ *
+ * 真正的上限是**屏幕的工作区高度**（见 src/main/panelHeight.js 的
+ * maxPanelHeight）：屏幕装得下，面板就长到内容那么高；
+ * 装不下才收——多出来的那一截在面板内部滚动。
+ *
+ * 这个数只在**拿不到显示器信息**时用（测试里就是这种情况）。
+ *
+ * 别把它当成「面板就该这么高」：写死上限的话，插件页面一长，
+ * 底部就被裁掉了（用户看到的正是这个）。
+ */
+export const FALLBACK_VIEW_HEIGHT = 560;
 
 /** 插件页面里块的类型。 */
 export const BLOCK_KIND = Object.freeze({

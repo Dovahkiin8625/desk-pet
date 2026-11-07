@@ -32,12 +32,13 @@ const el = {
   tabs: [...document.querySelectorAll('.tab')],
   panes: [...document.querySelectorAll('.pane')],
   gear: $('gearBtn'),
+  refresh: $('refreshBtn'),
   drawer: $('drawer'),
   scrim: $('scrim'),
   drawerClose: $('drawerClose'),
-  preview: $('screenPreview'),
-  previewTip: $('previewTip'),
-  screenSelect: $('screenSelect'),
+  screenPicker: $('screenPicker'),
+  screenGrid: $('screenGrid'),
+  screenEmpty: $('screenEmpty'),
   regionSize: $('regionSize'),
   windowList: $('windowList'),
   windowEmpty: $('windowEmpty'),
@@ -50,16 +51,20 @@ const el = {
   statusText: $('statusText'),
   elapsed: $('elapsed'),
   outputDir: $('outputDir'),
+  outputDirHint: $('outputDirHint'),
   hotkeyStart: $('hotkeyStart'),
   hotkeyStop: $('hotkeyStop'),
   recordStartKey: $('recordStartKey'),
   recordStopKey: $('recordStopKey'),
   pickDir: $('pickDir'),
   openDir: $('openDir'),
-  refreshTargets: $('refreshTargets'),
   fps: $('fps'),
   gifWidth: $('gifWidth'),
   gifFps: $('gifFps'),
+  qVideo: $('qVideo'),
+  qGif: $('qGif'),
+  qVideoTag: $('qVideoTag'),
+  qGifTag: $('qGifTag'),
 };
 
 /** 主进程给的状态。 */
@@ -95,12 +100,13 @@ const MODE_LABELS = { screen: '全屏', region: '选取', window: '窗口' };
  * @param {string} actionId
  * @param {object} [payload]
  * @param {number} [seq] 这一次动作的序号（切 tab 时用来认「回包是不是过期了」）
+ * @param {{keepScreen?: boolean}} [opts] keepScreen：回包**不改**选中的屏幕
  */
-async function act(actionId, payload, seq) {
+async function act(actionId, payload, seq, opts = {}) {
   try {
     const next = await surface.act(actionId, payload);
     if (next && typeof next === 'object') {
-      applyState(next, seq);
+      applyState(next, seq, opts);
     }
   } catch (err) {
     setStatus(`做不了：${err?.message || err}`);
@@ -114,11 +120,17 @@ async function act(actionId, payload, seq) {
  * @param {number} [seq] 切 tab 的序号：**过期的回包不改 tab**。
  *   连着点三个 tab，三份回包不一定按点的顺序回来——
  *   不认序号的话，界面会跳回中间那个 tab。
+ * @param {{keepScreen?: boolean}} [opts] keepScreen：回包**不改**选中的屏幕
  */
-function applyState(next, seq) {
+function applyState(next, seq, opts = {}) {
   const merged = { ...(state || {}), ...next };
   // tab 以本地的为准：用户刚点的那个就是当前这个。
   if (next.mode && (seq === undefined || seq === modeSeq)) mode = next.mode;
+  // 屏幕也一样：点一下就本地选定了，回包不再改它——
+  // 连着点两个屏时，先发出去的那个回包会把界面拉回上一个屏。
+  if (opts.keepScreen) {
+    merged.selectedScreenId = state?.selectedScreenId ?? next.selectedScreenId;
+  }
   state = merged;
   render();
 }
@@ -148,20 +160,12 @@ function render() {
   for (const pane of el.panes) {
     pane.hidden = pane.dataset.pane !== mode;
   }
+  // 屏幕的选择器：全屏与选取都用它（选取时框在哪块屏上），
+  // 窗口模式用不上——那里录的是窗口，不是屏。
+  el.screenPicker.hidden = mode === 'window';
 
-  // —— 全屏：预览 + 选屏 ——
-  if (state.preview) {
-    if (el.preview.getAttribute('src') !== state.preview) el.preview.src = state.preview;
-  } else {
-    el.preview.removeAttribute('src');
-    el.previewTip.textContent = '正在取预览…';
-  }
-  const screens = (state.screens || []).map((s) => ({ value: s.id, label: s.label }));
-  const screenSig = `${screens.map((s) => `${s.value}|${s.label}`).join('\n')}|${state.selectedScreenId}`;
-  if (screenSig !== lastSig.screens) {
-    lastSig.screens = screenSig;
-    fillSelect(el.screenSelect, screens, state.selectedScreenId);
-  }
+  // —— 屏幕：预览图 + 点选 ——
+  renderScreenGrid();
 
   // —— 选取 ——
   el.regionSize.textContent = state.regionSize ? `上一次框的是 ${state.regionSize}` : '';
@@ -191,6 +195,66 @@ function render() {
   el.hotkeyError.textContent = state.hotkeyError || '';
 
   renderDrawer();
+}
+
+/**
+ * 屏幕列表：每块屏一张预览图，点一下就选中。
+ *
+ * **变了才重画**：预览图每块几十 KB，
+ * 每半秒推一次状态就重画一次 = 每半秒把图重新解码一遍。
+ */
+function renderScreenGrid() {
+  const screens = state.screens || [];
+  const previews = state.previews || [];
+  // 签名带上预览图的长度：图换了（刷新）长度多半会变；
+  // 长度没变就当没变——真变了重画一次也就多几十毫秒。
+  const sig = [
+    screens.map((s) => `${s.id}|${s.label}|${s.meta || ''}`).join('\n'),
+    state.selectedScreenId,
+    previews.map((p) => `${p.id}:${(p.preview || '').length}`).join(','),
+  ].join('||');
+  if (sig === lastSig.screens) return;
+  lastSig.screens = sig;
+
+  el.screenEmpty.hidden = screens.length > 0;
+  el.screenGrid.textContent = '';
+  const previewById = new Map(previews.map((p) => [p.id, p.preview || '']));
+  for (const item of screens) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'screen-card';
+    card.dataset.id = item.id;
+    const active = item.id === state.selectedScreenId;
+    card.classList.toggle('active', active);
+    card.setAttribute('aria-pressed', String(active));
+
+    const thumb = document.createElement('span');
+    thumb.className = 'thumb';
+    const src = previewById.get(item.id);
+    if (src) {
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = '';
+      thumb.append(img);
+    } else {
+      // 预览图还没到：先占个位，别让卡片忽高忽低。
+      thumb.classList.add('pending');
+      thumb.textContent = '…';
+    }
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = item.label || item.id;
+
+    card.append(thumb, label);
+    if (item.meta) {
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = item.meta;
+      card.append(meta);
+    }
+    el.screenGrid.append(card);
+  }
 }
 
 /** 填一个下拉框。 */
@@ -276,16 +340,65 @@ function renderMicOptions() {
   fillSelect(el.micSelect, options, want);
 }
 
-/** 抽屉里的设置。 */
+/**
+ * 抽屉里的设置。
+ *
+ * 抽屉分三块：存放位置、快捷键、录制质量。
+ * 每块画的都是**当前状态**，不回显用户正在输的那一下——
+ * 输入框正被 focused 的时候不碰它的值，不然打字打到一半被抹掉。
+ */
 function renderDrawer() {
+  // —— 存放位置 ——
   if (document.activeElement !== el.outputDir) el.outputDir.value = state.outputDir || '';
+  el.outputDirHint.textContent = state.outputDir
+    ? '录制文件直接存进这个文件夹，名字带日期时间。'
+    : `没设就存到系统的视频文件夹：${state.outputDirResolved || ''}`;
+
+  // —— 快捷键 ——
+  // 正在录键的那一个不画：它自己显示「按下新的组合键…」。
   if (!capturing) {
-    if (document.activeElement !== el.hotkeyStart) el.hotkeyStart.value = state.hotkey || '';
-    if (document.activeElement !== el.hotkeyStop) el.hotkeyStop.value = state.stopHotkey || '';
+    setHotkey(el.hotkeyStart, state.hotkey);
+    setHotkey(el.hotkeyStop, state.stopHotkey);
   }
+
+  // —— 录制质量 ——
   if (document.activeElement !== el.fps) el.fps.value = String(state.fps ?? 30);
   if (document.activeElement !== el.gifWidth) el.gifWidth.value = String(state.gifWidth ?? 480);
   if (document.activeElement !== el.gifFps) el.gifFps.value = String(state.gifFps ?? 12);
+
+  // 视频与 GIF 的档位各管各的：当前格式的那块标「当前」，
+  // 另一块标「当前不用」——别让人以为录视频时 GIF 的数字也起作用。
+  const gif = state.format === 'gif';
+  setQualityBlock(el.qVideo, el.qVideoTag, !gif);
+  setQualityBlock(el.qGif, el.qGifTag, gif);
+}
+
+/** 把一个快捷键画到键帽上。 */
+function setHotkey(node, accel) {
+  const text = prettyAccel(accel);
+  node.textContent = text || '没设置';
+  node.title = accel || '';
+}
+
+/**
+ * 把「Control+Shift+R」显示成「Ctrl + Shift + R」。
+ *
+ * 只是**显示**用的：存进配置的仍然是 Electron 的写法，
+ * 免得改了显示又改了存法（两套写法迟早对不上）。
+ */
+function prettyAccel(accel) {
+  const names = { Control: 'Ctrl', Super: 'Win', Return: 'Enter', Escape: 'Esc' };
+  return String(accel || '')
+    .split('+')
+    .map((part) => names[part] || part)
+    .filter(Boolean)
+    .join(' + ');
+}
+
+/** 一块录制质量：标出它是当前格式还是当前不用。 */
+function setQualityBlock(block, tag, active) {
+  block.dataset.active = String(active);
+  tag.textContent = active ? '当前' : '当前不用';
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +439,21 @@ el.gear.addEventListener('click', openDrawer);
 el.drawerClose.addEventListener('click', closeDrawer);
 el.scrim.addEventListener('click', closeDrawer);
 
-// —— 全屏 ——
-el.screenSelect.addEventListener('change', () => {
-  void act('select-screen', { id: el.screenSelect.value });
+// 刷新可录的目标：这是**动作**不是设置，所以按钮在顶栏上，不在抽屉里。
+el.refresh.addEventListener('click', () => void act('refresh'));
+
+// —— 全屏：点预览图就选中 ——
+el.screenGrid.addEventListener('click', (event) => {
+  const card = event.target.closest?.('.screen-card');
+  if (!card) return;
+  const id = card.dataset.id;
+  if (!id || id === state?.selectedScreenId) return;
+  // **本地立刻选中**：选中这件事根本不用等主进程——
+  // 等一次往返就是一次能感觉到的卡顿。
+  state = { ...(state || {}), selectedScreenId: id };
+  render();
+  // 配置在后面悄悄存：界面已经是选好的了，存盘慢一点也不影响。
+  void act('select-screen', { id }, undefined, { keepScreen: true });
 });
 
 // —— 窗口 ——
@@ -373,7 +498,6 @@ el.outputDir.addEventListener('change', () => {
 });
 el.pickDir.addEventListener('click', () => void act('pick-dir'));
 el.openDir.addEventListener('click', () => void act('open-dir'));
-el.refreshTargets.addEventListener('click', () => void act('refresh'));
 
 for (const [input, key] of [
   [el.fps, 'fps'],
@@ -391,7 +515,8 @@ el.recordStopKey.addEventListener('click', () => startCapture('stop', el.hotkeyS
 
 function startCapture(which, input) {
   capturing = which;
-  input.value = '按下新的组合键…';
+  input.textContent = '按下新的组合键…';
+  input.classList.add('capturing');
 }
 
 /** 按键 → Electron 的快捷键写法。 */
@@ -423,16 +548,23 @@ document.addEventListener('keydown', (event) => {
   if (!capturing) return;
   event.preventDefault();
   if (event.key === 'Escape') {
-    capturing = '';
+    stopCapture();
     renderDrawer();
     return;
   }
   const accel = toAccelerator(event);
   if (!accel) return;
   const which = capturing;
-  capturing = '';
+  stopCapture();
   void act('hotkey', { which, accel });
 });
+
+/** 不再等按键了。键帽上那个「正在录」的样式也要摘掉。 */
+function stopCapture() {
+  capturing = '';
+  el.hotkeyStart.classList.remove('capturing');
+  el.hotkeyStop.classList.remove('capturing');
+}
 
 // ---------------------------------------------------------------------------
 // 麦克风设备
@@ -479,19 +611,35 @@ surface.onTick((data) => {
   if (data) applyState(data);
 });
 
-// 首份数据：页面可能比数据晚一点（iframe 加载慢），两处都接上。
-Promise.resolve(surface.data())
-  .then((data) => {
-    if (data) applyState(data);
-  })
-  .catch(() => {});
+/*
+ * 首份数据**只从推来的那条路拿**，页面自己不去拉。
+ *
+ * 早先这里还调了一次 `surface.data()`：面板那边已经在拉一份了，
+ * 页面又拉一份——首份数据要算两遍（列目标、抓预览都做两遍，
+ * 实测首开 1.4 秒，两次拉就只省一半）。
+ *
+ * 现在推来的那份一定会到：宿主推早了、页面还没订阅的，
+ * preload 会把那份留着，订阅时补上（见 src/preload/panel.cjs
+ * 与 plugin.cjs 的 pendingData）。
+ */
 
 void loadMicDevices();
 
 // —— 报高度：面板的窗口是按内容撑开的 ——
 function reportHeight() {
   requestAnimationFrame(() => {
-    const height = document.documentElement.scrollHeight || document.body.scrollHeight;
+    // 量**内容**的高度，不是视口的。
+    //
+    // documentElement.scrollHeight 至少是视口那么高：
+    // iframe 比内容高的时候它会多报，主进程按多报的高度开窗，
+    // 窗口就再也缩不回去了（底下留一块空白）。
+    //
+    // **向上取整**：量出来的是带小数的真实高度（512.17 之类），
+    // 少报一像素的话 iframe 比内容矮那么一点，
+    // 页面里就会冒出一条竖着的滚动条——
+    // 有滚动条就窄一点，内容又变高一点，于是宽度与高度互相追着跑。
+    const rect = document.body.getBoundingClientRect();
+    const height = Math.ceil(Math.max(rect.height, document.body.scrollHeight));
     surface.setHeight(height);
   });
 }

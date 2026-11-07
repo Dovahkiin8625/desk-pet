@@ -186,12 +186,15 @@
       border: none;
       background: transparent;
       display: block;
-      flex: 0 1 auto;
+      /* **不缩**：高度由 main.js 按「窗口装得下的高度」设死，
+         让它能缩的话，卡片会被挤小、页面看着少一截。
+
+         也**不设 max-height**：上限是「窗口实际有多高」，
+         那要算出来才知道（要减掉标题栏、状态栏、留白），
+         写死一个数只会和窗口对不上——对不上就意味着
+         多出来的那一截被裁掉了（底部的按钮点不到）。 */
+      flex: none;
       min-height: 0;
-      /* 上限由 main.js 按 MAX_VIEW_HEIGHT 设（这里是兜底）：
-         面板的窗口高度就是按它夹的，iframe 放得比它高，
-         那一段在面板里够不着（积木区这时是藏着的）。 */
-      max-height: 560px;
     }
     #plugin-frame[hidden] { display: none; }
   </style>

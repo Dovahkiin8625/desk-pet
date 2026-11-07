@@ -63,5 +63,37 @@
     };
   }
 
-  globalThis.ScreenRecorderGeometry = { normalizeRect, scaleRect, clampRect };
+  /**
+   * 把一块画面「装进」另一个尺寸里：整体缩放，比例不变，多出来的留边。
+   *
+   * 录窗口的时候用得上：窗口一改尺寸，送来的画面就换了个大小，
+   * 而录制的画布大小是固定的（不然录出来的文件就是坏的——
+   * 见 pages/recorder.js 里 startWindowCanvas 的说明），
+   * 所以要把新画面缩放适配进画布。这个函数算的就是放哪儿、放大多少。
+   *
+   * @param {{width:number,height:number}} source 源画面的尺寸
+   * @param {{width:number,height:number}} target 画布的尺寸
+   * @returns {{x:number,y:number,width:number,height:number}} 在画布上的位置与大小
+   */
+  function fitContain(source, target) {
+    const sw = toNumber(source?.width);
+    const sh = toNumber(source?.height);
+    const tw = toNumber(target?.width);
+    const th = toNumber(target?.height);
+    if (sw <= 0 || sh <= 0 || tw <= 0 || th <= 0) {
+      return { x: 0, y: 0, width: Math.max(0, tw), height: Math.max(0, th) };
+    }
+    // 两边都要装得下，所以取小的那个缩放比。
+    const scale = Math.min(tw / sw, th / sh);
+    const width = Math.max(1, Math.min(tw, Math.round(sw * scale)));
+    const height = Math.max(1, Math.min(th, Math.round(sh * scale)));
+    return {
+      x: Math.round((tw - width) / 2),
+      y: Math.round((th - height) / 2),
+      width,
+      height,
+    };
+  }
+
+  globalThis.ScreenRecorderGeometry = { normalizeRect, scaleRect, clampRect, fitContain };
 })();

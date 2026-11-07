@@ -8,8 +8,22 @@ const PARTITION = 'persist:screen-recorder';
 /** 捕获页报「准备好了」之后，等多久算超时。 */
 const READY_TIMEOUT_MS = 15000;
 
-/** 预览图的宽度（像素）。够看清就行，不必太大。 */
-const PREVIEW_WIDTH = 480;
+/**
+ * 预览图的尺寸（像素）。
+ *
+ * 这是个**包围盒**：Electron 按它缩放，但**保持原来的长宽比**——
+ * 给正方形，竖着的屏就不会被压扁。
+ */
+const PREVIEW_BOX = 480;
+
+/**
+ * 预览图的 JPEG 质量。
+ *
+ * 预览图走的是 data URL（要过 IPC），一块 480×270 的屏
+ * PNG 要 35–140 KB（看画面内容），JPEG 只要 15–20 KB。
+ * 有几块屏就是几倍——省下来的都是过 IPC 的字节。
+ */
+const PREVIEW_QUALITY = 80;
 
 /**
  * 录制会话。
@@ -64,40 +78,112 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
   }
 
   /**
+   * 显示器 id → 显示器信息（**认不出一律 null，不兜底**）。
+   *
+   * 与 `displayById` 的差别就在兜底：这里要的是「就是这一块」，
+   * 兜底成主显示器会让预览图挂到别的屏上——
+   * 那一块明明在列表里，图片却是另一块屏的。
+   */
+  function displayOf(displayId) {
+    if (!displayId) return null;
+    return screen.getAllDisplays().find((d) => String(d.id) === String(displayId || '')) || null;
+  }
+
+  /**
+   * 每块显示器的名字。
+   *
+   * **用型号（`display.label`），不用捕获源给的 `name`**：
+   * 捕获源给的是「屏幕 1」「屏幕 2」——两块同型号的屏就分不清了。
+   * 型号重了才补个序号（「DELL U2720Q (2)」）。
+   *
+   * @returns {Map<string,string>} 显示器 id → 名字
+   */
+  function displayLabels() {
+    const displays = screen.getAllDisplays();
+    /** 型号 → 有几块。 */
+    const totals = new Map();
+    for (const d of displays) {
+      const key = d.label || '';
+      totals.set(key, (totals.get(key) || 0) + 1);
+    }
+    /** 型号 → 已经排到第几块。 */
+    const seen = new Map();
+    const map = new Map();
+    for (const d of displays) {
+      const base = d.label || `显示器 ${d.id}`;
+      const n = (seen.get(base) || 0) + 1;
+      seen.set(base, n);
+      map.set(String(d.id), totals.get(base) > 1 ? `${base} (${n})` : base);
+    }
+    return map;
+  }
+
+  /**
    * 列出可录的目标。
    *
+   * 显示器模式下**顺带把每块屏的预览图也抓了**：
+   * 预览图要的就是同一个 `getSources` 调用（缩略图），
+   * 另开一次调用只是把同样的活儿干两遍——每次都要 0.5 秒。
+   *
    * @param {'screen'|'window'} mode
-   * @returns {Promise<Array<{id:string,label:string,hint:string,displayId?:string,icon?:string}>>}
+   * @returns {Promise<Array<{id:string,label:string,hint:string,displayId?:string,
+   *   icon?:string,preview?:string,meta?:string}>>}
    */
   async function listTargets(mode) {
     const isWindow = mode === 'window';
-    // **不要缩略图**：要缩略图的话，系统会去挨个抓一遍窗口的画面，
+    // 窗口**不要缩略图**：要缩略图的话，系统会去挨个抓一遍窗口的画面，
     // 其中某个抓不到就得等它超时——实测列一次窗口要 5.5 秒，
     // 不要缩略图只要 0.4 秒。抓不到窗口的事留给真去录的时候再报错。
+    //
+    // 显示器**要缩略图**：界面上要给每块屏画一张预览，
+    // 而这一次调用就把所有屏的预览都带回来了（实测与不带缩略图一样快）。
     const sources = await desktopCapturer.getSources({
       types: isWindow ? ['window'] : ['screen'],
-      thumbnailSize: { width: 0, height: 0 },
+      thumbnailSize: isWindow
+        ? { width: 0, height: 0 }
+        : { width: PREVIEW_BOX, height: PREVIEW_BOX },
     });
-    if (!isWindow) {
-      // **主显示器排第一**：用户没选的时候默认就是它，
-      // 选区遮罩也开在它上面——多屏机器上「第一块」不一定是眼前那块。
-      const primary = String(screen.getPrimaryDisplay()?.id || '');
-      sources.sort((a, b) => {
-        const aPrimary = String(a.display_id || '') === primary ? 0 : 1;
-        const bPrimary = String(b.display_id || '') === primary ? 0 : 1;
-        return aPrimary - bPrimary;
-      });
+    if (isWindow) {
+      return sources.map((s) => ({
+        id: s.id,
+        label: s.name || s.id,
+        hint: '窗口',
+        // 窗口的应用图标：Electron 直接给得到（Windows/macOS），
+        // **不用为了图标去抓缩略图**——抓缩略图会把列窗口从 0.4 秒拖到 5.5 秒。
+        icon: appIconOf(s),
+      }));
     }
-    return sources.map((s) => ({
-      id: s.id,
-      label: s.name || s.id,
-      hint: isWindow ? '窗口' : '显示器',
-      // 显示器模式下，选区要按「用户选的那块屏」来框。
-      displayId: s.display_id || '',
-      // 窗口的应用图标：Electron 直接给得到（Windows/macOS），
-      // **不用为了图标去抓缩略图**——抓缩略图会把列窗口从 0.4 秒拖到 5.5 秒。
-      icon: appIconOf(s),
-    }));
+    // **主显示器排第一**：用户没选的时候默认就是它，
+    // 选区遮罩也开在它上面——多屏机器上「第一块」不一定是眼前那块。
+    const primary = String(screen.getPrimaryDisplay()?.id || '');
+    sources.sort((a, b) => {
+      const aPrimary = String(a.display_id || '') === primary ? 0 : 1;
+      const bPrimary = String(b.display_id || '') === primary ? 0 : 1;
+      return aPrimary - bPrimary;
+    });
+    const labels = displayLabels();
+    return sources.map((s) => {
+      const display = displayOf(s.display_id);
+      return {
+        id: s.id,
+        label: labels.get(String(s.display_id || '')) || s.name || s.id,
+        hint: '显示器',
+        // 显示器模式下，选区要按「用户选的那块屏」来框。
+        displayId: s.display_id || '',
+        // 这块屏的预览图（data URL）：界面上点一下就选它。
+        preview: previewOf(s),
+        // 分辨率：两块屏长得一样时，这是唯一能分出来的线索。
+        meta: display ? physicalSize(display) : '',
+      };
+    });
+  }
+
+  /** 显示器的物理像素尺寸（bounds 是 DIP，缩放不是 100% 时两者不等）。 */
+  function physicalSize(display) {
+    const scale = display.scaleFactor || 1;
+    return `${Math.round(display.bounds.width * scale)}×${Math.round(
+      display.bounds.height * scale
+    )}`;
   }
 
   /** 源的图标（data URL）。没有就空串。 */
@@ -112,26 +198,24 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
   }
 
   /**
-   * 某块显示器的预览图（data URL）。
+   * 源的预览图（data URL）。
    *
-   * 用来在界面上显示「要录的是哪一块屏幕」。
-   * 只有选中的那一块才抓——抓一遍全部显示器太慢。
+   * **用 JPEG 不用 PNG**：预览图要过 IPC，几块屏就是几倍。
+   * 一块 480×270 的屏，PNG 要 35–140 KB（看画面内容），
+   * JPEG 只要 15–20 KB——差出来的都是白传的字节。
    */
-  async function preview(displayId) {
-    const display = displayById(displayId);
-    if (!display) return '';
-    const width = PREVIEW_WIDTH;
-    const height = Math.max(
-      1,
-      Math.round((width * display.bounds.height) / Math.max(1, display.bounds.width))
-    );
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width, height },
-    });
-    const source = sources.find((s) => String(s.display_id) === String(display.id));
-    if (!source || !source.thumbnail || source.thumbnail.isEmpty()) return '';
-    return source.thumbnail.toDataURL();
+  function previewOf(source) {
+    try {
+      const thumb = source?.thumbnail;
+      if (!thumb || typeof thumb.isEmpty !== 'function' || thumb.isEmpty()) return '';
+      if (typeof thumb.toJPEG === 'function') {
+        const jpeg = thumb.toJPEG(PREVIEW_QUALITY);
+        if (jpeg && jpeg.length) return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+      }
+      return thumb.toDataURL();
+    } catch {
+      return '';
+    }
   }
 
   /**
@@ -192,11 +276,15 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
    * **顺序很重要**：遮罩必须先关掉，再开始取流。
    * 遮罩还在的时候取流，那块半透明的暗色层会被录进画面里。
    *
-   * @param {string} [displayId] 用户选的那块显示器（选区只在一块屏上框）
+   * @param {{displayId?:string, sourceId?:string}} [target]
+   *   displayId：框在哪块显示器上（框的坐标是相对它左上角的 DIP）；
+   *   sourceId：那块屏对应的捕获源 id（录的时候要从它身上取流）。
+   *   **两个都由调用方给**：调用方手里已经列好目标了，
+   *   这里再列一次要多花 0.5 秒——而且可能列到不同的源 id。
    * @returns {Promise<{crop:object,snapshotSize:object,sourceId:string}|null>}
    */
-  async function pickRegion(displayId) {
-    const display = displayById(displayId);
+  async function pickRegion(target = {}) {
+    const display = displayById(target.displayId);
     if (!display) return null;
 
     // 快照的**物理像素**尺寸：bounds 是 DIP，缩放不是 100% 时两者不等。
@@ -227,16 +315,10 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
     // 选区边框留在桌面上，录完才撤（用户要看得见自己录的是哪一块）。
     windows.showRegionFrame({ display, rect: picked.rect });
 
-    // 这块屏对应的捕获源 id：录制时要从它身上取流。
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 0, height: 0 },
-    });
-    const source = sources.find((s) => String(s.display_id) === String(display.id));
     return {
       crop,
       snapshotSize,
-      sourceId: source?.id || '',
+      sourceId: String(target.sourceId || ''),
       displayId: String(display.id),
     };
   }
@@ -276,9 +358,15 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
         type: 'begin',
         payload: {
           sourceId,
+          // **模式要传下去**：捕获页要按它决定画面从哪儿来——
+          // 录窗口的源会跟着窗口改尺寸，得先过一块固定大小的画布
+          // （见 pages/recorder.js 的 startWindowCanvas）。
+          mode: options.mode || 'screen',
           format: options.format,
           fps: options.fps,
           audio: options.audio,
+          // GIF 的尺寸与帧率：捕获页自己一帧一帧编码，用的就是这两个。
+          gif: options.gif || null,
           crop: options.crop || null,
           snapshotSize: options.snapshotSize || null,
         },
@@ -400,7 +488,6 @@ export function createCaptureSession({ windows, getOutputDir, onState }) {
 
   return {
     listTargets,
-    preview,
     pickRegion,
     start,
     stop,

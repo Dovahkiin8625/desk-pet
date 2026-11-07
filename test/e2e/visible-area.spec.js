@@ -8,7 +8,7 @@
 //
 // 这里验证的是「按形象算」之后的行为：
 //   - 形象之外的点不算点击（不弹面板、不触发反应）；
-//   - 形象之内才算点击；
+//   - 形象之内才算点击（单击摸头，双击才弹面板）；
 //   - 往上拖时形象能贴到屏幕顶（窗口允许有一部分在屏幕外）。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdir, rm } from 'node:fs/promises';
@@ -58,6 +58,22 @@ async function findSolidPoint(pet) {
   });
 }
 
+/**
+ * 等插件面板那个窗口出现。
+ *
+ * **不能**用「等任意一个新窗口」：点一下桌宠会冒出气泡窗口
+ *（念台词的那一行），它可能比面板先出现。认准地址栏。
+ */
+async function waitForPanel(app, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const panel = app.windows().find((w) => w.url().includes('/renderer/panel/index.html'));
+    if (panel) return panel;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
 test.describe('形象决定可点击区域与拖动边界', () => {
   test.beforeAll(async () => {
     await rm(USER_DATA, { recursive: true, force: true });
@@ -93,7 +109,7 @@ test.describe('形象决定可点击区域与拖动边界', () => {
     }
   });
 
-  test('形象上的点照常响应：插件面板弹出来', async () => {
+  test('形象上的点照常响应：单击摸头，双击才弹出插件面板', async () => {
     const app = await launch();
     try {
       const pet = await app.firstWindow();
@@ -102,12 +118,19 @@ test.describe('形象决定可点击区域与拖动边界', () => {
       const solid = await findSolidPoint(pet);
       expect(solid).toBeTruthy();
 
+      // **单击**：摸头，但不弹面板（输入框是双击才弹的）。
       await pet.mouse.click(solid.x, solid.y);
       await pet.waitForFunction(() => window.__pet.lastZone !== null, null, { timeout: 10000 });
+      await pet.waitForTimeout(600);
+      // 认准面板那个窗口：单击可能冒出气泡窗口（念台词的那一行）。
+      expect(await waitForPanel(app, 300), '单击不该弹出插件面板').toBeNull();
 
-      // 插件面板（带搜索框的那个窗口）被叫出来了。
-      const panel = await app.waitForEvent('window', { timeout: 15000 });
+      // **双击**：插件面板（带搜索框的那个窗口）被叫出来了。
+      await pet.mouse.dblclick(solid.x, solid.y);
+      const panel = await waitForPanel(app);
+      expect(panel, '双击桌宠应该弹出插件面板').toBeTruthy();
       await panel.waitForLoadState('domcontentloaded');
+      expect(await pet.evaluate(() => window.__pet.doubleTaps)).toBeGreaterThan(0);
     } finally {
       await app.close();
     }

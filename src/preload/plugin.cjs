@@ -29,6 +29,52 @@ function readParams() {
 
 const { pluginId, mode } = readParams();
 
+/**
+ * 订阅「推来的数据」的回调。
+ *
+ * 推送的监听器只装一次：插件页面会在 iframe 里加载，
+ * 订阅的时机比宿主推送的时刻晚——监听器装在订阅的时候，
+ * 早推来的那份就永远丢了。
+ */
+const dataSubscribers = new Set();
+const tickSubscribers = new Set();
+
+/**
+ * 最近一次推来的数据。
+ *
+ * 宿主在窗口刚建好就把数据推过来了（那时页面还没加载完，
+ * 订阅都还没注册）。推送是不排队的，不留一份在这儿，
+ * 那份数据就永远丢了——所以订阅的时候补给它。
+ */
+let pendingData = null;
+
+/** 推来的数据：转给所有订阅者。 */
+function deliverData(payload) {
+  pendingData = payload;
+  for (const cb of dataSubscribers) {
+    try {
+      cb(payload);
+    } catch (err) {
+      // 页面已经换掉了：它的回调已经没用了，扔掉就是。
+      dataSubscribers.delete(cb);
+    }
+  }
+}
+
+/** 推来的周期数据：转给所有订阅者。 */
+function deliverTick(payload) {
+  for (const cb of tickSubscribers) {
+    try {
+      cb(payload);
+    } catch (err) {
+      tickSubscribers.delete(cb);
+    }
+  }
+}
+
+ipcRenderer.on('plugin:data', (_e, payload) => deliverData(payload));
+ipcRenderer.on('plugin:tick', (_e, payload) => deliverTick(payload));
+
 contextBridge.exposeInMainWorld('plugin', {
   /** 插件的 id（哪个插件的窗口）。 */
   id: pluginId,
@@ -47,10 +93,12 @@ contextBridge.exposeInMainWorld('plugin', {
   // 数据由宿主喂：打开时给一次，之后按 refreshMs 周期推。
   data: () => ipcRenderer.invoke('plugin:data'),
   onData: (cb) => {
-    ipcRenderer.on('plugin:data', (_e, data) => cb(data));
+    dataSubscribers.add(cb);
+    // 订阅之前推来的那份数据：补给它（宿主早就推过来了）。
+    if (pendingData) cb(pendingData);
   },
   onTick: (cb) => {
-    ipcRenderer.on('plugin:tick', (_e, data) => cb(data));
+    tickSubscribers.add(cb);
   },
   act: (actionId, payload) => ipcRenderer.invoke('plugin:act', { actionId, payload }),
 

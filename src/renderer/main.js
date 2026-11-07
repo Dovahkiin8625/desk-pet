@@ -4,6 +4,7 @@ import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
 import { attachInteraction } from './pet/interaction.js';
+import { inDoubleTapWindow } from './pet/doubleTap.js';
 import { createSilhouette } from './pet/silhouette.js';
 import { idleReaction } from './pet/behavior.js';
 import {
@@ -53,6 +54,9 @@ window.__pet = {
   lastMotion: null,
   // 最近一次点击的声音决定：'voice'（念台词）/ 'model'（模型自己出声）/ 'none'。
   lastTapDecision: null,
+  // 认出过几次双击。双击才弹输入框（插件面板），单击是摸头。
+  // 诊断面：测试要能断言「单击没有弹面板、双击才弹」。
+  doubleTaps: 0,
   // 主进程推来的「声音池子」成分。
   tapVoice: null,
   focusPoint: null,
@@ -159,6 +163,22 @@ const tapTimes = [];
 // 连续猛点的判定：2 秒内 3 次。
 const SPAM_WINDOW_MS = 2000;
 const SPAM_THRESHOLD = 3;
+
+// 双击判定器住在**指针层**（pet/interaction.js）：它要看每一次抬手，
+// 包括「已经不在形象上」的那些——摸头之后头会动，
+// 刚才点中的像素可能已经不是形象了，判定留在这一层就会被丢掉。
+//
+// 这里只管双击**之后**做什么：弹出输入框（插件面板）。
+
+// 刚点过桌宠的一小段时间：窗口**保持可点**，别急着变成「不吃鼠标事件」。
+//
+// 摸头之后头会动，刚才点的那个像素可能已经不是形象了。
+// 桌宠窗口随即变成「不吃鼠标事件」，双击的第二下就丢了——
+// 用户明明双击了，面板却永远不弹。
+//
+// 代价是这段时间里形象的透明处会挡住桌面的点击。宁可多挡一下，
+// 也别把双击吃掉。
+let lastTapAt = 0;
 
 // 上一次落到的「无聊程度」（null / idle-long / timeout）。
 // 只在**等级变化**时才换表情：否则每 30 秒检查一次就会把
@@ -380,6 +400,11 @@ function updateClickThrough(x, y) {
   if (!silhouette?.isReady()) return;
   const onFigure = silhouette.contains(x, y);
   if (onFigure === null) return;
+  // **刚点过**：先别把窗口变成「不吃鼠标事件」。
+  //
+  // 双击的第二下要是丢了，面板就永远弹不出来（见 lastTapAt 的说明）。
+  // 只挡「变穿透」这一边：变回「可点」随时都可以。
+  if (!onFigure && inDoubleTapWindow(lastTapAt)) return;
   setClickThrough(!onFigure);
 }
 
@@ -981,6 +1006,11 @@ async function boot() {
       window.__pet.lastZone = zone;
       window.__pet.lastExpression = reaction.expressionName;
       window.__pet.lastMotion = reaction.motionSpec;
+
+      // 记下「刚刚点过」：双击的第二下必须还能落在桌宠身上，
+      // 透明处别急着把窗口变成「不吃鼠标事件」（见 lastTapAt 的说明）。
+      lastTapAt = Date.now();
+
       if (reaction.expressionName && currentModel?.expression) {
         try {
           // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
@@ -1029,12 +1059,8 @@ async function boot() {
         // 念台词的时候不播它——两声叠在一起，台词就听不清了。
         playTap();
       }
-      // 左键点桌宠 → 弹出插件面板（搜索框）。
-      //
-      // 摸头的表情与音效**照旧**：面板是入口，不是把角色的反应抢走。
-      // invoke 返回 promise：窗口在点击后被拆掉时它会拒绝，
-      // 而渲染层没有全局 unhandledrejection 兜底——拒绝必须吃掉。
-      window.pet.openPanel?.()?.catch?.(() => {});
+      // 左键点桌宠 → 摸头（表情、动作、声音）。
+      // 输入框（插件面板）是**双击**才弹的，见下面 onDoubleTap 那一段。
       // 情绪：点击只改心情，**不换表情**——
       // spec §5.1 已经给摸头/点击身体指定了表情（happy / smile），
       // 情绪系统不该把它覆盖掉。
@@ -1043,6 +1069,17 @@ async function boot() {
       // 反过来的话「生气」会被紧接着的普通情绪盖掉，生气永远显示不出来。
       applyEmotion(zone === 'head' ? EVENT.TAP_HEAD : EVENT.TAP_BODY);
       recordTap();
+    },
+    // **双击**才弹输入框（插件面板）；单击留给摸头。
+    //
+    // 判定在指针层做（见 pet/interaction.js）：它看得见每一次抬手，
+    // 包括「已经不在形象上」的那些——摸头之后头会动，
+    // 刚才点的像素可能已经不是形象了，判定留在反应层就会被丢掉。
+    onDoubleTap: () => {
+      window.__pet.doubleTaps += 1;
+      // invoke 返回 promise：窗口在点击后被拆掉时它会拒绝，
+      // 而渲染层没有全局 unhandledrejection 兜底——拒绝必须吃掉。
+      window.pet.openPanel?.()?.catch?.(() => {});
     },
     onHover: (x, y) => {
       window.__pet.focusPoint = { x, y };
