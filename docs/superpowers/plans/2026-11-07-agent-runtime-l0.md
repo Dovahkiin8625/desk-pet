@@ -1555,3 +1555,17 @@ git commit -m "feat(助手): LLM 客户端支持 tools——请求带工具、�
 
 **代价**：这些都要在对应层动工时重新捡起来；其中「meta 的 schema」与「12 条够不够」
 最可能在 L1/L2 变成真问题。
+
+## 每条修复由哪个测试锁住
+
+复审的每一条 Critical / Important 都是**先写测试看它红、再改代码**修掉的：
+
+| 复审发现 | 锁住它的测试 |
+|---|---|
+| Critical 1：非流式并行 tool_calls 被合并 | `非流式：并行 tool_calls 不会被合并成一条` |
+| Critical 1 的第二个出口：整段 JSON 的兜底分支 | `流式：服务端无视 stream 回整段 JSON 时，并行 tool_calls 也要各自成一条` |
+| Important 2：role 与 kind 是两个真值来源 | `记录：role 由 kind 推导——只写 kind 也不会自相矛盾` |
+| Important 3：写盘关口静默丢掉新分类记录 | `磁盘：只写 kind 的新记录不会被静默丢掉` |
+| Important 4：meta 没有体积上限 | `磁盘：meta 太大了要截断，别让一条记录把文件撑爆` |
+| Important 5：`emitted` 的 tool_calls 分支是死代码 | `地址探测：流里已经吐过工具调用后中断，不要换个地址重来` |
+| Important 6：工具名碎片拼接规则两头都会错 | `累积：工具名被切成碎片时要拼对（"fo" + "o" → "foo"）` 与 `累积：服务端重发完整名时要替换，不能拼成两遍` |
