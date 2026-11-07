@@ -5,6 +5,7 @@ import {
   POMODORO_PRESETS,
   TTS_HOSTS,
   LLM_BASE_URLS,
+  DEFAULT_AGENT,
   chatKindOf,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
@@ -21,6 +22,8 @@ import { createTapTalk } from './tapTalk.js';
 import { tapTalkNeedsPrewarm } from '../../shared/tapVoice.js';
 import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
+import { createToolRegistry } from './agent/tools/registry.js';
+import { createBuiltinTools } from './agent/tools/builtin.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { appendMessage, mergeFacts } from './chat/memory.js';
 
@@ -82,6 +85,14 @@ export function createAssistant({  userDataDir,
   onSound,
   isPetVisible,
   fetchImpl = fetch,
+  /**
+   * 本机程序索引（`app.launch` 工具要用）。
+   *
+   * **注入的是取值函数而不是索引本身**：程序索引在主进程里比助理晚一步建好
+   * （它要扫盘），这里晚一点拿到也没关系——
+   * 传索引本身的话，建好之前那个引用会是空的。
+   */
+  getAppIndex = null,
 }) {
   let state = null;
   // 桌宠被隐藏时排队的消息（最多 5 条）。
@@ -123,6 +134,27 @@ export function createAssistant({  userDataDir,
       say(`你复制了：${preview}`, { emotion: 'neutral', sound: 'tap' });
     },
   });
+
+  // ------------------------------------------------------------------
+  // agent 的工具表
+  //
+  // **内置工具先注册，插件后注册**——注册表同名先到先得，
+  // 所以插件抢不走 `shell.exec` 这类内置名字。
+  //
+  // 工具要用的东西（工作区、超时、剪贴板、程序索引）全是**取值函数**：
+  // 状态是异步加载的，工具被创建时那些值还不存在。
+  // ------------------------------------------------------------------
+  const toolRegistry = createToolRegistry();
+  toolRegistry.registerAll(
+    createBuiltinTools({
+      getWorkspace: () => state?.agent?.workspace || '',
+      getTimeoutMs: () => state?.agent?.timeoutMs || DEFAULT_AGENT.timeoutMs,
+      readClipboard: () => clipboardWatcher.readNow(),
+      // 剪贴板助手默认关着：工具不能绕过用户这个开关。
+      isClipboardEnabled: () => Boolean(state?.clipboard?.enabled),
+      getAppIndex: () => getAppIndex?.() || null,
+    })
+  );
 
   // ------------------------------------------------------------------
   // 持久化
@@ -1048,6 +1080,8 @@ export function createAssistant({  userDataDir,
     remindersView,
     pomodoroView,
     weatherView,
+    // 查一次天气。天气插件的「查一下天气」按钮与 agent 的天气工具都靠它。
+    fetchWeather,
     statusView,
     clipboardView,
     readClipboard,
@@ -1065,6 +1099,15 @@ export function createAssistant({  userDataDir,
     setWeatherEnabled,
     setHotAlertEnabled,
     setClipboardEnabled,
+    // —— agent ——
+    /**
+     * agent 的工具表。
+     *
+     * 插件宿主用它注册**插件提供的工具**（规格 §5.4）：
+     * 插件的清单声明一个工具、实例给出同名实现，宿主就把它挂进这张表。
+     * 插件没开的，它声明的工具就不在表里——提示词里也就看不见。
+     */
+    agentTools: toolRegistry,
     // —— 对话 ——
     /** 和桌宠聊天（用户发起的）。 */
     chat,

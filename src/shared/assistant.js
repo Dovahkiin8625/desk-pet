@@ -125,6 +125,34 @@ export const DEFAULT_LLM = Object.freeze({
 });
 
 /**
+ * agent 的默认配置（规格 §11）。
+ *
+ * 这些字段是 L1 先落地的**状态**——设置界面要到 L6 才做（T18），
+ * 但工具（工作区、单次工具超时）现在就要用它们。
+ *
+ * `workspace` 空 = 用户主目录：agent 总得有个起点。
+ */
+export const DEFAULT_AGENT = Object.freeze({
+  /** 同时跑几个后台任务。 */
+  maxConcurrent: 1,
+  /** 一个任务最多走几步。 */
+  maxSteps: 20,
+  /** 工作目录（空 = 用户主目录）。 */
+  workspace: '',
+  /** 单个工具调用的超时（毫秒）。 */
+  timeoutMs: 120000,
+  /** 单任务 token 上限（0 = 不限）。 */
+  maxTokensPerTask: 0,
+  /** 审批闸门。 */
+  approval: {
+    /** auto（全部放行）/ graded（只读放行）/ manual（全部要确认）。 */
+    policy: 'graded',
+    /** 永久放行的工具名。 */
+    allowAlways: [],
+  },
+});
+
+/**
  * 渲染层接受的情绪**标签**。
  *
  * 与 `src/renderer/pet/emotion.js` 的 `EMOTION_EXPRESSION` 的键一致——

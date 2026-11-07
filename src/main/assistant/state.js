@@ -2,6 +2,7 @@ import { readJson, writeJson } from '../store.js';
 import {
   DEFAULT_TTS,
   DEFAULT_LLM,
+  DEFAULT_AGENT,
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
@@ -42,6 +43,9 @@ export const DEFAULT_ASSISTANT = Object.freeze({
   },
   tts: { ...DEFAULT_TTS },
   llm: structuredClone(DEFAULT_LLM),
+  // agent 的设置：设置界面要到 L6 才做（T18），
+  // 但工作区与工具超时现在就要用（内置工具从这儿取）。
+  agent: structuredClone(DEFAULT_AGENT),
   chat: { messages: [], facts: [] },
 });
 
@@ -196,6 +200,38 @@ export function sanitizeAssistant(raw) {
         consecutiveFailures: Number.isFinite(proactive.consecutiveFailures)
           ? Math.max(0, Math.round(proactive.consecutiveFailures))
           : 0,
+      },
+    };
+  }
+
+  if (isPlainObject(raw.agent)) {
+    // agent 的设置：磁盘上的值可能离谱（并发 9999、超时 1 毫秒），
+    // 夹一遍——这些值会直接决定「几个任务同时跑」与「工具多久算超时」。
+    const approval = isPlainObject(raw.agent.approval) ? raw.agent.approval : {};
+    out.agent = {
+      maxConcurrent: Math.round(
+        clampNumber(raw.agent.maxConcurrent, 1, 8, DEFAULT_AGENT.maxConcurrent)
+      ),
+      maxSteps: Math.round(clampNumber(raw.agent.maxSteps, 1, 100, DEFAULT_AGENT.maxSteps)),
+      workspace: str(raw.agent.workspace).slice(0, 500),
+      timeoutMs: Math.round(
+        clampNumber(raw.agent.timeoutMs, 1000, 30 * 60 * 1000, DEFAULT_AGENT.timeoutMs)
+      ),
+      maxTokensPerTask: Math.round(
+        clampNumber(raw.agent.maxTokensPerTask, 0, 10_000_000, DEFAULT_AGENT.maxTokensPerTask)
+      ),
+      approval: {
+        policy: ['auto', 'graded', 'manual'].includes(approval.policy)
+          ? approval.policy
+          : DEFAULT_AGENT.approval.policy,
+        // 永久放行的工具名：去重、去空。
+        allowAlways: [
+          ...new Set(
+            (Array.isArray(approval.allowAlways) ? approval.allowAlways : []).filter(
+              (name) => typeof name === 'string' && name !== ''
+            )
+          ),
+        ],
       },
     };
   }

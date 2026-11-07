@@ -1148,6 +1148,9 @@ app.whenReady().then(async () => {
     },
     // 桌宠可见吗：桌宠被藏起来时不该凭空浮一个气泡窗口。
     isPetVisible: () => Boolean(win && !win.isDestroyed() && win.isVisible()),
+    // 本机程序索引：agent 的 `app.launch` 工具要用它。
+    // 索引在下面才建好（它要扫盘），所以传的是取值函数。
+    getAppIndex: () => apps,
   });
   await assistant.start();
 
