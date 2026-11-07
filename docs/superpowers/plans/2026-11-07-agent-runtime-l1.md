@@ -94,7 +94,7 @@ T6 插件反向调用 agent（ctx.agent 接缝；真正的运行时排在 L3 的
 { name, label, description, parameters, risk, run }
 ```
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-tools.test.js`：
 
@@ -228,13 +228,13 @@ test('注册表：注册一批', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-tools.test.js"`
 
 Expected: FAIL —— `src/main/assistant/agent/tools/registry.js` 不存在（`Cannot find module`）。
 
-- [ ] **Step 3: 在 `src/shared/assistant.js` 里加工具契约**
+- [x] **Step 3: 在 `src/shared/assistant.js` 里加工具契约**
 
 在文件末尾追加：
 
@@ -270,7 +270,7 @@ export const TOOL_RISK_ORDER = Object.freeze([TOOL_RISK.READ, TOOL_RISK.WRITE, T
 export const TOOL_NAME_RE = /^[a-z0-9]+(\.[a-z0-9]+)*$/;
 ```
 
-- [ ] **Step 4: 写 `src/main/assistant/agent/tools/registry.js`**
+- [x] **Step 4: 写 `src/main/assistant/agent/tools/registry.js`**
 
 ```js
 import { TOOL_RISK, TOOL_RISK_ORDER, TOOL_NAME_RE } from '../../../../shared/assistant.js';
@@ -429,19 +429,19 @@ export function createToolRegistry({ logger = console } = {}) {
 }
 ```
 
-- [ ] **Step 5: 跑测试，确认它通过**
+- [x] **Step 5: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-tools.test.js"`
 
 Expected: PASS —— 12 个测试全过。
 
-- [ ] **Step 6: 跑全量单元测试**
+- [x] **Step 6: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 224 + 12 = 236 个测试全过。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add src/shared/assistant.js src/main/assistant/agent/tools/registry.js test/unit/agent-tools.test.js
@@ -482,7 +482,7 @@ git commit -m "feat(助手): 工具注册表——全局唯一的名字、风险
 | `app.launch` | exec | 启动本机程序 |
 | `clipboard.read` | read | 读剪贴板 |
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-builtin-tools.test.js`：
 
@@ -680,35 +680,35 @@ test('clipboard.read：开着了才读得到', async () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-builtin-tools.test.js"`
 
 Expected: FAIL —— `src/main/assistant/agent/tools/builtin.js` 不存在。
 
-- [ ] **Step 3: 写 `src/main/assistant/agent/tools/builtin.js`**
+- [x] **Step 3: 写 `src/main/assistant/agent/tools/builtin.js`**
 
 （实现细节见下面的 Step 3 代码；要点：路径越界只拦只读工具、写/执行工具不设边界、工具出错一律抛错。）
 
-- [ ] **Step 4: 给 `src/shared/assistant.js` 加 `DEFAULT_AGENT`，给 `state.js` 加 `agent` 一段**
+- [x] **Step 4: 给 `src/shared/assistant.js` 加 `DEFAULT_AGENT`，给 `state.js` 加 `agent` 一段**
 
-- [ ] **Step 5: 在 `src/main/assistant/index.js` 里建注册表、装内置工具、暴露 `agent`**
+- [x] **Step 5: 在 `src/main/assistant/index.js` 里建注册表、装内置工具、暴露 `agent`**
 
-- [ ] **Step 6: 在 `src/main/index.js` 里把程序索引递给助理**
+- [x] **Step 6: 在 `src/main/index.js` 里把程序索引递给助理**
 
-- [ ] **Step 7: 跑测试，确认它通过**
+- [x] **Step 7: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-builtin-tools.test.js"`
 
 Expected: PASS —— 15 个测试全过。
 
-- [ ] **Step 8: 跑全量单元测试**
+- [x] **Step 8: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 236 + 15 = 251 个测试全过。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add src/shared/assistant.js src/main/assistant/agent/tools/builtin.js src/main/assistant/state.js src/main/assistant/index.js src/main/index.js test/unit/agent-builtin-tools.test.js
@@ -736,7 +736,7 @@ git commit -m "feat(助手): 内置工具集——读文件/列目录/搜索/写
     - `createPluginHost({ ..., toolRegistry })` —— `toolRegistry` 省略时用 `assistant?.agent?.tools`；
     - 插件被关掉时它的工具从注册表里摘掉；打开时挂回去。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-plugin-tools.test.js`（测试 1~5 是清单，6~10 是宿主）：
 
@@ -963,31 +963,31 @@ test('宿主：插件拿得到 ctx.agent', async () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-plugin-tools.test.js"`
 
 Expected: FAIL —— 清单还没有 `tools` 段、宿主还没有注册插件的工具。
 
-- [ ] **Step 3: 改 `src/shared/plugin.js`**
+- [x] **Step 3: 改 `src/shared/plugin.js`**
 
-- [ ] **Step 4: 改 `src/main/plugins/host.js`**
+- [x] **Step 4: 改 `src/main/plugins/host.js`**
 
-- [ ] **Step 5: 给天气插件加一个真工具**
+- [x] **Step 5: 给天气插件加一个真工具**
 
-- [ ] **Step 6: 跑测试，确认它通过**
+- [x] **Step 6: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-plugin-tools.test.js"`
 
 Expected: PASS —— 15 个测试全过。
 
-- [ ] **Step 7: 跑全量单元测试**
+- [x] **Step 7: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 251 + 15 = 266 个测试全过。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add src/shared/plugin.js src/main/plugins/host.js plugins/weather/plugin.json plugins/weather/main.js test/unit/agent-plugin-tools.test.js
@@ -1023,7 +1023,7 @@ git commit -m "feat(插件): 插件能给 agent 提供工具——清单声明 +
 - `run()` / `cancel()` **明确返回「还没上线」**，不假装成功——
   L3 的运行时接上即可（运行时通过 `agent.emit(event)` 把事件推给订阅者）。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-facade.test.js`：
 
@@ -1106,31 +1106,31 @@ test('facade：工具表挂在上面', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-facade.test.js"`
 
 Expected: FAIL —— `src/main/assistant/agent/facade.js` 不存在。
 
-- [ ] **Step 3: 写 `src/main/assistant/agent/facade.js`**
+- [x] **Step 3: 写 `src/main/assistant/agent/facade.js`**
 
-- [ ] **Step 4: 改 `src/main/assistant/index.js`**（建 facade、暴露 `agent` 与 `agentTools`）
+- [x] **Step 4: 改 `src/main/assistant/index.js`**（建 facade、暴露 `agent` 与 `agentTools`）
 
-- [ ] **Step 5: 改 `src/main/plugins/host.js`**（`ctx.agent` 接上：优先用宿主注入的，其次 `assistant.agent`）
+- [x] **Step 5: 改 `src/main/plugins/host.js`**（`ctx.agent` 接上：优先用宿主注入的，其次 `assistant.agent`）
 
-- [ ] **Step 6: 跑测试，确认它通过**
+- [x] **Step 6: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-facade.test.js"`
 
 Expected: PASS —— 7 个测试全过。
 
-- [ ] **Step 7: 跑全量单元测试**
+- [x] **Step 7: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 266 + 7 = 273 个测试全过。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add src/main/assistant/agent/facade.js src/main/assistant/index.js src/main/plugins/host.js test/unit/agent-facade.test.js
