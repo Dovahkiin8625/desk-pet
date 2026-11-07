@@ -1532,3 +1532,26 @@ git commit -m "feat(助手): LLM 客户端支持 tools——请求带工具、�
 - **占位符扫描**：无 TBD / TODO / 「类似 Task N」；每段实现代码都写全了。
 - **类型一致性**：`CHAT_KIND` / `chatKindOf` / `normalizeChatEntry` / `truncateByKind` 的名字在 Task 2 的接口段、测试、步骤里一致；`toRequestTools` / `createToolCallAccumulator` / `parseFrame` 在 Task 3 里一致。Task 2 产出的 `kind` 取值与规格 §4.2 逐字一致。
 - **Review Focus 覆盖**：五条焦点分别被 `agent-record.test.js` 的「旧记录按 role 兜底」「分路截断不挤掉用户输入」「磁盘旧数据规整」与 `agent-tools-stream.test.js` 的「并行交错」「正文为空不算错」「role:'tool' 原样带上」覆盖。
+
+---
+
+## 复审裁决（2026-11-07）
+
+复审把 10 条「考虑过但划到范围外」的行为留给我拍板。**全部按「不在 L0 范围」处理**，
+理由都是规格 §14 把它们排在别的层：
+
+| 行为 | 排在哪 | 什么时候要捡回来 |
+|---|---|---|
+| agent 循环 / 工具执行器 / 审批流 | §14 T4~（L1） | L1 动工 |
+| 内置工具（`shell.exec` / `fs.list`）的存在与安全边界 | §14 T4（L1） | L1 动工 |
+| `label` / `risk` 的语义与谁负责定级 | §14 T3（L1） | L1 动工 |
+| step/task/approval 的 `meta` 具体 schema | §14 只给字段名，定义留给 L1 | L1 动工（本轮只管了它「没有大小上限」） |
+| `runChat` 是否该重构切到 agent 后端 | §14 T7（L2） | L2 动工 |
+| `PROMPT_HISTORY_MESSAGES = 12` 够不够 | 沿用旧值，规格没要求改 | 有证据说明 12 不够时 |
+| `CHAT_KIND_LIMITS` 的具体数字（step 200 / task 100 / approval 100） | §4.4 原样给定 | 规格改了才动 |
+| 聊天记录插件化与按 kind 分区渲染 | §14 T16/T17（L6） | L6 动工 |
+| e2e 覆盖的补齐 | §14 T20（L6） | L6 动工 |
+| T0 探针本身的样本量与留档 | 一次性人工活动，不进仓库 | 没人再问「为什么这么设计」时 |
+
+**代价**：这些都要在对应层动工时重新捡起来；其中「meta 的 schema」与「12 条够不够」
+最可能在 L1/L2 变成真问题。
