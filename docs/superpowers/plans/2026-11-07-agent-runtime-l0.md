@@ -68,7 +68,7 @@
   - `unstable`：能拿到 `tool_calls` 但格式不稳（参数分片切错、并行调用错位、偶发 400）→ 需要在 T2 里加解析容错，**但方案不改**。
   - `unsupported`：服务端根本不接受 `tools`（400 明确说不支持）→ **停下来找用户**，规格 §15 已经写明「本期『只用 OpenAI 兼容接口』这个前提要重新谈（改走 Anthropic 原生协议）」，这是需要人拍板的事，不能自己悄悄换协议。
 
-- [ ] **Step 1: 写探针脚本**
+- [x] **Step 1: 写探针脚本**
 
 写 `C:\Users\Felix\.claude\jobs\908a7ee8\tmp\probe-tool-calling.mjs`：
 
@@ -290,13 +290,13 @@ async function post(body) {
 console.log(JSON.stringify(report, null, 2));
 ```
 
-- [ ] **Step 2: 跑探针**
+- [x] **Step 2: 跑探针**
 
 Run: `node "C:\Users\Felix\.claude\jobs\908a7ee8\tmp\probe-tool-calling.mjs"`
 
 Expected: 打印一份 JSON 报告，含 `keyConfigured: true`、`nonStream`、`stream`、`roundTrip` 三组结果。
 
-- [ ] **Step 3: 读报告，定性**
+- [x] **Step 3: 读报告，定性**
 
 按下面这张表对照，把结论**一字不改**写进最终报告：
 
@@ -307,7 +307,7 @@ Expected: 打印一份 JSON 报告，含 `keyConfigured: true`、`nonStream`、`
 | `nonStream.status: 400` 且错误信息明确说不支持 tools | **unsupported**——**停下来找用户**，把结论与影响讲清楚（§15 说这要重新谈「只用 OpenAI 兼容接口」这个前提），不要自己换协议 |
 | `keyConfigured: false` | **停下来找用户**——没有 key 就没法探针 |
 
-- [ ] **Step 4: 记录结论（不提交）**
+- [x] **Step 4: 记录结论（不提交）**
 
 在最终报告里写清楚：结论（stable / unstable / unsupported）、探针实际跑出来的关键数字（非流式与流式各拿到几个 tool call、参数能否 parse、流式分片数）、以及它对 Task 3 的影响。
 
@@ -345,7 +345,7 @@ Expected: 打印一份 JSON 报告，含 `keyConfigured: true`、`nonStream`、`
 **Interfaces 与后续任务的冲突（pre-flight）:**
 本任务产出的 `CHAT_KIND` / `CHAT_KIND_LIMITS` 是 L3 的 `agent/record.js`（写任务、步骤、审批记录）与 L5 的聊天记录插件的依赖点。命名必须与规格 §4.2 一致：`kind` 取值 `user` / `reply` / `task` / `step` / `approval`。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-record.test.js`：
 
@@ -520,13 +520,13 @@ test('磁盘：旧记录读进来时被补齐 kind，并按 kind 分路截断', 
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-record.test.js"`
 
 Expected: FAIL —— `CHAT_KIND` / `CHAT_KIND_LIMITS` / `chatKindOf` 未导出（`SyntaxError: The requested module ... does not provide an export named 'CHAT_KIND'`）。
 
-- [ ] **Step 3: 在 `src/shared/assistant.js` 里定义分类**
+- [x] **Step 3: 在 `src/shared/assistant.js` 里定义分类**
 
 在文件末尾（`MAX_CHAT_MESSAGES` 等常量之后）追加：
 
@@ -597,7 +597,7 @@ export function hasChatKind(entry) {
 }
 ```
 
-- [ ] **Step 4: 改 `src/main/assistant/chat/memory.js`**
+- [x] **Step 4: 改 `src/main/assistant/chat/memory.js`**
 
 把文件头部的导入改成：
 
@@ -754,7 +754,7 @@ export function appendMessage(messages, message, limits = CHAT_KIND_LIMITS) {
 }
 ```
 
-- [ ] **Step 5: 改 `src/main/assistant/chat/prompt.js` 的过滤规则**
+- [x] **Step 5: 改 `src/main/assistant/chat/prompt.js` 的过滤规则**
 
 把文件顶部的导入改成：
 
@@ -800,7 +800,7 @@ export function buildChatMessages({ history = [], userText = '', trigger = 'user
 }
 ```
 
-- [ ] **Step 6: 改 `src/main/assistant/state.js` 的规整与截断**
+- [x] **Step 6: 改 `src/main/assistant/state.js` 的规整与截断**
 
 把导入改成：
 
@@ -840,7 +840,7 @@ import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
     out.chat.messages = truncateByKind(messages);
 ```
 
-- [ ] **Step 7: 改 `src/main/assistant/index.js` 的 `chatHistoryView`**
+- [x] **Step 7: 改 `src/main/assistant/index.js` 的 `chatHistoryView`**
 
 把 `chatHistoryView` 替换成：
 
@@ -867,19 +867,19 @@ import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
 
 并在 `src/main/assistant/index.js` 顶部的 shared 导入里加上 `chatKindOf`（`chatKindOf` 从 `../../shared/assistant.js` 导入——先确认该文件现有的 shared 导入语句，按它的写法加一项）。
 
-- [ ] **Step 8: 跑测试，确认它通过**
+- [x] **Step 8: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-record.test.js"`
 
 Expected: PASS —— 15 个测试全过（复审补了 4 例：role 由 kind 推导 / 旧数据兼容 / 只写 kind 的记录不被丢掉 / meta 体积上限）。
 
-- [ ] **Step 9: 跑全量单元测试，确认没有回归**
+- [x] **Step 9: 跑全量单元测试，确认没有回归**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 193 个原有测试 + 11 个新测试全过（原数 193）。
 
-- [ ] **Step 10: 提交**
+- [x] **Step 10: 提交**
 
 ```bash
 git add src/shared/assistant.js src/main/assistant/chat/memory.js src/main/assistant/chat/prompt.js src/main/assistant/state.js src/main/assistant/index.js test/unit/agent-record.test.js
@@ -913,7 +913,7 @@ git commit -m "feat(助手): 聊天记录升级成分类记录——按 kind 分
 `{ role:'tool', tool_call_id: call.id, content: '结果文本' }` 消息追加进 messages。
 所以 `toolCalls[].id` 必须**原样带回**给接口。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `test/unit/agent-tools-stream.test.js`：
 
@@ -1110,13 +1110,13 @@ test('非流式：正文为空但有 tool_calls 时不报错', async () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `node --test "test/unit/agent-tools-stream.test.js"`
 
 Expected: FAIL —— `toRequestTools` / `createToolCallAccumulator` / `parseFrame` 未导出（`SyntaxError: does not provide an export named 'toRequestTools'`）。
 
-- [ ] **Step 3: 给 `openai.js` 加工具相关的纯函数**
+- [x] **Step 3: 给 `openai.js` 加工具相关的纯函数**
 
 在 `LLM_ERRORS` 定义之后、`export class LlmError` 之前插入：
 
@@ -1199,7 +1199,7 @@ export function createToolCallAccumulator() {
 }
 ```
 
-- [ ] **Step 4: 加 `parseFrame`，删掉 `extractDelta`**
+- [x] **Step 4: 加 `parseFrame`，删掉 `extractDelta`**
 
 把 `extractDelta` 替换成：
 
@@ -1240,7 +1240,7 @@ export function parseFrame(frame) {
 （`extractDelta` 一起删掉：流式重构后它已经没有调用方，
 留着会让下一个人以为它是流式解析的入口。）
 
-- [ ] **Step 5: `buildRequestBody` 支持 `tools`**
+- [x] **Step 5: `buildRequestBody` 支持 `tools`**
 
 把 `buildRequestBody` 替换成：
 
@@ -1271,7 +1271,7 @@ export function buildRequestBody({
 }
 ```
 
-- [ ] **Step 6: `chatCompletion`（非流式）支持工具**
+- [x] **Step 6: `chatCompletion`（非流式）支持工具**
 
 把 `chatCompletion` 里的「解析响应」那一段替换成：
 
@@ -1362,7 +1362,7 @@ function parseCompletionBody(text) {
 }
 ```
 
-- [ ] **Step 7: `chatCompletionStream`（流式）支持工具**
+- [x] **Step 7: `chatCompletionStream`（流式）支持工具**
 
 把 `chatCompletionStream` 里的相关部分改掉：
 
@@ -1461,7 +1461,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
   return { text: full, toolCalls: toolAccumulator.calls() };
 ```
 
-- [ ] **Step 8: 探测版函数透传 `toolCalls`，且中断后不换地址重发**
+- [x] **Step 8: 探测版函数透传 `toolCalls`，且中断后不换地址重发**
 
 `chatCompletionStreamWithProbe` 里，`emitted` 的计数要把「有 tool_calls 的帧」也算作「已经开始吐东西」——
 否则一次中断会被当成「还没吐过字」而换个地址重试，用户会看到重复的动作。
@@ -1499,19 +1499,19 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
 
 `chatCompletionWithProbe` 的返回值本来就是 `{ ...result, baseUrl }`，`result` 里已经多了 `toolCalls`——不用改。
 
-- [ ] **Step 9: 跑测试，确认它通过**
+- [x] **Step 9: 跑测试，确认它通过**
 
 Run: `node --test "test/unit/agent-tools-stream.test.js"`
 
 Expected: PASS —— 16 个测试全过（复审补了 7 例：非流式并行 / 整段 JSON 并行 / 碎片工具名 / 重发完整名 / 中断不换地址）。
 
-- [ ] **Step 10: 跑全量单元测试**
+- [x] **Step 10: 跑全量单元测试**
 
 Run: `npm run test:unit`
 
 Expected: PASS —— 193 + 15 + 16 = 224 个测试全过。
 
-- [ ] **Step 11: 提交**
+- [x] **Step 11: 提交**
 
 ```bash
 git add src/main/assistant/llm/openai.js test/unit/agent-tools-stream.test.js
