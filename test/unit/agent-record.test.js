@@ -168,3 +168,58 @@ test('磁盘：旧记录读进来时被补齐 kind，并按 kind 分路截断', 
   assert.equal(step.meta.taskId, 't1');
   assert.equal(step.meta.index, 50);
 });
+
+test('记录：role 由 kind 推导——只写 kind 也不会自相矛盾', () => {
+  // kind 是新契约，role 是为兼容旧数据保留的字段：
+  // 如果两个都是真值来源，就能源源地产出「用户的话以助手身份进上下文」这种记录。
+  assert.equal(normalizeChatEntry({ kind: 'user', text: 'x' }).role, 'user');
+  assert.equal(normalizeChatEntry({ kind: 'reply', text: 'x' }).role, 'assistant');
+  assert.equal(normalizeChatEntry({ kind: 'step', text: 'x' }).role, 'assistant');
+  assert.equal(normalizeChatEntry({ kind: 'reply', role: 'user', text: 'x' }).role, 'assistant');
+});
+
+test('记录：旧数据的兼容行为不受影响', () => {
+  const user = normalizeChatEntry({ role: 'user', text: 'x' });
+  assert.equal(user.kind, 'user');
+  assert.equal(user.role, 'user');
+  const reply = normalizeChatEntry({ role: 'assistant', text: 'x' });
+  assert.equal(reply.kind, 'reply');
+  assert.equal(reply.role, 'assistant');
+});
+
+test('磁盘：只写 kind 的新记录不会被静默丢掉', () => {
+  // 写盘关口是唯一能发现「调用方写错形状」的地方——
+  // 它要是还按旧的 role 白名单把关，新分类记录会被默默吃掉。
+  const raw = {
+    chat: {
+      messages: [
+        { kind: 'step', text: '步骤 1', meta: { taskId: 't1', tool: 'fs.list' } },
+        { kind: 'approval', text: '', meta: { taskId: 't1', tool: 'shell.exec' } },
+        { kind: 'task', text: '任务开始', meta: { taskId: 't1', status: 'running' } },
+        { text: '既没 kind 也没 role 的坏数据' },
+      ],
+      facts: [],
+    },
+  };
+  const clean = sanitizeAssistant(raw);
+  assert.equal(clean.chat.messages.length, 3, '坏数据要丢掉，好数据要留下');
+  assert.equal(clean.chat.messages[0].kind, 'step');
+  assert.equal(clean.chat.messages[0].role, 'assistant');
+  assert.equal(clean.chat.messages[1].kind, 'approval', '正文为空但 meta 有内容的记录要留下');
+  assert.equal(clean.chat.messages[2].kind, 'task');
+});
+
+test('磁盘：meta 太大了要截断，别让一条记录把文件撑爆', () => {
+  const huge = 'x'.repeat(50000);
+  const raw = {
+    chat: {
+      messages: [{ kind: 'step', text: '步骤', meta: { taskId: 't1', tool: 'fs.read', result: huge } }],
+      facts: [],
+    },
+  };
+  const clean = sanitizeAssistant(raw);
+  const meta = clean.chat.messages[0].meta;
+  assert.equal(meta.taskId, 't1', '小的字段要保住');
+  assert.ok(meta.result.length < huge.length, '大的字段要截断');
+  assert.ok(JSON.stringify(meta).length < 10000, '整条 meta 要有上限');
+});

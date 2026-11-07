@@ -5,6 +5,7 @@ import {
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
+  hasChatKind,
 } from '../../shared/assistant.js';
 import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
 import { createPomodoroState } from './pomodoro.js';
@@ -208,8 +209,13 @@ export function sanitizeAssistant(raw) {
       .filter(
         (m) =>
           isPlainObject(m) &&
-          (m.role === 'user' || m.role === 'assistant') &&
-          str(m.text) !== ''
+          // 关卡认 **kind**（新契约），也认旧的 role：
+          // 只写 kind 的新记录不能被静默丢掉，
+          // 既没 kind 也没 role 的坏数据要丢掉（宁可少一条，也不要错的）。
+          (hasChatKind(m) || m.role === 'user' || m.role === 'assistant') &&
+          // 正文空但 meta 有内容的记录要留下：
+          // 「工具调了但没有可展示的正文」是步骤记录的正常形态。
+          (str(m.text) !== '' || (isPlainObject(m.meta) && Object.keys(m.meta).length > 0))
       )
       .map((m) => normalizeChatEntry({ ...m, text: str(m.text).slice(0, 2000) }));
     out.chat.messages = truncateByKind(messages);

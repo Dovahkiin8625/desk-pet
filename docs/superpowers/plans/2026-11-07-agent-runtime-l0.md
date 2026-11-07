@@ -24,6 +24,25 @@
 - **不碰用户的真实配置**：探针脚本只**读** `userData/credentials.json` 与 `userData/assistant.json`，不写；且**绝不打印 key**（只打印「有没有配」）。
 - 单元测试命令：`npm run test:unit`（等价于 `node --test "test/unit/**/*.test.js"`）。
 
+## 评审后的修订（2026-11-07，整枝复审后）
+
+本计划按 TDD 跑完后做了一次整枝复审，发现 1 个必须修的缺陷与 5 个「L1 一开写记录就会踩」的问题。
+**下面这些改动已经落在代码里**，本计划里对应的代码片段也已同步改成正确版本。
+照着本计划执行的人请直接用改后的版本，不要用改前的。
+
+| # | 问题 | 改法 | 在本计划的哪一步 |
+|---|---|---|---|
+| 1 | **非流式路径用流式累积器装 tool_calls** —— 非流式的调用没有 `index`，两条并行调用挤进同一堆，名字拼成 `a.getb.list`、参数拼成两段 JSON | 新增 `normalizeToolCalls(list)`：按**数组顺序**映射，一一对应。非流式与「服务端回整段 JSON」的兜底分支都用它 | Task 3 Step 6 / Step 7 |
+| 2 | **工具名的碎片拼接规则两头都会错** —— `'fo'+'o'` 丢字符，`'weather'+'weather.get'` 拼两遍 | 改成「新的是旧的前缀 → 替换；否则按碎片续」 | Task 3 Step 3 |
+| 3 | **`emitted` 的 tool_calls 分支是死代码** —— 写在 `await` 之后、`catch` 之外，永远影响不到决策 | 给 `chatCompletionStream` 加 `onToolCall` 回调，在**流的过程中**计数 | Task 3 Step 7 / Step 8 |
+| 4 | **`role` 与 `kind` 是两个互不校验的真值来源** —— `{kind:'user'}` 会被归一化成 `role:'assistant'`，用户的话以助手身份进上下文 | `role` 改为**由 kind 推导**（旧数据按 role 兜底得到 kind，兼容行为不变） | Task 2 Step 4 |
+| 5 | **写盘关口仍按旧形状过滤** —— 只写 kind 的新记录、没有 role 的新记录会被**静默丢掉** | 关口的过滤条件改成「认 kind（也认旧 role）」+「正文空但 meta 有内容也留下」 | Task 2 Step 6 |
+| 6 | **`meta` 没有体积上限** —— 工具结果可以很大，而 assistant.json 每次改动整份重写 | `capMeta()`：砍长字符串、限数组与层级，**保留结构**（taskId、tool 名不能丢） | Task 2 Step 4 |
+
+复审还发现计划自己的测试代码块漏了这几条，于是它们当时全都没被锁住：
+非流式并行 tool_calls、碎片工具名、`role:'tool'` 的 `tool_call_id`。
+**对应的测试已经补进 `test/unit/agent-tools-stream.test.js` 与 `test/unit/agent-record.test.js`**（9 + 14 例）。
+
 ## Review Focus
 
 以下是规格暗示、但**没有任何一个任务的测试会覆盖**的输入类与失败模式。按「最可能先咬到人的」排序：
@@ -1059,9 +1078,10 @@ export function createToolCallAccumulator() {
         if (typeof name === 'string' && name) {
           if (!current.function.name) {
             current.function.name = name;
-          } else if (name !== current.function.name && !current.function.name.endsWith(name)) {
-            // 名字也可能是碎的：只在不是重复、也不是已收到的后缀时才续上。
-            current.function.name += name;
+          } else if (name !== current.function.name) {
+            // 服务端重发完整名 → 替换；真的是碎片 → 续上。
+            if (name.startsWith(current.function.name)) current.function.name = name;
+            else current.function.name += name;
           }
         }
         const args = call?.function?.arguments;
@@ -1170,15 +1190,40 @@ export function buildRequestBody({
     });
   }
   // **正文为空不一定是错**：模型可能只调工具、不说话。
-  if (!parsed.content && !parsed.toolCalls.length) {
+  // **非流式的 tool_calls 是完整的**：按数组顺序映射，
+  // **不要**塞进按 index 累积的堆——非流式的调用没有 index，
+  // 两条并行调用会挤进同一堆（名字拼成 "a.getb.list"、参数拼成两段 JSON）。
+  const toolCalls = normalizeToolCalls(parsed.toolCalls);
+  if (!parsed.content && !toolCalls.length) {
     throw new LlmError('接口没有返回内容', {
       code: LLM_ERRORS.MALFORMED,
       body: String(text).slice(0, 500),
     });
   }
-  const accumulator = createToolCallAccumulator();
-  accumulator.push(parsed.toolCalls);
-  return { text: parsed.content, raw: parsed.raw, toolCalls: accumulator.calls() };
+  return { text: parsed.content, raw: parsed.raw, toolCalls };
+```
+
+并补一个按数组顺序映射的辅助函数（放在 `parseCompletionBody` 旁边）：
+
+```js
+/**
+ * 非流式响应里的 tool_calls 本来就是完整的（没有 index，也没有碎片）。
+ *
+ * 所以不能用流式那套「按 index 累积」的堆：
+ * 非流式的每个调用都没有 index，全部落进 index 0 →
+ * 两条并行调用被合成一条，agent 循环当场断掉。
+ * 这里按**数组顺序**映射，一一对应。
+ */
+function normalizeToolCalls(list) {
+  return (Array.isArray(list) ? list : []).map((call, i) => ({
+    id: typeof call?.id === 'string' && call.id ? call.id : `call_${i}`,
+    type: typeof call?.type === 'string' && call.type ? call.type : 'function',
+    function: {
+      name: String(call?.function?.name ?? ''),
+      arguments: String(call?.function?.arguments ?? ''),
+    },
+  }));
+}
 ```
 
 并把 `chatCompletion` 的参数解构改成（多一个 `tools`，并传进请求体）：
@@ -1281,7 +1326,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
           break;
         }
         const { content, toolCalls } = parseFrame(frame);
-        if (toolCalls.length) toolAccumulator.push(toolCalls);
+        if (toolCalls.length) {
+          toolAccumulator.push(toolCalls);
+          onToolCall?.(toolCalls);
+        }
         if (content) {
           full += content;
           onDelta?.(content);
@@ -1303,7 +1351,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
     for (const frame of frames) {
       if (frame === '[DONE]') break;
       const { content, toolCalls } = parseFrame(frame);
-      if (toolCalls.length) toolAccumulator.push(toolCalls);
+      if (toolCalls.length) {
+        toolAccumulator.push(toolCalls);
+        onToolCall?.(toolCalls);
+      }
       if (content) {
         full += content;
         onDelta?.(content);
@@ -1314,59 +1365,40 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
   return { text: full, toolCalls: toolAccumulator.calls() };
 ```
 
-- [ ] **Step 8: 探测版函数透传 `toolCalls`**
+- [ ] **Step 8: 探测版函数透传 `toolCalls`，且中断后不换地址重发**
 
 `chatCompletionStreamWithProbe` 里，`emitted` 的计数要把「有 tool_calls 的帧」也算作「已经开始吐东西」——
 否则一次中断会被当成「还没吐过字」而换个地址重试，用户会看到重复的动作。
 
-把它的 `onDelta` 包装改成：
+**关键**：这个计数必须在**流的过程中**就能观察到，
+不能等 `chatCompletionStream` 返回之后再补——那时要么成功了（用不上），要么抛错了（补不上了）。
+所以给 `chatCompletionStream` 加一个 `onToolCall` 回调：
 
 ```js
-      onDelta: (delta) => {
-        emitted += 1;
-        onDelta?.(delta);
-      },
+export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta, onToolCall, signal } = {}) {
+  // …
+        if (toolCalls.length) {
+          toolAccumulator.push(toolCalls);
+          onToolCall?.(toolCalls);
+        }
 ```
 
-并在 `chatCompletionStream` 的返回值之上加一个 `onToolCall` 回调更麻烦——**改成更简单的做法**：
-在 `chatCompletionStreamWithProbe` 里改成直接调 `chatCompletionStream` 并把 `toolCalls` 一起带出来，
-同时用一个 `sawOutput` 标记（正文或工具调用）来代替 `emitted`：
+探测版里挂上它：
 
 ```js
-export async function chatCompletionStreamWithProbe(
-  params,
-  { fetchImpl = fetch, baseUrls = LLM_BASE_URLS, onDelta } = {},
-) {
-  const tried = [];
-  let emitted = 0;
-  const list = (Array.isArray(baseUrls) ? baseUrls : []).filter(Boolean);
-  for (const baseUrl of list) {
-    try {
       const result = await chatCompletionStream({ ...params, baseUrl }, {
         fetchImpl,
         onDelta: (delta) => {
           emitted += 1;
           onDelta?.(delta);
         },
+        // 工具调用也算「已经开始吐东西」：只调工具的轮次正文是空的，
+        // 模型已经决定了要调什么工具——换个地址重发会让用户看到重复的动作。
+        onToolCall: () => {
+          emitted += 1;
+        },
       });
-      // 工具调用也算「已经开始吐东西」：只调工具的轮次正文是空的。
-      if (result.toolCalls?.length) emitted += 1;
       return { ...result, baseUrl };
-    } catch (err) {
-      tried.push(`${redactUrl(baseUrl)}（${err?.message || err}）`);
-      if (emitted > 0) throw err;
-      if (
-        err instanceof LlmError &&
-        (err.code === LLM_ERRORS.BAD_REQUEST ||
-          err.code === LLM_ERRORS.MALFORMED ||
-          err.code === LLM_ERRORS.CONFIG)
-      ) {
-        throw err;
-      }
-    }
-  }
-  throw new LlmError(`没有可用的接口地址：${tried.join('；')}`, { code: LLM_ERRORS.NETWORK });
-}
 ```
 
 `chatCompletionWithProbe` 的返回值本来就是 `{ ...result, baseUrl }`，`result` 里已经多了 `toolCalls`——不用改。

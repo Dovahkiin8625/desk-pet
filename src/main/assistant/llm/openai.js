@@ -99,9 +99,12 @@ export function createToolCallAccumulator() {
         if (typeof name === 'string' && name) {
           if (!current.function.name) {
             current.function.name = name;
-          } else if (name !== current.function.name && !current.function.name.endsWith(name)) {
-            // 名字也可能是碎的：只在不是重复、也不是已收到的后缀时才续上。
-            current.function.name += name;
+          } else if (name !== current.function.name) {
+            // 服务端重发完整名 → 替换；真的是碎片 → 续上。
+            // 「新的是旧的前缀」= 重发（'weather' + 'weather.get'）；
+            // 否则按碎片续（'fo' + 'o' → 'foo'）。
+            if (name.startsWith(current.function.name)) current.function.name = name;
+            else current.function.name += name;
           }
         }
         const args = call?.function?.arguments;
@@ -231,11 +234,6 @@ export function parseFrame(frame) {
   };
 }
 
-/** 从一帧里取出增量文本（只要正文的那部分）。 */
-export function extractDelta(frame) {
-  return parseFrame(frame).content;
-}
-
 /** 接口在 200 的 body 里报的错误码 → 错误分类。 */
 export function classifyErrorCode(code) {
   const text = String(code || '').toLowerCase();
@@ -335,6 +333,27 @@ function parseCompletionBody(text) {
 }
 
 /**
+ * 非流式响应里的 tool_calls **本来就是完整的**（没有 index，也没有碎片）。
+ *
+ * 所以不能用流式那套「按 index 累积」的堆：
+ * 非流式的每个调用都没有 index，全部落进 index 0 →
+ * 两条并行调用被合成一条，工具名拼成「a.getb.list」、参数拼成两段 JSON，
+ * agent 循环当场断掉（而且报错是 JSON.parse 异常，完全指不到病根）。
+ *
+ * 这里按**数组顺序**映射，一一对应。
+ */
+function normalizeToolCalls(list) {
+  return (Array.isArray(list) ? list : []).map((call, i) => ({
+    id: typeof call?.id === 'string' && call.id ? call.id : `call_${i}`,
+    type: typeof call?.type === 'string' && call.type ? call.type : 'function',
+    function: {
+      name: String(call?.function?.name ?? ''),
+      arguments: String(call?.function?.arguments ?? ''),
+    },
+  }));
+}
+
+/**
  * 一次**非流式**调用。
  *
  * @returns {Promise<{text: string, raw: object, toolCalls: object[]}>}
@@ -382,15 +401,14 @@ export async function chatCompletion(params, fetchImpl = fetch) {
     });
   }
   // **正文为空不一定是错**：模型可能只调工具、不说话。
-  if (!parsed.content && !parsed.toolCalls.length) {
+  const toolCalls = normalizeToolCalls(parsed.toolCalls);
+  if (!parsed.content && !toolCalls.length) {
     throw new LlmError('接口没有返回内容', {
       code: LLM_ERRORS.MALFORMED,
       body: String(text).slice(0, 500),
     });
   }
-  const accumulator = createToolCallAccumulator();
-  accumulator.push(parsed.toolCalls);
-  return { text: parsed.content, raw: parsed.raw, toolCalls: accumulator.calls() };
+  return { text: parsed.content, raw: parsed.raw, toolCalls };
 }
 
 /**
@@ -398,7 +416,7 @@ export async function chatCompletion(params, fetchImpl = fetch) {
  *
  * @returns {Promise<{text: string, toolCalls: object[]}>} 累积起来的完整正文与工具调用
  */
-export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta, signal } = {}) {
+export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta, onToolCall, signal } = {}) {
   const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools } = params;
   if (!apiKey) throw new LlmError('没有配置 API Key', { code: LLM_ERRORS.CONFIG });
   const url = buildUrl(baseUrl);
@@ -440,9 +458,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
     const whole = parseCompletionBody(text);
     if (whole && (whole.content || whole.toolCalls.length)) {
       if (whole.content) onDelta?.(whole.content);
-      const accumulator = createToolCallAccumulator();
-      accumulator.push(whole.toolCalls);
-      return { text: whole.content, toolCalls: accumulator.calls() };
+      // 整段 JSON 里的 tool_calls 同样是完整的：按数组顺序映射，不塞进按 index 的堆。
+      const toolCalls = normalizeToolCalls(whole.toolCalls);
+      if (toolCalls.length) onToolCall?.(toolCalls);
+      return { text: whole.content, toolCalls };
     }
     throw new LlmError('接口返回的不是 SSE 也不是 JSON', {
       code: LLM_ERRORS.MALFORMED,
@@ -469,7 +488,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
           break;
         }
         const { content, toolCalls } = parseFrame(frame);
-        if (toolCalls.length) toolAccumulator.push(toolCalls);
+        if (toolCalls.length) {
+          toolAccumulator.push(toolCalls);
+          onToolCall?.(toolCalls);
+        }
         if (content) {
           full += content;
           onDelta?.(content);
@@ -491,7 +513,10 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
     for (const frame of frames) {
       if (frame === '[DONE]') break;
       const { content, toolCalls } = parseFrame(frame);
-      if (toolCalls.length) toolAccumulator.push(toolCalls);
+      if (toolCalls.length) {
+        toolAccumulator.push(toolCalls);
+        onToolCall?.(toolCalls);
+      }
       if (content) {
         full += content;
         onDelta?.(content);
@@ -529,9 +554,12 @@ export async function chatCompletionStreamWithProbe(
           emitted += 1;
           onDelta?.(delta);
         },
+        // 工具调用也算「已经开始吐东西」：只调工具的轮次正文是空的，
+        // 模型已经决定了要调什么工具——换个地址重发会让用户看到重复的动作。
+        onToolCall: () => {
+          emitted += 1;
+        },
       });
-      // 工具调用也算「已经开始吐东西」：只调工具的轮次正文是空的。
-      if (result.toolCalls?.length) emitted += 1;
       return { ...result, baseUrl };
     } catch (err) {
       tried.push(`${redactUrl(baseUrl)}（${err?.message || err}）`);

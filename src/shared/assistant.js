@@ -141,7 +141,12 @@ export const EMOTIONS = Object.freeze([
   'tired',
 ]);
 
-/** 聊天记录在磁盘上最多留多少条。 */
+/**
+ * 磁盘上 user / reply **每一路**最多留多少条。
+ *
+ * 不是「总共留多少条」——磁盘上的总条数是分路各算的
+ * （见 `CHAT_KIND_LIMITS`：user/reply 各 40，step 200，task/approval 各 100）。
+ */
 export const MAX_CHAT_MESSAGES = 40;
 
 /** 长期记忆（模型抽取的「事实」）最多留多少条。 */
@@ -207,4 +212,16 @@ export function chatKindOf(entry) {
   const kind = String(entry?.kind || '').trim();
   if (Object.values(CHAT_KIND).includes(kind)) return kind;
   return entry?.role === 'user' ? CHAT_KIND.USER : CHAT_KIND.REPLY;
+}
+
+/**
+ * 一条记录有没有**明确的**分类。
+ *
+ * 与 `chatKindOf` 的区别：后者永远给出一个合法 kind（按 role 兜底），
+ * 这个回答的是「这条数据自己说了自己是哪一类吗」——
+ * 写盘关口用它区分「形状不对」与「合法但没写 role」。
+ */
+export function hasChatKind(entry) {
+  const kind = String(entry?.kind || '').trim();
+  return Object.values(CHAT_KIND).includes(kind);
 }
