@@ -43,6 +43,12 @@
 非流式并行 tool_calls、碎片工具名、`role:'tool'` 的 `tool_call_id`。
 **对应的测试已经补进 `test/unit/agent-tools-stream.test.js` 与 `test/unit/agent-record.test.js`**（16 + 15 例）。
 
+复审还有 4 条 Minor 是纯清理（死导出 `extractDelta`、说假话的注释、名不副实的常量名、`0 = 不限` 的语义），
+与上面的修复落在同一批文件上，一并改掉了；剩下 2 条真的要改行为，留到 L1 动记录层时一起做：
+- `messagesBlock` 丢掉 `kind`/`id`/`meta`，L1 一写 step 记录，内置「聊天记录」页会把步骤当成桌宠发言显示
+  （规格 §10.1 说聊天记录最终要插件化，属过渡期状态）。
+- 旧记录每次被加载都会换一批新的 `id`（`randomUUID`），只在第一次保存前漂移；将来有「按 id 定位/删除」的功能时再改成确定性 id。
+
 ## Review Focus
 
 以下是规格暗示、但**没有任何一个任务的测试会覆盖**的输入类与失败模式。按「最可能先咬到人的」排序：
