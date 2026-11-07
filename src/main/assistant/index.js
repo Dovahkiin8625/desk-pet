@@ -145,7 +145,11 @@ export function createAssistant({  userDataDir,
   // 工具要用的东西（工作区、超时、剪贴板、程序索引）全是**取值函数**：
   // 状态是异步加载的，工具被创建时那些值还不存在。
   // ------------------------------------------------------------------
-  const toolRegistry = createToolRegistry();
+  const toolRegistry = createToolRegistry({
+    // 用户永久放行过的工具（规格 §8.1）按它声明的风险算——
+    // 插件提供的工具默认按「要确认」算，见注册表里的说明。
+    getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+  });
   toolRegistry.registerAll(
     createBuiltinTools({
       getWorkspace: () => state?.agent?.workspace || '',

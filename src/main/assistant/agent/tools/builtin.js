@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, stat } from 'node:fs/promises';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -47,6 +47,15 @@ const MAX_SEARCH_FILES = 5000;
 /** 读文件时最多读多少行（整份读进内存会被大文件撑爆）。 */
 const MAX_READ_LINES = 500;
 
+/**
+ * 读文件时最多读多少**字节**。
+ *
+ * 行数上限管不住内存：模型传个 `start`/`end` 也救不了——
+ * 整份文件已经进内存了。一个 2GB 的视频文件（当文本读）就能把主进程撑爆。
+ * 所以先按字节拦一道，超了直接报错，让模型换条路（先 fs.search 定位）。
+ */
+const MAX_READ_BYTES = 2 * 1024 * 1024;
+
 /** 搜索时跳过这些目录：它们太大，而且 agent 一般不该去动依赖与版本库。 */
 const SKIP_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', 'dist', 'out', '.next']);
 
@@ -64,19 +73,52 @@ function truncate(text, max) {
 }
 
 /**
+ * 判断一个路径有没有跑出根目录。
+ *
+ * rel 以 '..' 开头就是跑到外面去了；
+ * isAbsolute(rel) 是另一头的情况（不同的盘符）。
+ */
+function escapes(root, full) {
+  const rel = relative(root, full);
+  return rel === '..' || rel.startsWith(`..${'/'}`) || rel.startsWith('..\\') || isAbsolute(rel);
+}
+
+/**
  * 把一个路径解析成工作区里的绝对路径；越界就抛错。
  *
  * **只读工具用它**，写/执行工具不用（见文件头的说明）。
  *
  * 相对路径按工作区解析；绝对路径原样解析，但要检查它是不是还在工作区里。
+ *
+ * ## 要查两遍：词法一遍，真实路径一遍
+ *
+ * 词法检查（`..` 穿越）挡不住**符号链接**与 Windows 的**目录联接**：
+ * 链接本身在工作区里，它指的东西在外面。只读工具是自动放行的，
+ * 工作区边界是它们唯一的护栏，所以链接也得挡。
+ *
+ * 查真实路径的办法是 `realpath`：它把整条路径上的链接都解开。
+ * 目标不存在时 `realpath` 会报 ENOENT——那不是越界，
+ * 留给后面的操作去报错（fs.read 会说「读不了 …」）。
  */
-export function resolveInsideWorkspace(base, target) {
+export async function resolveInsideWorkspace(base, target) {
   const root = resolve(base);
   const full = isAbsolute(String(target)) ? resolve(String(target)) : resolve(root, String(target));
-  const rel = relative(root, full);
-  // rel 以 '..' 开头就是跑到工作区外面去了；
-  // isAbsolute(rel) 是另一头的情况（不同的盘符）。
-  if (rel === '..' || rel.startsWith(`..${'/'}`) || rel.startsWith('..\\') || isAbsolute(rel)) {
+  if (escapes(root, full)) {
+    throw new Error(`路径「${target}」在工作区（${root}）外面，不给碰`);
+  }
+  let realRoot = root;
+  let realFull = full;
+  try {
+    realRoot = await realpath(root);
+    realFull = await realpath(full);
+  } catch (err) {
+    // 目标不存在（ENOENT）不是越界；别的错（没权限）就当挡住了。
+    if (err?.code !== 'ENOENT') {
+      throw new Error(`路径「${target}」查不到，不给碰：${err?.message || err}`);
+    }
+    return full;
+  }
+  if (escapes(realRoot, realFull)) {
     throw new Error(`路径「${target}」在工作区（${root}）外面，不给碰`);
   }
   return full;
@@ -87,6 +129,9 @@ export function resolveInsideWorkspace(base, target) {
  *
  * 搜文件用：node_modules 与 .git 里几十万文件，
  * 全翻一遍能把一次搜索拖到几十秒。
+ *
+ * **链接一律跳过**：链接可能指向工作区外面（`fs.read` 那边会挡住，
+ * 但搜索是遍历，读一个链接指向的文件就漏出去了）。
  */
 async function walkFiles(root, visit) {
   const stack = [root];
@@ -101,6 +146,7 @@ async function walkFiles(root, visit) {
     }
     for (const entry of entries) {
       if (SKIP_DIRS.has(entry.name)) continue;
+      if (entry.isSymbolicLink()) continue; // 链接：可能通向外面，不碰
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         stack.push(full);
@@ -114,29 +160,92 @@ async function walkFiles(root, visit) {
 }
 
 /**
+ * 杀掉一个子进程**连它的孙进程**。
+ *
+ * ## 为什么要杀整棵树
+ *
+ * `child.kill()` 只杀最外面那一层：
+ * - Windows 上最外面是 `cmd.exe`，它起的 `ping.exe`、`node.exe` 什么的还活着；
+ * - 那些孙进程还占着 stdout/stderr 的管道，`close` 事件就永远不来——
+ *   于是「超时了但 Promise 不结算」，整个 agent 循环卡在那儿转圈。
+ *
+ * 所以：
+ * - Windows 用 `taskkill /T /F`（/T = 连子进程一起杀）；
+ * - 别的平台杀整个进程组（起进程时 `detached: true`，于是它自成一组）。
+ *
+ * @returns {'taskkill'|'group'|'kill'|'none'} 用了哪种方式
+ */
+export function killProcessTree(child, { spawn = nodeSpawn, platform = process.platform, kill = process.kill } = {}) {
+  const pid = child?.pid;
+  if (!pid) {
+    try {
+      child?.kill?.();
+    } catch {
+      /* 已经死了就算了 */
+    }
+    return 'none';
+  }
+  if (platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      return 'taskkill';
+    } catch {
+      /* taskkill 起不来就落回 child.kill() */
+    }
+  }
+  try {
+    kill(-pid, 'SIGKILL');
+    return 'group';
+  } catch {
+    /* 没有这个进程组就落回 child.kill() */
+  }
+  try {
+    child.kill?.('SIGKILL');
+    return 'kill';
+  } catch {
+    return 'none';
+  }
+}
+
+/**
  * 在 shell 里跑一条命令。
  *
- * 超时会**杀掉子进程**并当成一次工具失败——超时的命令可能正在改文件，
+ * 超时会**杀掉整棵进程树**并当成一次工具失败——超时的命令可能正在改文件，
  * 让它继续跑比杀掉更危险。
+ *
+ * **超时就立刻结算**：不等 `close`。`close` 要等所有管道关闭，
+ * 而孙进程还活着时管道就不会关——等它等于把 agent 循环卡死。
  */
 function runShell(command, cwd, timeoutMs, spawn, signal) {
   return new Promise((resolvePromise, reject) => {
     let child;
     try {
       // shell: true —— Windows 上走 cmd.exe，别的平台走 /bin/sh。
-      child = spawn(command, { cwd, shell: true, windowsHide: true });
+      // detached 只在别的平台开：Windows 上它会另开一个控制台窗口，
+      // 而 Windows 那边靠 taskkill /T 杀树，用不着进程组。
+      child = spawn(command, {
+        cwd,
+        shell: true,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+      });
     } catch (err) {
       reject(new Error(`命令起不来：${err?.message || err}`));
       return;
     }
     let stdout = '';
     let stderr = '';
-    let timedOut = false;
     let settled = false;
+    let timer = null;
+    let onAbort = null;
     const finish = (fn) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      timer = null;
+      // 摘掉 abort 监听：不然调用多了监听器会越堆越多。
+      if (onAbort && signal?.removeEventListener) signal.removeEventListener('abort', onAbort);
+      onAbort = null;
       fn();
     };
     child.stdout?.on('data', (chunk) => {
@@ -146,29 +255,26 @@ function runShell(command, cwd, timeoutMs, spawn, signal) {
       if (stderr.length < MAX_OUTPUT) stderr += String(chunk);
     });
     child.on('error', (err) => finish(() => reject(new Error(`命令执行失败：${err?.message || err}`))));
-    child.on('close', (code) =>
-      finish(() => resolvePromise({ code: code ?? 0, stdout, stderr, timedOut }))
-    );
+    child.on('close', (code) => finish(() => resolvePromise({ code: code ?? 0, stdout, stderr })));
 
-    const timer = timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true;
-          try {
-            child.kill();
-          } catch {
-            /* 已经死了就算了 */
-          }
-        }, timeoutMs)
-      : null;
+    timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            killProcessTree(child, { spawn });
+            finish(() =>
+              reject(new Error(`命令超时了（${timeoutMs} 毫秒），已经把它杀掉：${command}`))
+            );
+          }, timeoutMs)
+        : null;
 
     // 任务被取消时也要把子进程带走：留着它继续跑等于没人管它。
-    signal?.addEventListener?.('abort', () => {
-      try {
-        child.kill();
-      } catch {
-        /* 同上 */
-      }
-    });
+    if (signal?.addEventListener) {
+      onAbort = () => {
+        killProcessTree(child, { spawn });
+        finish(() => reject(new Error(`命令被取消了：${command}`)));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
@@ -217,7 +323,20 @@ export function createBuiltinTools({
       async run(args) {
         const path = String(args?.path || '').trim();
         if (!path) throw new Error('要读哪个文件？给个 path');
-        const full = resolveInsideWorkspace(workspaceDir(), path);
+        const full = await resolveInsideWorkspace(workspaceDir(), path);
+        // 先看大小再读：整份读进内存，一个大文件就能把主进程撑爆。
+        let size = 0;
+        try {
+          size = (await stat(full)).size;
+        } catch (err) {
+          throw new Error(`读不了 ${full}：${err?.message || err}`);
+        }
+        if (size > MAX_READ_BYTES) {
+          throw new Error(
+            `文件太大（${size} 字节，超过 ${MAX_READ_BYTES} 字节），读不了；` +
+              '先用 fs.search 找到要的那几行，再读小一点的文件'
+          );
+        }
         let raw = '';
         try {
           raw = await readFile(full, 'utf8');
@@ -256,7 +375,7 @@ export function createBuiltinTools({
       risk: TOOL_RISK.READ,
       async run(args) {
         const path = String(args?.path || '').trim() || '.';
-        const full = resolveInsideWorkspace(workspaceDir(), path);
+        const full = await resolveInsideWorkspace(workspaceDir(), path);
         let entries = [];
         try {
           entries = await readdir(full, { withFileTypes: true });
@@ -293,17 +412,28 @@ export function createBuiltinTools({
       async run(args) {
         const pattern = String(args?.pattern || '').trim();
         if (!pattern) throw new Error('要搜什么？给个 pattern');
-        const root = resolveInsideWorkspace(workspaceDir(), String(args?.path || '').trim() || '.');
+        const root = await resolveInsideWorkspace(
+          workspaceDir(),
+          String(args?.path || '').trim() || '.'
+        );
         const hits = [];
         await walkFiles(root, async (file) => {
           if (hits.length >= MAX_SEARCH_HITS) return;
+          // **按字节算大小**：按字数算的话，中文文件永远小于阈值，
+          // 阈值就成了摆设。先 stat 再决定要不要读。
+          let size = 0;
+          try {
+            size = (await stat(file)).size;
+          } catch {
+            return;
+          }
+          if (size > MAX_SEARCH_FILE_BYTES) return;
           let raw = '';
           try {
             raw = await readFile(file, 'utf8');
           } catch {
             return;
           }
-          if (raw.length > MAX_SEARCH_FILE_BYTES) return;
           const lines = raw.split(/\r?\n/);
           for (let i = 0; i < lines.length; i += 1) {
             if (!lines[i].includes(pattern)) continue;
@@ -375,9 +505,6 @@ export function createBuiltinTools({
           : workspaceDir();
         const timeoutMs = Math.max(0, Number(getTimeoutMs()) || 0);
         const result = await runShell(command, cwd, timeoutMs, spawn, ctx?.signal);
-        if (result.timedOut) {
-          throw new Error(`命令超时了（${timeoutMs} 毫秒），已经把它杀掉：${command}`);
-        }
         const parts = [`退出码 ${result.code}`];
         if (result.stdout.trim()) parts.push(`输出：\n${result.stdout.trim()}`);
         if (result.stderr.trim()) parts.push(`错误输出：\n${result.stderr.trim()}`);

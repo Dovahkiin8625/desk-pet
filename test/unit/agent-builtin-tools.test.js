@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   createBuiltinTools,
   resolveInsideWorkspace,
+  killProcessTree,
 } from '../../src/main/assistant/agent/tools/builtin.js';
 import { createToolRegistry } from '../../src/main/assistant/agent/tools/registry.js';
 
@@ -30,12 +32,12 @@ function pick(tools, name) {
   return t;
 }
 
-test('工作区：路径越界要拦住', () => {
+test('工作区：路径越界要拦住', async () => {
   const base = join(tmpdir(), 'ws');
-  assert.equal(resolveInsideWorkspace(base, 'a/b.txt'), join(base, 'a', 'b.txt'));
-  assert.equal(resolveInsideWorkspace(base, join(base, 'x.txt')), join(base, 'x.txt'));
-  assert.throws(() => resolveInsideWorkspace(base, '../逃出去.txt'), /工作区/);
-  assert.throws(() => resolveInsideWorkspace(base, join(base, '..', '逃出去.txt')), /工作区/);
+  assert.equal(await resolveInsideWorkspace(base, 'a/b.txt'), join(base, 'a', 'b.txt'));
+  assert.equal(await resolveInsideWorkspace(base, join(base, 'x.txt')), join(base, 'x.txt'));
+  await assert.rejects(() => resolveInsideWorkspace(base, '../逃出去.txt'), /工作区/);
+  await assert.rejects(() => resolveInsideWorkspace(base, join(base, '..', '逃出去.txt')), /工作区/);
 });
 
 test('工具集：七个内置工具齐活，风险等级对得上', () => {
@@ -169,6 +171,94 @@ test('shell.exec：命令起不来要抛错', async () => {
   await assert.rejects(() => pick(tools, 'shell.exec').run({ command: '' }), /命令/);
 });
 
+/**
+ * 超时是 `shell.exec` 唯一的刹车。
+ *
+ * 之前它只刹住了「返回」，没刹住「进程」：
+ * Windows 上 `child.kill()` 只杀 cmd.exe 这一层，孙进程照样跑，
+ * 而且 `close` 事件要等所有管道关闭——孙进程还活着就永远不结算，
+ * 整个 agent 循环就卡在那儿转圈。
+ */
+
+/** 造一个假的子进程：收得到事件，但自己永远不结束。 */
+function fakeChild(pid = 2147483647) {
+  const emitter = new EventEmitter();
+  return Object.assign(emitter, {
+    pid,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    killed: false,
+    kill() {
+      this.killed = true;
+      return true;
+    },
+  });
+}
+
+test('shell.exec：命令超时要立刻拒绝，不能等命令自己结束', async () => {
+  const child = fakeChild();
+  const spawnCalls = [];
+  const spawn = (cmd, args) => {
+    spawnCalls.push([cmd, args]);
+    return child;
+  };
+  const tools = createBuiltinTools({ spawn, getTimeoutMs: () => 60 });
+  const started = Date.now();
+  await assert.rejects(() => pick(tools, 'shell.exec').run({ command: '永远别结束' }), /超时/);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2000, `超时后应该马上拒绝，实际等了 ${elapsed} 毫秒`);
+  assert.ok(
+    child.killed || spawnCalls.some(([cmd]) => String(cmd).includes('taskkill')),
+    '子进程要被杀掉——留着它继续跑等于没人管它'
+  );
+});
+
+test('shell.exec：任务被取消时，命令也要被带走', async () => {
+  const child = fakeChild();
+  const spawnCalls = [];
+  const controller = new AbortController();
+  const tools = createBuiltinTools({
+    spawn: (cmd) => {
+      spawnCalls.push(String(cmd));
+      return child;
+    },
+    getTimeoutMs: () => 0,
+  });
+  const promise = pick(tools, 'shell.exec').run({ command: '长跑' }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(() => promise, /取消/);
+  assert.ok(
+    child.killed || spawnCalls.some((cmd) => cmd.includes('taskkill')),
+    '取消要带走子进程'
+  );
+});
+
+test('杀进程树：Windows 用 taskkill /T /F，POSIX 杀整个进程组', () => {
+  const calls = [];
+  const child = fakeChild(4242);
+  const mode = killProcessTree(child, {
+    platform: 'win32',
+    spawn: (cmd, args) => {
+      calls.push([cmd, args]);
+      return fakeChild();
+    },
+    kill: () => {
+      throw new Error('不该走到这里');
+    },
+  });
+  assert.equal(mode, 'taskkill');
+  assert.deepEqual(calls[0], ['taskkill', ['/pid', '4242', '/T', '/F']]);
+
+  const killed = [];
+  const mode2 = killProcessTree(child, {
+    platform: 'linux',
+    spawn: () => fakeChild(),
+    kill: (pid, sig) => killed.push([pid, sig]),
+  });
+  assert.equal(mode2, 'group');
+  assert.deepEqual(killed, [[-4242, 'SIGKILL']]);
+});
+
 test('app.launch：按名字找到并启动程序', async () => {
   const launched = [];
   const index = {
@@ -208,4 +298,72 @@ test('clipboard.read：开着了才读得到', async () => {
   });
   const out = await pick(tools, 'clipboard.read').run({});
   assert.match(out.text, /复制来的东西/);
+});
+
+/**
+ * 工作区边界要挡得住**符号链接**（Windows 上是目录联接）。
+ *
+ * 词法检查（`..` 穿越）在链接面前没用：链接在工作区里，
+ * 真实路径却在外面。只读工具是自动放行的，这道边界是它们唯一的护栏。
+ */
+
+test('工作区：链接指向外面要拦住（fs.read 与 fs.search 都不许钻出去）', async () => {
+  const outer = await tmpDir();
+  const ws = await tmpDir();
+  try {
+    await writeFile(join(outer, 'secret.txt'), 'TOP SECRET', 'utf8');
+    const tools = createBuiltinTools({ getWorkspace: () => ws });
+    const read = pick(tools, 'fs.read');
+    const search = pick(tools, 'fs.search');
+
+    // **目录联接**（Windows 上不需要管理员权限）：词法上在工作区里，
+    // 真实路径在外面。
+    try {
+      await symlink(outer, join(ws, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return; // 这个系统连目录链接都不让建（没权限），那这条测不了
+    }
+    await assert.rejects(() => read.run({ path: 'link/secret.txt' }), /工作区/);
+    assert.equal((await search.run({ pattern: 'TOP SECRET' })).data.hits.length, 0);
+
+    // **文件链接**：搜索是遍历目录，链接文件会被直接读出去。
+    // 建文件链接在 Windows 上要开发者模式或管理员，没有就跳过这一段。
+    try {
+      await symlink(join(outer, 'secret.txt'), join(ws, 'secret-link.txt'), 'file');
+    } catch {
+      return;
+    }
+    await assert.rejects(() => read.run({ path: 'secret-link.txt' }), /工作区/);
+    assert.equal((await search.run({ pattern: 'TOP SECRET' })).data.hits.length, 0);
+  } finally {
+    await rm(outer, { recursive: true, force: true });
+    await rm(ws, { recursive: true, force: true });
+  }
+});
+
+test('fs.read：太大的文件不读——不然主进程会被撑爆', async () => {
+  const dir = await tmpDir();
+  try {
+    await writeFile(join(dir, 'big.txt'), 'x'.repeat(3 * 1024 * 1024), 'utf8');
+    const tools = createBuiltinTools({ getWorkspace: () => dir });
+    await assert.rejects(() => pick(tools, 'fs.read').run({ path: 'big.txt' }), /太大/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('fs.search：按字节算文件大小，不能按字数', async () => {
+  const dir = await tmpDir();
+  try {
+    // 60 万个汉字：字数不到 1M，字节数却有 1.8M——
+    // 按字数算会放它过去，按字节才算拦得住。
+    await writeFile(join(dir, 'cn.txt'), '中'.repeat(600000), 'utf8');
+    const size = (await stat(join(dir, 'cn.txt'))).size;
+    assert.ok(size > 1024 * 1024, '这个文件按字节算超过 1M');
+    const tools = createBuiltinTools({ getWorkspace: () => dir });
+    const out = await pick(tools, 'fs.search').run({ pattern: '中' });
+    assert.equal(out.data.hits.length, 0, '超大的文件要跳过，不该读进内存');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

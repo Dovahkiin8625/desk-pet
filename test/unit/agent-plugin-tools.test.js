@@ -97,9 +97,38 @@ test('宿主：插件声明的工具进注册表', async () => {
     const tool = registry.get('weather.get');
     assert.ok(tool, '插件的工具应该在表里');
     assert.equal(tool.label, '查天气');
-    assert.equal(tool.risk, 'read');
+    assert.equal(tool.risk, 'write', '插件来源的工具不自动放行：它自报 read 也不算');
     const out = await tool.run({ city: '北京' });
     assert.equal(out.text, '北京 晴');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：用户永久放行过的插件工具，才按它声明的只读来', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(
+      root,
+      'weather',
+      { id: 'weather', name: '天气', tools: [TOOL_DECL] },
+      `export default function create(ctx) {
+         return {
+           tools() {
+             return [{ name: 'weather.get', run: async ({ city }) => ({ text: '北京 晴', data: { city } }) }];
+           },
+         };
+       }`
+    );
+    const registry = createToolRegistry({ getAllowAlways: () => ['weather.get'] });
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: root,
+      assistant: {},
+      toolRegistry: registry,
+    });
+    await host.load();
+    assert.equal(registry.get('weather.get').risk, 'read');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -105,6 +105,39 @@ test('风险：看不懂的风险等级按最严格处理', () => {
   assert.equal(effectiveRisk({ name: 'x.y' }), 'exec', '没写风险等级也不许当成 read');
 });
 
+test('风险：插件提供的工具不自动放行——除非用户信任它', () => {
+  // 规格 §5.2：「插件不能通过声明 read 来绕过检查」。
+  // 按名字兜底只挡得住同名的那几个，插件换个名字（weather.get、backup.do）
+  // 就绕过去了——所以插件来源的工具一律按「要确认」算。
+  assert.equal(effectiveRisk({ name: 'weather.get', risk: 'read' }, { source: 'plugin' }), 'write');
+  // 但用户永久放行过的工具，就按它声明的来（规格 §8.1 的 allowAlways）。
+  assert.equal(
+    effectiveRisk({ name: 'weather.get', risk: 'read' }, { source: 'plugin', allowAlways: ['weather.get'] }),
+    'read'
+  );
+  // 内置工具不受这条影响：它们自己声明的就是真话。
+  assert.equal(effectiveRisk({ name: 'weather.get', risk: 'read' }, { source: 'builtin' }), 'read');
+});
+
+test('注册表：插件注册的工具按插件来源算风险', () => {
+  const reg = createToolRegistry();
+  const t = reg.register(tool('weather.get', 'read'), { owner: 'weather' });
+  assert.equal(t.risk, 'write', '插件来源的工具不能自动放行');
+  assert.equal(t.source, 'plugin');
+});
+
+test('注册表：用户永久放行过的插件工具，按它声明的来', () => {
+  const reg = createToolRegistry({ getAllowAlways: () => ['weather.get'] });
+  const t = reg.register(tool('weather.get', 'read'), { owner: 'weather' });
+  assert.equal(t.risk, 'read');
+});
+
+test('注册表：内置工具标着 builtin 来源', () => {
+  const reg = createToolRegistry();
+  const t = reg.register(tool('fs.read', 'read'));
+  assert.equal(t.source, 'builtin');
+});
+
 test('注册表：注册时就把生效风险盖在描述符上', () => {
   const reg = createToolRegistry();
   const t = reg.register(tool('shell.exec', 'read'));
