@@ -215,6 +215,36 @@ export function chatKindOf(entry) {
 }
 
 /**
+ * 工具的风险等级。
+ *
+ * 风险等级决定「要不要用户点头」：
+ * 只读自动放行，写与执行要确认（规格 §8.1 的 graded 策略）。
+ *
+ * 放在 shared 里是因为**插件清单也要用它**——
+ * 插件在清单里声明 `risk: 'read'`，宿主与插件作者得认同一套取值。
+ */
+export const TOOL_RISK = Object.freeze({
+  /** 只读：读文件、列目录、搜索、读剪贴板、查状态。 */
+  READ: 'read',
+  /** 写入：写文件、改配置。 */
+  WRITE: 'write',
+  /** 执行：跑命令、启动程序、启动外部进程。 */
+  EXEC: 'exec',
+});
+
+/** 风险从轻到重的顺序：取「更严格者」时用它比较。 */
+export const TOOL_RISK_ORDER = Object.freeze([TOOL_RISK.READ, TOOL_RISK.WRITE, TOOL_RISK.EXEC]);
+
+/**
+ * 工具名的形状：小写字母数字，点号分段。
+ *
+ * 工具名是**全局唯一**的标识（`fs.read` / `shell.exec` / `weather.get`），
+ * 段之间用点：谁提供的不写在名字里（插件的工具也可能叫 `weather.get`），
+ * 但前缀能让人一眼看出这是哪一类能力。
+ */
+export const TOOL_NAME_RE = /^[a-z0-9]+(\.[a-z0-9]+)*$/;
+
+/**
  * 一条记录有没有**明确的**分类。
  *
  * 与 `chatKindOf` 的区别：后者永远给出一个合法 kind（按 role 兜底），
