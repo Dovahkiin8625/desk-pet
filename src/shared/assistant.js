@@ -298,7 +298,7 @@ export const EMOTIONS = Object.freeze([
  * 磁盘上 user / reply **每一路**最多留多少条。
  *
  * 不是「总共留多少条」——磁盘上的总条数是分路各算的
- * （见 `CHAT_KIND_LIMITS`：user/reply 各 40，step 200，task/approval 各 100）。
+ * （见 `CHAT_KIND_LIMITS`：user/reply 各 40，step 200，task/approval/dispatch 各 100）。
  */
 export const MAX_CHAT_MESSAGES = 40;
 
@@ -334,6 +334,8 @@ export const CHAT_KIND = Object.freeze({
   STEP: 'step',
   /** 审批请求与用户的选择。 */
   APPROVAL: 'approval',
+  /** 交互层的一次任务管理调用（派单 / 查看 / 停止 / 归档 / 追加指令）。 */
+  DISPATCH: 'dispatch',
 });
 
 /**
@@ -349,10 +351,35 @@ export const CHAT_KIND_LIMITS = Object.freeze({
   step: 200,
   task: 100,
   approval: 100,
+  // 派单记录留 100 条：一条交互层对话最多派几个单，
+  // 留少了模型会忘掉自己派过什么，重复派单。
+  dispatch: 100,
 });
 
-/** 哪些分类会进模型的上下文（其它一律不进）。 */
-export const CHAT_KIND_FOR_MODEL = Object.freeze([CHAT_KIND.USER, CHAT_KIND.REPLY]);
+/**
+ * 哪些分类进**哪一层**的模型上下文。
+ *
+ * ## 为什么不是「进不进上下文」这一个维度
+ *
+ * 有了两层之后，同一条记录对两层的意义不一样：
+ * - `dispatch`（派单记录）：交互层**要**看得见（不然它重复派单），
+ *   执行层**不**要看见（它只管自己那件事）；
+ * - `task` / `step` / `approval`：两层都看不见——它们是给人看的，
+ *   进了上下文会把对话冲垮，而且症状是「模型突然变笨」而不是报错。
+ *
+ * 定义只有一份：主进程拼上下文与设置页都从这儿取。
+ */
+export const LAYER = Object.freeze({
+  /** 交互层：跟用户说话的那一层。 */
+  INTERACTION: 'interaction',
+  /** 执行层：后台干活的那一层。 */
+  EXECUTION: 'execution',
+});
+
+export const CHAT_KIND_FOR_LAYER = Object.freeze({
+  [LAYER.INTERACTION]: Object.freeze([CHAT_KIND.USER, CHAT_KIND.REPLY, CHAT_KIND.DISPATCH]),
+  [LAYER.EXECUTION]: Object.freeze([CHAT_KIND.USER, CHAT_KIND.REPLY]),
+});
 
 /**
  * 取一条记录的分类。

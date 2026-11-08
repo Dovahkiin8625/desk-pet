@@ -8,7 +8,7 @@ import {
   stepRecord,
   taskRecord,
 } from '../../src/main/assistant/agent/record.js';
-import { CHAT_KIND, CHAT_KIND_FOR_MODEL, TASK_STATUS } from '../../src/shared/assistant.js';
+import { CHAT_KIND, CHAT_KIND_FOR_LAYER, TASK_STATUS } from '../../src/shared/assistant.js';
 import { appendMessage } from '../../src/main/assistant/chat/memory.js';
 import { buildChatMessages } from '../../src/main/assistant/chat/prompt.js';
 
@@ -106,8 +106,13 @@ test('关键：这三种记录一律不进模型上下文', () => {
   assert.ok(texts.includes('今天晴'));
   assert.ok(!texts.some((t) => String(t).includes('fs.read')), '步骤不能进上下文');
   assert.ok(!texts.some((t) => String(t).includes('整理资料')), '任务状态不能进上下文');
-  // 只有 user 与 reply 两种分类进上下文。
-  assert.ok(CHAT_KIND_FOR_MODEL.every((k) => k === CHAT_KIND.USER || k === CHAT_KIND.REPLY));
+  // 只有 user 与 reply 两种分类进**任何一层**的上下文；
+  // dispatch 只进交互层（见 agent-dispatch-record.test.js）。
+  assert.ok(
+    [...CHAT_KIND_FOR_LAYER.execution].every(
+      (k) => k === CHAT_KIND.USER || k === CHAT_KIND.REPLY
+    )
+  );
 });
 
 test('状态短句：每个状态都有一句人话', () => {

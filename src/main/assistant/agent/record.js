@@ -8,9 +8,10 @@ import {
 /**
  * agent 的分类记录（规格 §4.2）。
  *
- * 聊天记录现在有五种分类：user / reply / task / step / approval。
- * 前两种是**给模型看的**，后三种是**给人看的**——
+ * 聊天记录现在有六种分类：user / reply / task / step / approval / dispatch。
+ * user 与 reply 是**给模型看的**；task / step / approval 是**给人看的**——
  * 它们绝不能进模型上下文（见 chat/prompt.js 的过滤）。
+ * dispatch 两头不一样：交互层看得见、执行层看不见（见 shared 的 `CHAT_KIND_FOR_LAYER`）。
  *
  * 这里只造条目，不落盘：落盘走 chat/memory.js 的 `appendMessage`，
  * 那边的分路截断才对（一条新步骤不该把最老的用户输入挤掉）。
@@ -119,4 +120,30 @@ export function interruptedTasks(messages) {
     });
   }
   return [...latest.values()].filter((t) => !FINAL_STATUS.has(t.status));
+}
+
+/**
+ * 交互层的一次任务管理调用（派单 / 查看 / 停止 / 归档 / 追加指令）。
+ *
+ * **正文里必须带任务号**：交互层下一轮要靠它说「停掉刚才那个」——
+ * 没有任务号，它只能瞎猜一个。
+ */
+export function dispatchRecord({
+  tool = '',
+  taskId = '',
+  title = '',
+  action = '',
+  at = Date.now(),
+} = {}) {
+  const name = String(tool || '任务');
+  const id = String(taskId || '');
+  const parts = [name, action];
+  if (id) parts.push(`（任务 ${id}）`);
+  return {
+    kind: CHAT_KIND.DISPATCH,
+    role: 'assistant',
+    text: parts.filter(Boolean).join(' '),
+    at,
+    meta: { tool: name, taskId: id, title: String(title || ''), action: String(action || '') },
+  };
 }

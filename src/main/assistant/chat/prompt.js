@@ -1,7 +1,8 @@
 import {
   EMOTIONS,
   PROMPT_HISTORY_MESSAGES,
-  CHAT_KIND_FOR_MODEL,
+  CHAT_KIND_FOR_LAYER,
+  LAYER,
   chatKindOf,
 } from '../../../shared/assistant.js';
 
@@ -80,27 +81,39 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() }
 }
 
 /**
- * 组装要发给接口的消息数组。
+ * 从历史里挑出**这一层**该看见的对话。
  *
- * **只带最近若干条**：磁盘上留的条数按分类分路（见 memory.js），
- * 提示词里只带 12 条——「记多少」与「发多少」是两回事，全发既花钱又稀释重点。
+ * 「哪一层」是新的维度：交互层看得见自己派过什么（dispatch），
+ * 执行层看不见（规格 §6）。
  *
- * **只取 user 与 reply**：步骤、任务状态、审批记录是**给人看的**，
- * 它们进了上下文会把对话冲垮——而且症状是「模型突然变笨」而不是报错，
- * 极难排查。所以过滤放在这里做，且只认 kind 为 user/reply 的条目。
+ * **只取最近若干条**：磁盘上留的条数按分类分路（见 memory.js），
+ * 提示词里只带 12 条——「记多少」与「发多少」是两回事。
  */
-export function buildChatMessages({ history = [], userText = '', trigger = 'user' } = {}) {
-  const messages = [];
+export function buildHistoryMessages({ history = [], layer = LAYER.INTERACTION } = {}) {
+  const kinds = CHAT_KIND_FOR_LAYER[layer] || CHAT_KIND_FOR_LAYER[LAYER.INTERACTION];
   const list = Array.isArray(history) ? history : [];
-  const conversational = list
-    .filter((item) => item && item.text && CHAT_KIND_FOR_MODEL.includes(chatKindOf(item)))
-    .slice(-PROMPT_HISTORY_MESSAGES);
-  for (const item of conversational) {
-    messages.push({
+  return list
+    .filter((item) => item && item.text && kinds.includes(chatKindOf(item)))
+    .slice(-PROMPT_HISTORY_MESSAGES)
+    .map((item) => ({
       role: item.role === 'user' ? 'user' : 'assistant',
       content: item.text,
-    });
-  }
+    }));
+}
+
+/**
+ * 组装要发给接口的消息数组：历史 + 当前这一句。
+ *
+ * 历史里**不带**当前这句（调用方拿的是还没追加这句话的历史），
+ * 否则模型会看到同一句话出现两次。
+ */
+export function buildChatMessages({
+  history = [],
+  userText = '',
+  trigger = 'user',
+  layer = LAYER.INTERACTION,
+} = {}) {
+  const messages = buildHistoryMessages({ history, layer });
   messages.push({
     role: 'user',
     content: trigger === 'proactive' ? PROACTIVE_TRIGGER : String(userText ?? ''),
