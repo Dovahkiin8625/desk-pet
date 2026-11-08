@@ -17,6 +17,10 @@ const USER_DATA = join(ROOT, '.tmp-e2e-chat-history');
  *
  * 摆在 userData 的 assistant.json 里——助理启动时读它。
  * 任务的状态给「完成」：还在跑的任务在启动时会被补记一条「已中断」。
+ *
+ * 对话开关是**打开**的：用户说的话是「先记下、再去问模型」，
+ * 开关关着时那句话根本不会被记下来（也就没有实时更新可看）。
+ * 没配 API Key 不碍事——问模型那一步会失败，记录已经落下去了。
  */
 async function seedChat() {
   await mkdir(USER_DATA, { recursive: true });
@@ -24,6 +28,11 @@ async function seedChat() {
     join(USER_DATA, 'assistant.json'),
     JSON.stringify({
       version: 1,
+      llm: {
+        enabled: true,
+        // 别让桌宠「先应一声」：那句话会多出一条记录，干扰断言。
+        ackEnabled: false,
+      },
       chat: {
         messages: [
           { kind: 'user', role: 'user', text: '在吗', at: 1 },
@@ -170,6 +179,53 @@ test.describe('聊天记录插件', () => {
       const winFrame = pluginWin.frameLocator('#plugin-frame');
       await expect(winFrame.locator('.chat.user')).toHaveText('在吗');
       await expect(winFrame.locator('.task .title')).toHaveText('查视频');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('页面开着的时候：新记录不用重开就出现', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      // 分离成独立窗口：面板要收起来去说话，窗口留着。
+      await panel.evaluate(() => document.querySelector('#detach')?.click());
+      const pluginWin = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(pluginWin, '插件的独立窗口没有出现').not.toBeNull();
+      await pluginWin.waitForLoadState('domcontentloaded');
+
+      const winFrame = pluginWin.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('.chat.user')).toHaveText('在吗');
+
+      // 先把任务的步骤展开：用户正在看的东西不该被新记录挤掉。
+      await winFrame.locator('.task details summary').click();
+      await expect(winFrame.locator('.task details')).toHaveAttribute('open', '');
+
+      // 重新打开面板（回到搜索视图），说一句话。
+      await pet.evaluate(() => window.pet.openPanel?.());
+      await panel.waitForFunction(() => window.__panel?.view === 'search', null, { timeout: 10000 });
+      await panel.fill('#query', '你好呀');
+      await panel.press('#query', 'Control+Enter');
+
+      // 这句话被记下来了 → 开着的页面自己就更新了，不用重开。
+      await expect(winFrame.locator('.chat.user')).toHaveCount(2);
+      await expect(winFrame.locator('.chat.user').nth(1)).toHaveText('你好呀');
+
+      // 更新不能把用户正在看的东西收起来。
+      await expect(winFrame.locator('.task details')).toHaveAttribute('open', '');
+      await expect(winFrame.locator('.task ol li')).toHaveText('fs.list');
+
     } finally {
       await app.close();
     }

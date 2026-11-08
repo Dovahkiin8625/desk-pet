@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createPluginHost } from '../../src/main/plugins/host.js';
+import { createAgentFacade } from '../../src/main/assistant/agent/facade.js';
+import { createRecordSink } from '../../src/main/assistant/chat/recordSink.js';
 
 /**
  * 聊天记录插件（规格 §10.1）。
@@ -134,6 +136,68 @@ test('聊天记录插件：记录一变就推给界面', async () => {
 
     assert.deepEqual(pushed, [
       { pluginId: 'chat-history', kind: 'data', payload: { entries: [entry('reply', '在呢')] } },
+    ]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('聊天记录插件：写一条记录 → 通知订阅者 → 推到界面（整条链）', async () => {
+  // 用**真的**记录入口与真的 agent 接口：
+  // 「写一条就通知一次」这条规矩要有人守，半真半假的桩守不住。
+  const facade = createAgentFacade({});
+  let messages = [];
+  const write = createRecordSink({
+    getMessages: () => messages,
+    setMessages: (next) => {
+      messages = next;
+    },
+    onEntry: (entry) => facade.emit(entry),
+  });
+  const assistant = {
+    agent: facade,
+    clearChatHistory: () => ({ ok: true, message: '记录清空了' }),
+  };
+  const { host, cleanup } = await makeHost(assistant);
+  try {
+    const pushed = [];
+    host.attachBroadcaster((pluginId, kind, payload) =>
+      pushed.push({ pluginId, kind, payload })
+    );
+
+    write({ role: 'user', text: '在吗' });
+
+    assert.equal(pushed.length, 1);
+    assert.equal(pushed[0].pluginId, 'chat-history');
+    assert.equal(pushed[0].kind, 'data');
+    const entries = pushed[0].payload.entries;
+    assert.equal(entries.length, 1);
+    // 推给界面的那条是**规整后**的：页面靠 id 去重、靠 kind 分区。
+    assert.ok(entries[0].id, '条目要有 id');
+    assert.equal(entries[0].kind, 'user');
+    assert.equal(entries[0].text, '在吗');
+    // 记下来的那条与推给界面的那条是同一条。
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].id, entries[0].id);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('聊天记录插件：清空记录会给所有界面推一条「整份清空」', async () => {
+  const assistant = fakeAssistant([entry('user', '在吗')]);
+  const { host, cleanup } = await makeHost(assistant);
+  try {
+    const pushed = [];
+    host.attachBroadcaster((pluginId, kind, payload) =>
+      pushed.push({ pluginId, kind, payload })
+    );
+
+    await host.act('chat-history', 'clear', null);
+
+    // 不推的话，别的界面（分离出去的独立窗口）还留着旧记录。
+    assert.deepEqual(pushed, [
+      { pluginId: 'chat-history', kind: 'data', payload: { entries: [], replace: true } },
     ]);
   } finally {
     await cleanup();

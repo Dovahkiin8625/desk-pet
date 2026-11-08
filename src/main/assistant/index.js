@@ -1056,9 +1056,6 @@ export function createAssistant({  userDataDir,
           ack.noteText();
           reply?.push(delta);
         },
-        // agent 的步骤事件**不**转发给插件：插件订阅的是**聊天记录条目**
-        // （写一条就推一条，见 appendChatRecord）。
-        // 原始事件是中间产物，条目里什么都有（kind / text / meta）。
       });
     } catch (err) {
       ack.cancel();

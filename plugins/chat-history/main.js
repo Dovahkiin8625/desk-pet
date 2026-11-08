@@ -38,11 +38,17 @@ export default function createChatHistoryPlugin(ctx) {
     /**
      * 页面里的动作：清空记录。
      *
-     * 清完由页面自己重新取一份快照（`data()` 这时返回空数组）。
+     * 清完给**所有**界面推一条「整份清单是空的」——
+     * 不推的话，别的界面（分离出去的独立窗口）还留着旧记录，
+     * 用户切过去一看，清掉的记录又回来了。
+     *
+     * `replace: true` = 这是一份**整份**清单，页面先清再合；
+     * 不带这个标记的推送是**增量**（一条记录进来推一条）。
      */
     act(actionCtx, actionId) {
       if (actionId !== 'clear') return null;
       const r = actionCtx.assistant.clearChatHistory();
+      actionCtx.push({ entries: [], replace: true });
       return { ok: true, message: r?.message || '记录清空了' };
     },
   };

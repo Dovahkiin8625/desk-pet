@@ -59,7 +59,6 @@ export function createPanelController({
   getDisplays,
   plugins,
   apps,
-  assistant,
   openSettings,
   onChat,
   surfaces,

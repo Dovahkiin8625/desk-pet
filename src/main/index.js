@@ -1240,9 +1240,6 @@ app.whenReady().then(async () => {
     getDisplays: () => currentDisplays(),
     plugins,
     apps,
-    // 内置功能（设置、聊天记录）要用：设置开的是设置窗口，
-    // 聊天记录读的是助理里的聊天记录。
-    assistant,
     openSettings,
     // 界面路由：面板工作台里的插件页面，数据经它送进来。
     surfaces: pluginSurfaces,
