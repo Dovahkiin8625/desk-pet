@@ -285,7 +285,7 @@ function isPlainObject(value) {
  * **恒为 true**：能开独立窗口是桌宠给所有插件的能力，
  * 清单里没写 `window` 段，宿主会合成一份默认规格出来。
  *
- * 内置功能（设置、聊天记录）不是插件，它们不走这条路——
+ * 内置功能（设置）不是插件，它们不走这条路——
  * 它们的元数据里 `canDetach` 是显式的 false（见 src/main/builtins.js）。
  */
 export function canDetach(manifest) {

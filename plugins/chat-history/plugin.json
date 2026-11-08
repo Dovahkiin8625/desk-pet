@@ -1,0 +1,15 @@
+{
+  "id": "chat-history",
+  "name": "聊天记录",
+  "icon": "📜",
+  "description": "和桌宠说过的话，还有它做过的事",
+  "keywords": ["history", "chat", "record", "duihua", "liaotian", "jl", "聊天", "记录", "对话", "记忆", "任务"],
+  "entry": "main.js",
+  "window": {
+    "page": "pages/history.html",
+    "title": "聊天记录",
+    "width": 520,
+    "height": 640,
+    "refreshMs": 0
+  }
+}

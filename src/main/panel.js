@@ -9,7 +9,7 @@ import {
   SEARCH_VIEW_HEIGHT,
   FALLBACK_VIEW_HEIGHT,
 } from '../shared/panel.js';
-import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin, builtinPage, builtinAction } from './builtins.js';
+import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin } from './builtins.js';
 
 /**
  * 插件面板：桌宠的「uTools 式」入口。
@@ -319,37 +319,21 @@ export function createPanelController({
   /**
    * 打开一个内置功能。
    *
-   * 「设置」开的是**另一个窗口**（设置窗口）：面板这时候就该收起来，
-   * 否则两块界面叠在一起，用户不知道该看哪儿。
-   * 其余内置功能（聊天记录）就画在面板里。
+   * 现在只剩「设置」了：它开的是**另一个窗口**（设置窗口），
+   * 面板这时候就该收起来，否则两块界面叠在一起，用户不知道该看哪儿。
    */
   function openBuiltin(pluginId) {
     if (pluginId === BUILTIN_SETTINGS) {
       hide();
       openSettings?.();
-      return;
     }
-    const page = builtinPage(pluginId, assistant);
-    if (!page) {
-      hide();
-      return;
-    }
-    // 内置功能不是插件：面板不再显示任何插件的界面，界面落点要摘掉。
-    detachPanelSurface();
-    currentPluginId = pluginId;
-    sendView(makePluginView(page));
   }
 
   /** 处理插件里的一个动作。 */
   async function handleAction(pluginId, actionId, value) {
     const token = ++requestSeq;
-    if (isBuiltin(pluginId)) {
-      const page = builtinAction(pluginId, actionId, assistant);
-      if (!page) return;
-      currentPluginId = pluginId;
-      sendView(makePluginView(page));
-      return;
-    }
+    // 内置功能没有动作（「设置」开的是另一个窗口）。
+    if (isBuiltin(pluginId)) return;
     const page = await plugins.action(pluginId, actionId, value, update);
     if (token !== requestSeq) return;
     if (!page) {
