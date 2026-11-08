@@ -658,7 +658,14 @@ test('提示词：写着先自己答一次，别动不动就派单', async () =>
 
 test('轮次上限：3 步还没给答复就收尾，不空着', async () => {
   // 每次都调工具：模型一直没交卷。
-  const { fetchImpl } = fakeFetch([toolCall('clock.now')]);
+  //
+  // **两个工具轮流调**（不是同一个调三次）：
+  // 循环里「同一个错误连着出三次就停」的计数是按「工具名 + 错误」算的，
+  // 同一个工具连错三次会走 `repeated_errors` 那条路，
+  // 收尾的话变成「这个工具连着出了几次错」——
+  // 那就不是这条测试要验的「步数用尽」了。
+  // 轮流调 → 每次的错都不一样 → 循环走到步数上限才停。
+  const { fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
   const backend = createInteractionBackend({
     fetchImpl,
     getRegistry: () => fakeRegistry([listTool()]),
@@ -2126,6 +2133,11 @@ import { runForeground } from './layer/foreground.js';
 ```
 
 （`scheduleSave` 与 `state` 在同一个闭包里，函数声明会提升，位置无所谓。）
+
+**注意**：`createAgentTasks({...})` 里现在**已经有一个**干同样事的内联箭头函数
+（`appendRecord: (entry) => { state.chat.messages = appendMessage(...); scheduleSave(); }`）。
+把它**换成** `appendChatRecord` 这个具名函数，**不要**再留一份内联的——
+两份都能用，后来的人会不知道该改哪一个。
 
 3. `createAgentTasks({...})` 里把 `appendRecord` 换成 `appendChatRecord`，把 `getMessages` 改成执行层，把 `notify` 改成会记一条 `reply`：
 
