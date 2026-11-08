@@ -28,6 +28,9 @@ import { createReplyBubble } from './chat/stream.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools } from './agent/tools/builtin.js';
 import { createAgentFacade } from './agent/facade.js';
+import { createAgentTasks } from './agent/tasks.js';
+import { describeToolCall } from './agent/approval.js';
+import { interruptedTasks, taskRecord } from './agent/record.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { appendMessage, mergeFacts } from './chat/memory.js';
 
@@ -148,6 +151,9 @@ export function createAssistant({  userDataDir,
   // 这一轮是不是已经告诉过用户「这个模型不支持 think」了：
   // 告诉过了就别再应一声——刚说过的话不用再说一遍。
   let thinkNoticeShown = false;
+  // 审批请求的序号：每一次审批都要有自己的 id
+  // （审批气泡只有一个，答复按 id 认——见 bubbleApproval.js）。
+  let approvalSeq = 0;
 
   // 对话后端注册表。
   //
@@ -192,38 +198,96 @@ export function createAssistant({  userDataDir,
   // ------------------------------------------------------------------
   // agent 后端：多步循环，会调工具。
   //
-  // **审批闸门还没上线**（L3 的 T10）：所以现在写/执行类工具一律不执行，
-  // 只读工具照常——宁可什么都不做，也不能在用户没点头的情况下动他的机器。
-  //
   // 状态是异步加载的（start() 之后才有），所以这里全是**取值函数**。
   // ------------------------------------------------------------------
-  backends.register(
-    'agent',
-    createAgentBackend({
-      fetchImpl,
-      getTools: () => toolRegistry,
-      getGate: () => null,
-      getWorkspace: () => state?.agent?.workspace || '',
-      getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
-      getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
-      getMaxSteps: () => state?.agent?.maxSteps || DEFAULT_AGENT.maxSteps,
-      getPersona: () => state?.llm?.persona || {},
-      getFacts: () => state?.chat?.facts || [],
-      // 工具出错时留一行主进程日志（不进气泡）。
-      logger: console,
-    })
-  );
+  const agentBackend = createAgentBackend({
+    fetchImpl,
+    getTools: () => toolRegistry,
+    getGate: () => null,
+    getWorkspace: () => state?.agent?.workspace || '',
+    getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
+    getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+    getMaxSteps: () => state?.agent?.maxSteps || DEFAULT_AGENT.maxSteps,
+    getPersona: () => state?.llm?.persona || {},
+    getFacts: () => state?.chat?.facts || [],
+    // 工具出错时留一行主进程日志（不进气泡）。
+    logger: console,
+  });
 
   /**
    * agent 的对外接口：插件通过 `ctx.agent` 用它（规格 §5.5）。
    *
-   * **后台任务运行时还没上线**（规格 §14 的 T9 排在 L3），
-   * 所以现在提交任务会明确回一句「还没上线」，不假装成功。
-   * 运行时接上后，把 runtime 传进 createAgentFacade 即可。
+   * 运行时在下面（agentTasks）才建好，所以这里的 runtime 是个**接缝**：
+   * 里面的方法转手调中枢，中枢什么时候建好不影响插件调用。
    */
   const agentFacade = createAgentFacade({
     tools: toolRegistry,
+    runtime: {
+      run: async (prompt, opts) => {
+        const task = agentTasks.submit({
+          prompt,
+          title: opts?.title || '',
+          foreground: false,
+        });
+        return { ok: true, taskId: task.taskId };
+      },
+      cancel: async (taskId) => agentTasks.cancel(taskId),
+      history: () => chatHistoryView().messages,
+    },
     getHistory: () => chatHistoryView().messages,
+  });
+
+  // ------------------------------------------------------------------
+  // agent 的任务中枢（L3）
+  //
+  // agent 模式下**每句话都是一个任务**：排队、并发、取消都在运行时里。
+  // 审批也是任务级的事——所以闸门由中枢按任务造。
+  // ------------------------------------------------------------------
+  const agentTasks = createAgentTasks({
+    backend: agentBackend,
+    // 问用户：审批气泡。气泡只有一只，挂着的审批会互相顶——
+    // 所以每一次请求都要有自己的 id（inbox 按 id 认，见 bubbleApproval.js）。
+    ask: ({ taskId, tool, args, risk }) =>
+      bubble.showApproval({
+        id: `${taskId}-${++approvalSeq}`,
+        title: '需要你点头',
+        text: describeToolCall(tool, args),
+        risk,
+      }),
+    getMessages: (prompt) =>
+      buildChatMessages({ history: state?.chat?.messages || [], userText: prompt, trigger: 'user' }),
+    appendRecord: (entry) => {
+      if (!state) return;
+      state.chat.messages = appendMessage(state.chat.messages, entry);
+      scheduleSave();
+    },
+    notify: ({ text, ok }) => {
+      say(text, { emotion: ok ? 'happy' : 'sad', sound: ok ? 'success' : '' });
+    },
+    onEvent: (event) => agentFacade.emit(event),
+    getMaxConcurrent: () => state?.agent?.maxConcurrent || DEFAULT_AGENT.maxConcurrent,
+    getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
+    getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+    logger: console,
+  });
+
+  // agent 后端：**每句话都是一个后台任务**（规格 §7）。
+  //
+  // 包一层的理由：普通对话是一次调用就结束，
+  // agent 是排队 + 并发 + 取消——那些都在运行时里。
+  backends.register('agent', {
+    id: 'agent',
+    label: 'agent 模式',
+    async chat(ctx) {
+      const task = agentTasks.submit({
+        prompt: ctx.prompt || '',
+        messages: ctx.messages,
+        config: ctx.config,
+        onDelta: ctx.onDelta,
+        foreground: true,
+      });
+      return task.done;
+    },
   });
 
   // ------------------------------------------------------------------
@@ -950,6 +1014,9 @@ export function createAssistant({  userDataDir,
       result = await backend.chat({
         system,
         messages,
+        // 这一句的原话：agent 后端要拿它当任务的内容
+        //（上下文里的那句是拼好的，原话更完整）。
+        prompt: content,
         trigger,
         config,
         onDelta: (delta) => {
@@ -1180,6 +1247,18 @@ export function createAssistant({  userDataDir,
     /** 启动：读状态、起定时器。 */
     async start() {
       state = await loadAssistant(userDataDir);
+      // 上次退出时还在跑的任务：在记录里标一句「已中断」。
+      //
+      // **不尝试恢复**：跑着的 shell 子进程早就死了，
+      // 假装能恢复是自欺欺人。
+      const interrupted = interruptedTasks(state.chat.messages);
+      for (const task of interrupted) {
+        state.chat.messages = appendMessage(
+          state.chat.messages,
+          taskRecord({ taskId: task.taskId, status: 'interrupted', title: task.title })
+        );
+      }
+      if (interrupted.length > 0) scheduleSave();
       if (state.clipboard.enabled) clipboardWatcher.start();
       // 台词语音预先合成好（后台）：点桌宠时要立刻出声。
       void prewarmTapLines();
@@ -1208,6 +1287,9 @@ export function createAssistant({  userDataDir,
       greetingTimer = null;
       prewarmTimer = null;
       clipboardWatcher.stop();
+      // 退出前取消所有任务：跑着的命令留着不管，
+      // 应用退出后它还在动用户的机器。
+      agentTasks.runtime.stop();
     },
 
     /** 退出前落盘。 */

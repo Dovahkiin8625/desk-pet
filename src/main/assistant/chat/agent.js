@@ -27,9 +27,11 @@ export const AGENT_MIN_MAX_TOKENS = 2048;
  *
  * ## 它不做什么
  *
- * - **不做后台任务**：排队、并发、取消是 L3 的运行时的事。
- * - **不做审批**：审批闸门与气泡是 L3 的事。这里留了 `getGate` 的接缝，
- *   没接上时**写与执行类工具一律不执行**（见 loop.js 的 askApproval）。
+ * - **不排队、不管并发、不管取消**：那是 L3 的运行时的事，
+ *   调用方（agent/tasks.js）把这一步的闸门按任务传进来。
+ * - **不弹审批气泡**：气泡由主进程那边的事务管，
+ *   这里只认一个闸门对象（`ctx.gate`）；没给闸门时，
+ *   **写与执行类工具一律不执行**（见 loop.js 的 askApproval）。
  */
 export function createAgentBackend({
   fetchImpl = fetch,
@@ -53,6 +55,9 @@ export function createAgentBackend({
 
     async chat(ctx) {
       const { messages = [], config = {}, onDelta, onEvent, signal } = ctx;
+      // 闸门是**每个任务一个**（「自动」是任务级的），
+      // 所以由调用方按任务给；没给就用全局那个。
+      const gate = ctx.gate ?? getGate();
       const registry = getTools();
       const tools = registry && typeof registry.list === 'function' ? registry.list() : [];
 
@@ -103,7 +108,7 @@ export function createAgentBackend({
         },
         resolveTool: (name) =>
           registry && typeof registry.get === 'function' ? registry.get(name) : null,
-        gate: getGate(),
+        gate,
         maxSteps: getMaxSteps(),
         onEvent,
         logger,
