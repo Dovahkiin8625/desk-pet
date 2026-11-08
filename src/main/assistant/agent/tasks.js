@@ -1,7 +1,7 @@
 import { createAgentRuntime } from './runtime.js';
 import { createApprovalGate } from './approval.js';
 import { approvalRecord, stepRecord, taskRecord } from './record.js';
-import { AGENT_EVENT, APPROVAL_DECISION } from '../../../shared/assistant.js';
+import { AGENT_EVENT, APPROVAL_DECISION, TASK_STATUS } from '../../../shared/assistant.js';
 
 /**
  * agent 任务的中枢。
@@ -81,8 +81,17 @@ export function createAgentTasks({
     return null;
   }
 
+  /** 每个任务最近一步的摘要（给「看看任务」用）。 */
+  const lastSteps = new Map();
+
   /** 事件往外走一份、往记录里落一份。 */
   function publish(event) {
+    // **记最近一步**：给人看的列表要能说出「它到哪一步了」。
+    // 记在事件往外走之前：订阅者拿到的事件与这里记的是同一份。
+    if (event?.type === AGENT_EVENT.STEP) {
+      const name = String(event.tool || '工具');
+      lastSteps.set(event.taskId, event.error ? `${name} 出错` : name);
+    }
     try {
       onEvent?.(event);
     } catch (err) {
@@ -229,9 +238,50 @@ export function createAgentTasks({
       return runtime.cancel(taskId);
     },
 
-    /** 任务列表。 */
+    /**
+     * 任务列表：**给人看的精简视图**。
+     *
+     * 不给内部字段（run / scope / controller）——
+     * 它们是实现细节，露出去只会被误用。
+     */
     list() {
-      return runtime.list();
+      return runtime.list().map((task) => ({
+        taskId: task.id,
+        title: task.title,
+        status: task.status,
+        lastStep: lastSteps.get(task.id) || '',
+        result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
+        elapsedMs: (task.finishedAt || now()) - task.createdAt,
+      }));
+    },
+
+    /**
+     * 在跑的和排队的各有几个。
+     *
+     * **归档的不算**：归档就是「从列表里收起来」，
+     * 它不该继续占着提示词里的「正在跑 N 个」（规格 §6.2）。
+     */
+    counts() {
+      let running = 0;
+      let queued = 0;
+      for (const task of runtime.list()) {
+        if (task.status === TASK_STATUS.RUNNING || task.status === TASK_STATUS.WAITING_APPROVAL) {
+          running += 1;
+        } else if (task.status === TASK_STATUS.QUEUED) {
+          queued += 1;
+        }
+      }
+      return { running, queued };
+    },
+
+    /** 给正在跑的任务追加一句要求。 */
+    steer(taskId, note) {
+      return runtime.steer(taskId, note);
+    },
+
+    /** 归档一个已结束的任务。 */
+    archive(taskId) {
+      return runtime.archive(taskId);
     },
   };
 }

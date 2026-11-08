@@ -120,6 +120,13 @@ export function createAgentRuntime({
       taskId: task.id,
       signal: controller.signal,
       hooks: makeHooks(task),
+      /**
+       * 取出并清空待追加的指令。
+       *
+       * **取走即清空**：一条指令只该被读一次——
+       * 留在队列里的话，下一个步骤会再读一遍，模型会当成新要求重复执行。
+       */
+      steer: () => task.steerNotes.splice(0),
     };
     task.scope = scope;
     Promise.resolve()
@@ -239,6 +246,11 @@ export function createAgentRuntime({
         run: typeof run === 'function' ? run : async () => null,
         controller: null,
         scope: null,
+        // 待追加的指令（steer）：执行层在步骤边界取走。
+        steerNotes: [],
+        // 归档了：不再出现在列表里，也不再计入「正在跑 N 个」。
+        // **记录仍然留着**——那是安全审计。
+        archived: false,
         holdsSlot: false,
         started: false,
         finished: false,
@@ -273,6 +285,49 @@ export function createAgentRuntime({
     },
 
     /**
+     * 给正在跑的任务追加一句要求。
+     *
+     * **三种结局分得清**（规格 §8）：
+     * - 任务还在跑 → 收下（`ok: true`）；
+     * - 任务**刚好结束** → 指令丢弃，但**不报错**——
+     *   这是时序问题，不是用户的错，报错只会让人以为程序坏了；
+     * - 任务**已被取消** → 指令作废，返回 `{ ok: false }`——
+     *   取消是明确的用户意图，往一个已经不存在的任务上追加是白做。
+     */
+    steer(taskId, note) {
+      const task = tasks.get(String(taskId || ''));
+      if (!task) return { ok: false, message: '没有这个任务' };
+      if (task.status === TASK_STATUS.CANCELLED) {
+        return { ok: false, message: '这个任务已经被取消了' };
+      }
+      if (task.finished || FINAL.has(task.status)) {
+        return { ok: true, dropped: true };
+      }
+      const text = String(note || '').trim();
+      if (!text) return { ok: false, message: '要追加什么？' };
+      task.steerNotes.push(text);
+      return { ok: true };
+    },
+
+    /**
+     * 归档一个**已结束**的任务。
+     *
+     * 归档只影响可见性：记录条目留着（那是安全审计），
+     * 只是它不再出现在列表里，也不再计入「正在跑 N 个」（规格 §6.2）。
+     *
+     * 还在跑的任务不能归档——要先停掉它。
+     */
+    archive(taskId) {
+      const task = tasks.get(String(taskId || ''));
+      if (!task) return { ok: false, message: '没有这个任务' };
+      if (!task.finished && !FINAL.has(task.status)) {
+        return { ok: false, message: '这个任务还在跑，先停掉它再归档' };
+      }
+      task.archived = true;
+      return { ok: true };
+    },
+
+    /**
      * 取消一个任务。
      *
      * **显式**取消：不做隐式打断（规格 §7.3）。
@@ -284,6 +339,9 @@ export function createAgentRuntime({
         return { ok: false, message: '这个任务已经结束了' };
       }
       task.status = TASK_STATUS.CANCELLED;
+      // 取消了，待追加的指令也就作废了（规格 §5.2）——
+      // 留着它们只会在任务万一复活时冒出来。
+      task.steerNotes.length = 0;
       dequeue(task.id);
       // 叫醒挂起中的任务：它正 await 用户的答复，不叫醒就一直挂着。
       task.wakeResolve?.();
@@ -300,9 +358,15 @@ export function createAgentRuntime({
       return tasks.get(String(taskId || '')) || null;
     },
 
-    /** 所有任务（新的在前）。 */
-    list() {
-      return [...tasks.values()].reverse();
+    /**
+     * 所有任务（新的在前）。
+     *
+     * **默认不含归档的**：归档就是「从列表里收起来」，
+     * 记录还在磁盘上（`list({includeArchived: true})` 能看到）。
+     */
+    list({ includeArchived = false } = {}) {
+      const all = [...tasks.values()].reverse();
+      return includeArchived ? all : all.filter((t) => !t.archived);
     },
 
     /** 应用退出：取消所有任务。 */
