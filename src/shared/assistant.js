@@ -68,6 +68,31 @@ export const LLM_BASE_URLS = Object.freeze([
  */
 export const LLM_BACKENDS = Object.freeze(['chat', 'agent']);
 
+/**
+ * 每个后端的中文名与说明。
+ *
+ * 放在共享契约里（而不是设置页里）：加了后端却忘了写名字与说明，
+ * 设置页上就是一个空白下拉框。
+ */
+export const LLM_BACKEND_INFO = Object.freeze({
+  chat: Object.freeze({
+    label: '普通对话',
+    hint: '问一句答一句：只聊天，不动手。',
+  }),
+  agent: Object.freeze({
+    label: 'agent 模式',
+    hint:
+      '会动手：能读文件、列目录、搜索（需要模型支持工具调用）。' +
+      '写文件与执行命令要你点头，目前还不能自动做。',
+  }),
+});
+
+/** 取某个后端的名字与说明；认不出来就原样回显 id（磁盘上的值可能被手改过）。 */
+export function llmBackendInfo(id) {
+  const key = String(id || '');
+  return LLM_BACKEND_INFO[key] || Object.freeze({ label: key, hint: '' });
+}
+
 /** TTS 的默认偏好。 */
 export const DEFAULT_TTS = Object.freeze({
   enabled: false,
