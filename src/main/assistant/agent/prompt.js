@@ -1,4 +1,4 @@
-import { metaContractLines } from '../chat/prompt.js';
+import { metaContractLines, META_MARKER } from '../chat/prompt.js';
 
 /**
  * agent 的系统提示词与上下文管理。
@@ -118,6 +118,22 @@ export function buildAgentSystemPrompt({
   );
 
   return lines.filter((line) => line !== '').join('\n');
+}
+
+/**
+ * 把模型输出里那段 `<<META>>` 的 JSON 切掉。
+ *
+ * **只对「回到上下文里」的那份正文用**：模型的中间轮前言（"好的，我来查一下"）
+ * 后面很可能也带一段 META——那是它给最终答案准备的情绪与记忆，
+ * 这一轮并不打算交卷。那段 JSON 进了历史，模型会看见自己上一轮吐过 META，
+ * 于是以为「这一轮已经结束」，或者干脆复读一遍。
+ *
+ * 最终答复不走这里：它由 parseReply 处理，META 要留着。
+ */
+export function stripMeta(text) {
+  const s = String(text ?? '');
+  const at = s.indexOf(META_MARKER);
+  return at < 0 ? s : s.slice(0, at).trim();
 }
 
 /**

@@ -112,6 +112,54 @@ test('agent 后端：后端 id 是 agent', () => {
   assert.equal(backend.id, 'agent');
 });
 
+test('agent 后端：400 与工具无关时，不要翻译成「模型不支持工具调用」', async () => {
+  // **不能见 400 就说「模型不支持工具调用」**：上下文超长也是 400，
+  // 照着「换个模型」去折腾，用户的问题根本没被说到。
+  const fetchImpl = async () =>
+    new Response(JSON.stringify({ error: { message: 'context length exceeded' } }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    });
+  const backend = createAgentBackend({
+    fetchImpl,
+    getTools: () => registryWithTool(),
+    getGate: () => null,
+  });
+  await assert.rejects(
+    () =>
+      backend.chat({
+        messages: [{ role: 'user', content: '你好' }],
+        config: CONFIG,
+        onDelta: () => {},
+      }),
+    (err) => {
+      assert.doesNotMatch(err.message, /不支持工具调用/);
+      assert.match(err.message, /400/);
+      return true;
+    }
+  );
+});
+
+test('agent 后端：每步的 token 上限要留得下工具参数', async () => {
+  // 工具参数（JSON）和正文**共用**同一个额度：上限太小，
+  // 参数会被截断成非法 JSON，于是每一轮都在「参数坏了」上白转。
+  const { calls, fetchImpl } = fakeFetch('好的');
+  const backend = createAgentBackend({
+    fetchImpl,
+    getTools: () => registryWithTool(),
+    getGate: () => null,
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: { ...CONFIG, maxTokens: 800 },
+    onDelta: () => {},
+  });
+  assert.ok(
+    calls[0].body.max_tokens >= 2048,
+    `每步的 token 上限只有 ${calls[0].body.max_tokens}，工具参数会被截断`
+  );
+});
+
 test('后端取值：只认 chat 与 agent，别的当普通对话', () => {
   assert.equal(sanitizeAssistant({ llm: { backend: 'agent' } }).llm.backend, 'agent');
   assert.equal(sanitizeAssistant({ llm: { backend: 'chat' } }).llm.backend, 'chat');

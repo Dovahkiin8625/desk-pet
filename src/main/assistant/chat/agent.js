@@ -5,6 +5,18 @@ import { AGENT_OUTCOME, createAgentLoop } from '../agent/loop.js';
 import { DEFAULT_AGENT } from '../../../shared/assistant.js';
 
 /**
+ * agent 模式每一步至少给多少 token。
+ *
+ * 工具参数（JSON）和正文**共用**同一个额度：上限太小，
+ * 参数会被截断成非法 JSON，于是每一轮都在「参数坏了」上白转——
+ * 用户看到的是 agent 一直重复同一件事，却不知道为什么。
+ *
+ * 普通对话的 800 对 agent 来说太小了，这里抬到 2048。
+ * （设置界面到 L6 才做，那之后用户可以自己调。）
+ */
+export const AGENT_MIN_MAX_TOKENS = 2048;
+
+/**
  * 后端 #2：agent 模式。
  *
  * 与 `plain.js` 的关系：**同一个契约下的两个实现**。
@@ -32,6 +44,8 @@ export function createAgentBackend({
   getPersona = () => ({}),
   getFacts = () => [],
   getNow = () => new Date(),
+  /** 日志器（工具出错时留一行）。 */
+  logger = null,
 } = {}) {
   return {
     id: 'agent',
@@ -69,7 +83,10 @@ export function createAgentBackend({
               model: config.model,
               messages: [{ role: 'system', content: sys }, ...convo],
               temperature: config.temperature,
-              maxTokens: config.maxTokens,
+              maxTokens: Math.max(
+                Number(config.maxTokens) || 0,
+                AGENT_MIN_MAX_TOKENS
+              ),
               maxTokensField: config.maxTokensField,
               tools: toolList,
             },
@@ -87,6 +104,7 @@ export function createAgentBackend({
         gate: getGate(),
         maxSteps: getMaxSteps(),
         onEvent,
+        logger,
       });
 
       let run;
@@ -150,13 +168,28 @@ function fallbackText(run) {
  * **「模型不支持工具调用」是最容易踩的一种**：agent 模式请求里带着 tools，
  * 有的模型直接 400，而原文是英文的 "tools is not supported"——
  * 用户看了不知道该怎么办，所以这里明说「换个模型或切回普通对话」。
+ *
+ * **但不能见 400 就这么说**：上下文超长、参数不对、额度用完也都是 400。
+ * 照着「换个模型」去折腾，用户真正的问题一个字都没被说到。
+ * 所以先看原文里有没有提到工具——没提到就原样抛出去。
  */
 function translateError(err, hadTools) {
-  if (err instanceof LlmError && err.code === LLM_ERRORS.BAD_REQUEST && hadTools) {
+  if (
+    err instanceof LlmError &&
+    err.code === LLM_ERRORS.BAD_REQUEST &&
+    hadTools &&
+    mentionsTools(err)
+  ) {
     return new LlmError(
       '这个模型可能不支持工具调用。换一个支持工具的模型，或者把对话后端切回「普通对话」。',
       { code: LLM_ERRORS.BAD_REQUEST, status: err.status, body: err.body }
     );
   }
   return err;
+}
+
+/** 错误原文里有没有提到「工具」——只有提到才该翻译成「模型不支持工具调用」。 */
+function mentionsTools(err) {
+  const text = `${err?.message || ''} ${err?.body || ''}`.toLowerCase();
+  return /tool|function_call|工具/.test(text);
 }

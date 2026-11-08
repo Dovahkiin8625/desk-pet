@@ -44,11 +44,14 @@ function call(name, args = {}, id = 'call_1') {
 /** 假模型：按剧本一轮轮返回。 */
 function fakeModel(script) {
   const seen = [];
+  const toolLists = [];
   let i = 0;
   return {
     seen,
-    async callModel({ messages, onDelta }) {
+    toolLists,
+    async callModel({ messages, tools, onDelta }) {
       seen.push(messages);
+      toolLists.push(tools);
       const step = script[Math.min(i, script.length - 1)];
       i += 1;
       if (step.text) onDelta?.(step.text);
@@ -295,4 +298,122 @@ test('步骤事件：工具调用会发事件', async () => {
   const step = events.find((e) => e.type === 'step');
   assert.ok(step, '没发步骤事件');
   assert.equal(step.tool, 'fs.read');
+});
+
+test('步骤事件：带着工具返回的 data', async () => {
+  const events = [];
+  const model = fakeModel([{ toolCalls: [call('fs.read', { path: 'a' })] }, { text: '好了' }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => readTool(),
+    onEvent: (e) => events.push(e),
+  });
+  await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  const step = events.find((e) => e.type === 'step');
+  assert.deepEqual(step.data, { args: { path: 'a' } });
+});
+
+test('工具调用没带 id 时：assistant 与 tool 消息必须用同一个 id', async () => {
+  // 模型没给 id 的场合不少见（有些服务端不返回 id）。
+  // **两处各算各的就会对不上号**：assistant 那条是 call_1_0，
+  // tool 消息那边却是空串——接口直接 400。
+  const model = fakeModel([
+    { toolCalls: [{ type: 'function', function: { name: 'fs.read', arguments: '{}' } }] },
+    { text: '好了' },
+  ]);
+  await loop(model, { tools: [readTool()] }).run({
+    system: 's',
+    messages: [{ role: 'user', content: 'u' }],
+  });
+  const second = model.seen[1];
+  const assistant = second.find((m) => m.role === 'assistant');
+  const toolMsg = second.find((m) => m.role === 'tool');
+  assert.ok(assistant.tool_calls[0].id, 'assistant 的 tool_call 没有 id');
+  assert.equal(toolMsg.tool_call_id, assistant.tool_calls[0].id);
+});
+
+test('同一个错连着出三次停下时：这一轮剩下的调用也要有 tool 消息', async () => {
+  // 少一条 tool 消息，接口就会因为「tool_calls 没有对应的结果」报错。
+  const events = [];
+  const calls = ['c1', 'c2', 'c3', 'c4'].map((id) => call('fs.read', { path: id }, id));
+  const model = fakeModel([{ toolCalls: calls }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => brokenTool(),
+    onEvent: (e) => events.push(e),
+  });
+  const result = await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  assert.equal(result.outcome, AGENT_OUTCOME.REPEATED_ERRORS);
+  const skipped = events.filter((e) => e.type === 'step' && /已跳过/.test(e.error || ''));
+  assert.equal(skipped.length, 1, '跳过的调用没有发事件');
+});
+
+test('没有闸门而工具要确认时：给模型的话与给用户的话不是同一句', async () => {
+  const execTool = {
+    name: 'shell.exec',
+    risk: 'exec',
+    async run() {
+      return { text: '不该出现' };
+    },
+  };
+  const model = fakeModel([{ toolCalls: [call('shell.exec', { command: 'ls' })] }]);
+  const result = await loop(model, { tools: [execTool] }).run({
+    system: 's',
+    messages: [{ role: 'user', content: 'u' }],
+  });
+  // 喂给模型的话要说清「没有确认渠道」，模型才知道该换条路。
+  const toolMsg = model.seen[1].find((m) => m.role === 'tool');
+  assert.match(toolMsg.content, /审批功能还没上线/);
+  // 给用户的话里不该有内部黑话。
+  assert.equal(result.outcome, AGENT_OUTCOME.REPEATED_ERRORS);
+  assert.match(result.error, /需要你确认/);
+  assert.doesNotMatch(result.error, /审批功能还没上线/);
+});
+
+test('工具出错时：留一行日志', async () => {
+  // 用户只会看到「我停下了」，真正的原因在日志里。
+  const lines = [];
+  const model = fakeModel([{ toolCalls: [call('fs.read', { path: 'x' })] }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => brokenTool(),
+    logger: { warn: (m) => lines.push(m) },
+  });
+  await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  assert.ok(lines.length >= 1, '工具出错时没有留日志');
+  assert.match(lines[0], /fs\.read/);
+});
+
+test('中间轮的正文不把 META 那段带进上下文', async () => {
+  // 模型被提示词要求「答完另起一行输出 <<META>>」，
+  // 它在「好的，我来查一下」这种前言后面很可能也带一段——
+  // 那段 JSON 进了历史，模型会以为这一轮已经出过答案了。
+  const model = fakeModel([
+    { text: '好的，我来查一下\n<<META>>{"emotion":"happy"}', toolCalls: [call('fs.read', {})] },
+    { text: '好了' },
+  ]);
+  await loop(model, { tools: [readTool()] }).run({
+    system: 's',
+    messages: [{ role: 'user', content: 'u' }],
+  });
+  const assistant = model.seen[1].find((m) => m.role === 'assistant');
+  assert.doesNotMatch(assistant.content, /<<META>>/);
+  assert.match(assistant.content, /好的，我来查一下/);
+});
+
+test('步数用尽：让模型用现在的上下文给个总结', async () => {
+  // 规格 §12：步数用尽时**用当前上下文让模型给个总结**，
+  // 而不是甩一句「我没做完」——用户至少要知道做到哪一步了。
+  const model = fakeModel([
+    { toolCalls: [call('fs.read', { path: 'x' })] },
+    { text: '总结：我读了那个文件，它是空的' },
+  ]);
+  const result = await loop(model, { tools: [readTool()], maxSteps: 1 }).run({
+    system: 's',
+    messages: [{ role: 'user', content: 'u' }],
+  });
+  assert.equal(result.outcome, AGENT_OUTCOME.MAX_STEPS);
+  assert.equal(result.text, '总结：我读了那个文件，它是空的');
+  // 总结时不能再调工具，否则就是又一轮循环。
+  assert.deepEqual(model.toolLists[1], []);
 });

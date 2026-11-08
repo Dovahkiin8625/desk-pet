@@ -182,6 +182,8 @@ export function createAssistant({  userDataDir,
       getMaxSteps: () => state?.agent?.maxSteps || DEFAULT_AGENT.maxSteps,
       getPersona: () => state?.llm?.persona || {},
       getFacts: () => state?.chat?.facts || [],
+      // 工具出错时留一行主进程日志（不进气泡）。
+      logger: console,
     })
   );
 

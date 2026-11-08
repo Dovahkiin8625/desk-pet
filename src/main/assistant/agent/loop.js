@@ -1,5 +1,10 @@
 import { TOOL_RISK } from '../../../shared/assistant.js';
-import { compactAgentMessages, compactionNote, truncateToolResult } from './prompt.js';
+import {
+  compactAgentMessages,
+  compactionNote,
+  stripMeta,
+  truncateToolResult,
+} from './prompt.js';
 
 /**
  * agent 循环。
@@ -42,6 +47,22 @@ export const AGENT_OUTCOME = Object.freeze({
 export const MAX_SAME_ERRORS = 3;
 
 /**
+ * 步数用尽时，让模型用当前上下文给个总结时加的一句。
+ *
+ * 规格 §12 要求「用当前上下文让模型给个总结」——
+ * 甩一句「我没做完」对用户没用，他不知道做到哪一步了。
+ */
+const SUMMARY_INSTRUCTION =
+  '你的步数用完了。请用现在的上下文给用户一个简短的总结：做到哪一步了、结果是什么。不要再调用工具。';
+
+/**
+ * 循环提前停下时，给被跳过的调用留的话。
+ *
+ * 少一条 tool 消息，接口就会因为「tool_calls 没有对应的结果」直接报错。
+ */
+const SKIPPED_TEXT = '（已跳过：这个工具连着出错，任务已经停下了）';
+
+/**
  * 造一个 agent 循环。
  *
  * @param {object} options
@@ -52,6 +73,8 @@ export const MAX_SAME_ERRORS = 3;
  * @param {number} [options.maxSteps]
  * @param {number} [options.maxSameErrors]
  * @param {Function} [options.onEvent] 步骤事件
+ * @param {object} [options.logger] 日志器 {warn?, error?}——工具出错时留一行，
+ *   免得用户只看到「agent 停下了」却不知道卡在哪一步
  */
 export function createAgentLoop({
   callModel,
@@ -60,6 +83,7 @@ export function createAgentLoop({
   maxSteps = 20,
   maxSameErrors = MAX_SAME_ERRORS,
   onEvent = null,
+  logger = null,
 } = {}) {
   /**
    * 跑一次任务。
@@ -123,12 +147,20 @@ export function createAgentLoop({
         break;
       }
 
+      // **id 要算一次、两处共用**。
+      // assistant 那条里的 tool_calls[].id 与后面 tool 消息的 tool_call_id
+      // 必须一模一样：模型没给 id 时（有些服务端不返回），两边各算各的
+      // 就会一个填 call_1_0、一个填空串——接口直接 400。
+      const ids = calls.map((c, i) => String(c?.id || `call_${steps}_${i}`));
+
       // assistant 那条必须带 tool_calls：接口靠它把后面的 tool 消息对上号。
+      // 正文里的 META 要切掉：那段 JSON 是给最终答案准备的，
+      // 这一轮并不打算交卷（见 prompt.js 的 stripMeta）。
       convo.push({
         role: 'assistant',
-        content: text || '',
+        content: stripMeta(text),
         tool_calls: calls.map((c, i) => ({
-          id: String(c?.id || `call_${steps}_${i}`),
+          id: ids[i],
           type: 'function',
           function: {
             name: String(c?.function?.name || ''),
@@ -137,8 +169,28 @@ export function createAgentLoop({
         })),
       });
 
-      for (const c of calls) {
+      // 这一轮提前停下时，剩下的调用就「跳过」——
+      // 但**它们仍然要有 tool 消息**，否则这一轮的 tool_calls 悬空。
+      let stopped = false;
+
+      for (let i = 0; i < calls.length; i += 1) {
+        const c = calls[i];
+        const callId = ids[i];
         toolCallCount += 1;
+
+        if (stopped) {
+          convo.push({ role: 'tool', tool_call_id: callId, content: SKIPPED_TEXT });
+          onEvent?.({
+            type: 'step',
+            index: toolCallCount,
+            tool: String(c?.function?.name || ''),
+            args: null,
+            result: '',
+            error: SKIPPED_TEXT,
+          });
+          continue;
+        }
+
         const one = await runOne(c, { signal });
 
         // 错误计数：**同一个**错误连着出三次就停——
@@ -153,13 +205,19 @@ export function createAgentLoop({
             errorKey = key;
             errorCount = 1;
           }
-          lastError = one.error || lastError;
+          lastError = one.userError || one.error || lastError;
+          // 留一行日志：工具出错时，用户只会看到「我停下了」，
+          // 真正的原因在这里（agent 自己的日志，不进气泡）。
+          // 被拒绝不算出错——那是用户的意思，不用报警。
+          if (!one.denied) {
+            logger?.warn?.(`[agent] 工具「${one.tool || ''}」出错：${one.error || ''}`);
+          }
         }
 
         // **每个 tool_call 都要有一条 tool 消息**（哪怕内容是错误说明）。
         convo.push({
           role: 'tool',
-          tool_call_id: String(c?.id || ''),
+          tool_call_id: callId,
           content: truncateToolResult(one.text),
         });
 
@@ -170,11 +228,12 @@ export function createAgentLoop({
           args: one.args || null,
           result: one.ok ? one.text : '',
           error: one.ok ? '' : one.error || '',
+          data: one.data ?? null,
         });
 
         if (!one.ok && errorCount >= maxSameErrors) {
           outcome = AGENT_OUTCOME.REPEATED_ERRORS;
-          break;
+          stopped = true;
         }
       }
       if (outcome === AGENT_OUTCOME.REPEATED_ERRORS) break;
@@ -183,6 +242,25 @@ export function createAgentLoop({
       const compacted = compactAgentMessages(convo, {});
       convo = compacted.messages;
       droppedTotal += compacted.dropped;
+    }
+
+    // 步数用尽：让模型用现在的上下文给个总结（规格 §12）。
+    // **总结时不能再调工具**（tools 给空），否则就成了又一轮循环。
+    // 总结失败就算了——后端会给出兜底句，空气泡才是最糟的失败形态。
+    if (outcome === AGENT_OUTCOME.MAX_STEPS && finalText === '' && !signal?.aborted) {
+      try {
+        const call = await callModel({
+          system: `${system}\n${SUMMARY_INSTRUCTION}`,
+          messages: convo,
+          tools: [],
+          onDelta,
+          signal,
+        });
+        if (call?.baseUrl) baseUrl = call.baseUrl;
+        finalText = String(call?.text || '');
+      } catch {
+        // 总结失败不用管：兜底句比错误信息更适合放进气泡。
+      }
     }
 
     return {
@@ -200,6 +278,10 @@ export function createAgentLoop({
    *
    * **任何失败都变成一条能喂回模型的文字**，不抛异常：
    * 抛出去就等于终止整个任务，模型连换条路的机会都没有。
+   *
+   * 失败的话有**两句**：
+   * - `text`/`error`：喂给模型的（要说清原因，模型才知道换条路）；
+   * - `userError`：给用户看的（气泡里会出现，不能有内部黑话）。
    */
   async function runOne(call, { signal }) {
     const name = String(call?.function?.name || '');
@@ -227,7 +309,15 @@ export function createAgentLoop({
     const verdict = await askApproval({ tool, args, signal });
     if (!verdict.allowed) {
       const msg = verdict.reason || `用户拒绝了「${name}」这次调用`;
-      return { ok: false, tool: name, args, text: msg, error: msg, denied: true };
+      return {
+        ok: false,
+        tool: name,
+        args,
+        text: msg,
+        error: msg,
+        userError: verdict.userReason || msg,
+        denied: true,
+      };
     }
 
     try {
@@ -246,18 +336,29 @@ export function createAgentLoop({
    * **没有闸门时，写与执行类工具一律不执行。**
    * L2 还没有审批气泡（那是 L3），用户根本没机会点头——
    * 那就不能替他点头。只读工具照常（只读被工作区关着）。
+   *
+   * **给模型的话与给用户的话要分开**：
+   * 模型需要知道「为什么会这样、接下来该怎么办」，
+   * 用户只需要知道「这件事我没做」，不需要「审批功能还没上线」这种内部黑话。
    */
   async function askApproval({ tool, args, signal }) {
     if (gate && typeof gate.request === 'function') {
       const decision = await gate.request({ tool, args, risk: tool.risk, signal });
       const d = String(decision?.decision || decision || '').toLowerCase();
       if (d === 'allow' || d === 'always') return { allowed: true };
-      return { allowed: false, reason: `用户拒绝了「${tool.name}」这次调用` };
+      return {
+        allowed: false,
+        reason: `用户拒绝了「${tool.name}」这次调用`,
+        userReason: `「${tool.name}」这次没有获准。`,
+      };
     }
     if (tool.risk === TOOL_RISK.READ) return { allowed: true };
     return {
       allowed: false,
-      reason: `「${tool.name}」需要用户确认，但审批功能还没上线，这次不执行`,
+      reason:
+        `「${tool.name}」需要用户确认，但审批功能还没上线：` +
+        '请改用只读的方式再试，或者直接告诉用户这件事你做不到。',
+      userReason: '有个操作需要你确认，但当前还没有确认的渠道，所以我没有动它。',
     };
   }
 

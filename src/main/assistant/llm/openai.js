@@ -412,6 +412,22 @@ export async function chatCompletion(params, fetchImpl = fetch) {
 }
 
 /**
+ * 把「取消信号」与「超时信号」合成一个。
+ *
+ * **不能二选一**：只留取消信号的话，一个挂死的请求会永远挂着；
+ * 只留超时信号的话，用户点了取消也没用（超时是 120 秒，太久）。
+ *
+ * 老环境没有 `AbortSignal.any` 时至少保住超时——
+ * 挂死比取消不生效更糟。
+ */
+export function mergeSignals(signal, timeoutMs = 120000) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeout]);
+  return timeout;
+}
+
+/**
  * 一次**流式**调用。`onDelta(delta)` 会被逐字调用。
  *
  * @returns {Promise<{text: string, toolCalls: object[]}>} 累积起来的完整正文与工具调用
@@ -435,7 +451,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
       body: JSON.stringify(
         buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: true, tools })
       ),
-      signal: signal || AbortSignal.timeout(120000),
+      signal: mergeSignals(signal, 120000),
     });
   } catch (err) {
     throw networkError(err);
