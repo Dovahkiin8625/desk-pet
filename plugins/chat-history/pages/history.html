@@ -4,9 +4,124 @@
     <meta charset="utf-8" />
     <title>聊天记录</title>
     <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      body {
+        margin: 0;
+        /* 独立窗口里按视口铺满；面板里按内容撑开（见 pluginPage.js 的说明）。 */
+        min-height: 100vh;
+        font: var(--dp-font);
+        color: var(--dp-text);
+        background: var(--dp-bg);
+      }
+      body.dp-panel {
+        min-height: 0;
+      }
+      #wrap {
+        display: flex;
+        flex-direction: column;
+        gap: var(--dp-gap);
+        padding: 12px;
+      }
+      #head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--dp-gap);
+      }
+      #head h1 {
+        margin: 0;
+        font-size: 15px;
+      }
+      #count {
+        color: var(--dp-text-soft);
+        font-size: 12px;
+      }
+      #head .grow {
+        flex: 1;
+      }
+      #list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      /* 对话：用户靠右，桌宠靠左。 */
+      .chat {
+        max-width: 82%;
+        padding: 7px 11px;
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .chat.user {
+        align-self: flex-end;
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+      }
+      .chat.reply {
+        align-self: flex-start;
+      }
+      /* 派单：前台的动作。 */
+      .dispatch {
+        padding: 6px 10px;
+        border: 1px dashed var(--dp-border);
+        border-radius: var(--dp-radius);
+        color: var(--dp-text-soft);
+        font-size: 12px;
+      }
+      /* 任务：一件事一卡。 */
+      .task {
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        padding: 8px 10px;
+      }
+      .task .title {
+        font-weight: 600;
+      }
+      .task .status {
+        color: var(--dp-text-soft);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .task details {
+        margin-top: 6px;
+      }
+      .task summary {
+        cursor: pointer;
+        color: var(--dp-text-soft);
+        font-size: 12px;
+      }
+      .task ol {
+        margin: 6px 0 0;
+        padding-left: 20px;
+        font-size: 12px;
+        color: var(--dp-text-soft);
+      }
+      .task .approval {
+        margin-top: 6px;
+        padding: 6px 8px;
+        border-left: 3px solid var(--dp-accent-strong);
+        background: var(--dp-bg);
+        font-size: 12px;
+      }
+      #empty {
+        color: var(--dp-text-faint);
+        text-align: center;
+        padding: 24px 0;
+      }
+    </style>
   </head>
   <body>
-    <!-- 页面的正文由 pages/history.js 画出来（这里先留个空壳）。 -->
-    <div id="list"></div>
+    <div id="wrap">
+      <div id="head">
+        <h1>聊天记录</h1>
+        <span id="count"></span>
+        <span class="grow"></span>
+        <button id="clear" class="dp-button" type="button">清空</button>
+      </div>
+      <div id="list"></div>
+      <div id="empty">还没和桌宠聊过天</div>
+    </div>
+    <script type="module" src="history.js"></script>
   </body>
 </html>
