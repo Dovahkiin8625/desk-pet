@@ -1,6 +1,7 @@
 const bubble = document.getElementById('bubble');
 const titleEl = document.getElementById('title');
 const textEl = document.getElementById('text');
+const actionsEl = document.getElementById('actions');
 
 /**
  * 桌宠的说话气泡。
@@ -15,6 +16,8 @@ const textEl = document.getElementById('text');
 
 /** 正在进行的流：null 表示没有。 */
 let streamId = null;
+/** 当前挂着的审批 id：null 表示没有审批在等。 */
+let approvalId = null;
 /** 流式文本的追加节点：用文本节点比 `textContent +=` 快得多。 */
 let streamNode = null;
 
@@ -103,9 +106,49 @@ function render(message) {
   bubble.dataset.kind = message.kind || 'say';
   titleEl.textContent = message.title || '';
   textEl.textContent = message.text || '';
+  // 普通消息会把审批气泡顶掉：按钮要跟着收走，
+  // 不然用户点的是一个已经作废的审批。
+  clearActions();
   streamId = null;
   streamNode = null;
   reportSize(true);
+}
+
+/**
+ * 审批气泡的三个按钮。
+ *
+ * **三个按钮的语义不对称**：允许（这次放行）、拒绝（这次不给）、
+ * 自动（本任务内同风险的后续操作都放行）。
+ */
+function renderApproval(payload) {
+  approvalId = payload?.approvalId ?? null;
+  clearActions();
+  if (!approvalId) return;
+  const buttons = [
+    { decision: 'allow', text: '允许' },
+    { decision: 'deny', text: '拒绝' },
+    { decision: 'always', text: '自动' },
+  ];
+  for (const item of buttons) {
+    const button = document.createElement('button');
+    button.textContent = item.text;
+    button.dataset.decision = item.decision;
+    button.addEventListener('click', () => {
+      window.bubble?.respondApproval?.({ id: approvalId, decision: item.decision });
+      approvalId = null;
+      clearActions();
+    });
+    actionsEl.append(button);
+  }
+  bubble.classList.remove('hidden');
+  titleEl.textContent = payload?.title || '';
+  textEl.textContent = payload?.text || '';
+  reportSize(true);
+}
+
+/** 收走按钮行。 */
+function clearActions() {
+  actionsEl.textContent = '';
 }
 
 /** 开一个流式消息（先是个空壳）。 */
@@ -157,6 +200,15 @@ window.bubble?.onDelta?.((payload) => appendDelta(payload));
 window.bubble?.onStreamEnd?.((payload) => endStream(payload));
 window.bubble?.onStreamCancel?.((payload) => cancelStream(payload));
 
+// 审批气泡：主进程说「有个审批等你点头」。
+window.bubble?.onApproval?.((payload) => renderApproval(payload));
+
+// 审批办完了（无论点了哪个按钮）：按钮收走。
+window.bubble?.onApprovalDone?.(() => {
+  approvalId = null;
+  clearActions();
+});
+
 window.bubble?.onHide?.(() => {
   titleEl.textContent = '';
   textEl.textContent = '';
@@ -164,6 +216,8 @@ window.bubble?.onHide?.(() => {
   bubble.classList.add('hidden');
   streamId = null;
   streamNode = null;
+  approvalId = null;
+  clearActions();
 });
 
 // 气泡摆在桌宠的哪一侧：小尾巴要朝那边指。

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { placeBesidePet, DEFAULT_SIDES } from './placement.js';
 import { MESSAGE_KIND, DEFAULT_TTL_MS } from '../shared/assistant.js';
+import { createApprovalInbox } from './bubbleApproval.js';
 
 /**
  * 桌宠的「说话气泡」。
@@ -27,6 +28,9 @@ import { MESSAGE_KIND, DEFAULT_TTL_MS } from '../shared/assistant.js';
  * - `show()`：一句话，完整显示，6 秒后自动消失；
  * - `openStream()`：**流式**消息（AI 对话的回复），逐字冒出来，
  *   定稿之后才开始计时自动消失。
+ *
+ * 还有一种**例外形态**：审批气泡（`showApproval`）——
+ * 它不自动消失，而且**能点**（普通气泡永远是点击穿透的）。
  */
 
 /** 气泡与桌宠之间的间距（像素）。 */
@@ -49,6 +53,10 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
   let ready = false;
   // 还没准备好时收到的消息：等页面就绪后按顺序补发。
   const pending = [];
+  /** 审批气泡的「等答复」：id → 兑现的 promise。 */
+  const approvals = createApprovalInbox();
+  /** 审批的自动编号：调用方没给 id 时用。 */
+  let approvalSeq = 0;
   let hideTimer = null;
   let currentMessage = null;
   // 正在进行的流式消息：0 表示没有。
@@ -192,9 +200,64 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     currentMessage = null;
     // 单条消息指定的摆位方向只对那一条有效：收掉就清掉。
     oneShotSide = null;
+    // 审批气泡被收走时，挂着的请求要有交代——
+    // 不然任务会一直等下去（槽位也回不来）。
+    approvals.clear();
+    setInteractive(false);
     if (!win || win.isDestroyed()) return;
     send('pet:bubbleHide');
     win.hide();
+  }
+
+  /**
+   * 气泡能不能点。
+   *
+   * 普通气泡永远**点击穿透**（Windows 没有逐像素命中测试，
+   * 整个窗口矩形都是热区——气泡吃了桌面点击，用户会以为桌面坏了）。
+   * 审批气泡是唯一例外：它有按钮要让人点。
+   */
+  function setInteractive(on) {
+    if (!win || win.isDestroyed()) return;
+    win.setIgnoreMouseEvents(!on, { forward: true });
+    // 不可聚焦的窗口收不到键盘输入，按钮也就按不了回车。
+    win.setFocusable(Boolean(on));
+  }
+
+  /**
+   * 显示一条**要用户点头**的消息（审批气泡）。
+   *
+   * 与普通气泡有两点不同：
+   * 1. **不自动消失**：它一直挂着等用户点（规格 §8.2）。
+   *    `ttlMs: 0` 表达不了这个——`scheduleHide` 会把它退回默认 TTL，
+   *    所以这里干脆**不装计时器**（sticky 是结构上的，不是靠一个魔数）。
+   * 2. **能点**：普通气泡永远点击穿透，审批气泡是唯一例外。
+   *
+   * @returns {Promise<'allow'|'deny'|'always'>} 用户的答复
+   */
+  function showApproval({ id = '', title = '', text = '', risk = '' } = {}) {
+    const key = String(id || `approval-${++approvalSeq}`);
+    // 气泡只有一只：上一个审批问不了了就作废（它会被判成「拒绝」，
+    // 那个任务还能换条路，不会死）。
+    approvals.clear();
+    clearTimer();
+    // 审批是**阻塞**的：它卡在任务的关键路径上，
+    // 别的消息排后面（用户得先点头，任务才能继续）。
+    if (streamId) cancelStream();
+    const payload = { approvalId: key, title, text, risk };
+    const promise = approvals.request({ id: key, title, text, risk });
+    if (!win || win.isDestroyed()) {
+      createWindow();
+      pending.push({ type: 'approval', payload });
+      return promise;
+    }
+    if (!ready) {
+      pending.push({ type: 'approval', payload });
+      return promise;
+    }
+    setInteractive(true);
+    currentMessage = { kind: MESSAGE_KIND.SAY, text, emotion: '' };
+    send('pet:bubbleApproval', payload);
+    return promise;
   }
 
   /**
@@ -236,6 +299,13 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       return;
     }
     if (streamId && message?.interrupt) cancelStream();
+    // 审批气泡挂着的时候，普通消息**排队**：
+    // 审批是阻塞的，用户正在做决定——
+    // 这时候把气泡顶掉，用户点不到按钮，任务就一直卡着。
+    if (approvals.pending() > 0) {
+      deferred.push(payload);
+      return;
+    }
     // 聊天回复正在显示时，别的消息排队等它读完。
     //
     // 否则一句问候就能把刚说完的回复顶掉——用户读到一半，
@@ -410,7 +480,11 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     while (pending.length > 0) {
       const item = pending.shift();
       if (item.type === 'stream') startStream(item.payload);
-      else deliver(item.payload);
+      else if (item.type === 'approval') {
+        // 审批气泡：**不装计时器**（它要一直挂着等用户点）。
+        setInteractive(true);
+        send('pet:bubbleApproval', item.payload);
+      } else deliver(item.payload);
     }
     // 模型比气泡页加载还快的时候，开头那几句会先到：补上。
     if (streamBuffer) {
@@ -450,9 +524,29 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     };
   });
 
+  // 用户在审批气泡上点了按钮。
+  //
+  // **按 id 认**：两个任务同时要审批时，
+  // 第二个的答复不能把第一个的搞混（见 bubbleApproval.js）。
+  ipcMain.on('pet:bubbleApprovalResponse', (event, payload) => {
+    if (!win || event.sender !== win.webContents) return;
+    if (!approvals.respond(payload || {})) return;
+    setInteractive(false);
+    send('pet:bubbleApprovalDone', { approvalId: payload?.id });
+    // 答复完了：把气泡收起来，顺手把排队的消息放出来。
+    hide();
+    while (deferred.length > 0) deliver(deferred.shift());
+  });
+
   return {
     show,
     hide,
+    /**
+     * 显示审批气泡，等用户点头。
+     *
+     * @returns {Promise<'allow'|'deny'|'always'>}
+     */
+    showApproval,
     openStream,
     appendStream,
     endStream,
@@ -473,6 +567,8 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     },
     destroy: () => {
       clearTimer();
+      // 挂着的审批要有交代：否则等它的任务永远醒不过来。
+      approvals.clear();
       if (win && !win.isDestroyed()) win.destroy();
       win = null;
     },

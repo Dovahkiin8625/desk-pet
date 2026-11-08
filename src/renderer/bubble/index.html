@@ -82,6 +82,26 @@
     #text { white-space: pre-wrap; word-break: break-word; }
     #text:empty { display: none; }
 
+    /* 审批气泡的三个按钮：允许 / 拒绝 / 自动。 */
+    #actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    #actions:empty { display: none; }
+    #actions button {
+      font: 13px/1 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      color: #4a4235;
+      background: #f3ecdd;
+      border: 1px solid #d8d2c4;
+      border-radius: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    #actions button:hover { background: #e9dfc9; }
+    #actions button[data-decision="allow"] { color: #2f6b3d; }
+    #actions button[data-decision="deny"] { color: #8a3b32; }
+
     /* 流式回复：末尾跟一个闪烁的光标，让用户知道「还在写」。 */
     #bubble.streaming #text::after {
       content: '▍';
@@ -95,6 +115,7 @@
   <div id="bubble" data-placement="top">
     <div id="title"></div>
     <div id="text"></div>
+    <div id="actions"></div>
     <div id="tail"></div>
   </div>
 
