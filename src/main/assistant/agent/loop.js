@@ -13,7 +13,7 @@ import {
  *
  * ```
  * 组 system prompt
- * messages = 历史（只取 user/reply）+ 用户这一句
+ * messages = 历史（按层过滤，见 chat/prompt.js）+ 用户这一句
  * 循环（最多 maxSteps 步）：
  *   1. 调模型
  *   2. 没有 tool_calls → 这就是最终回复 → 结束
@@ -73,6 +73,7 @@ const SKIPPED_TEXT = '（已跳过：这个工具连着出错，任务已经停�
  * @param {number} [options.maxSteps]
  * @param {number} [options.maxSameErrors]
  * @param {Function} [options.onEvent] 步骤事件
+ * @param {boolean} [options.summarize] 步数用尽时要不要再让模型总结一次
  * @param {object} [options.logger] 日志器 {warn?, error?}——工具出错时留一行，
  *   免得用户只看到「agent 停下了」却不知道卡在哪一步
  */
@@ -84,6 +85,13 @@ export function createAgentLoop({
   maxSameErrors = MAX_SAME_ERRORS,
   onEvent = null,
   logger = null,
+  /**
+   * 步数用尽时要不要再让模型总结一次。
+   *
+   * 执行层要（用户得知道做到哪一步了）；交互层不要——
+   * 它要的是秒级回应，多一次模型往返就慢一倍（规格 §4.2）。
+   */
+  summarize = true,
 } = {}) {
   /**
    * 跑一次任务。
@@ -247,7 +255,7 @@ export function createAgentLoop({
     // 步数用尽：让模型用现在的上下文给个总结（规格 §12）。
     // **总结时不能再调工具**（tools 给空），否则就成了又一轮循环。
     // 总结失败就算了——后端会给出兜底句，空气泡才是最糟的失败形态。
-    if (outcome === AGENT_OUTCOME.MAX_STEPS && finalText === '' && !signal?.aborted) {
+    if (outcome === AGENT_OUTCOME.MAX_STEPS && finalText === '' && !signal?.aborted && summarize) {
       try {
         const call = await callModel({
           system: `${system}\n${SUMMARY_INSTRUCTION}`,
