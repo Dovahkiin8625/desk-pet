@@ -33,7 +33,8 @@ import { createAgentTasks } from './agent/tasks.js';
 import { describeToolCall } from './agent/approval.js';
 import { interruptedTasks, taskRecord } from './agent/record.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
-import { appendMessage, mergeFacts } from './chat/memory.js';
+import { mergeFacts } from './chat/memory.js';
+import { createRecordSink } from './chat/recordSink.js';
 
 /**
  * 桌面助理的总控。
@@ -238,6 +239,33 @@ export function createAssistant({  userDataDir,
     getHistory: () => chatHistoryView().messages,
   });
 
+  /**
+   * 写聊天记录的收口：追加 + 按分类截断 + 通知订阅者。
+   *
+   * **为什么收口**：「记录什么时候多了一条」只有一个地方知道，
+   * 就是写记录的地方。散着写，插件的界面就只能轮询。
+   */
+  const recordSink = createRecordSink({
+    getMessages: () => state.chat.messages,
+    setMessages: (messages) => {
+      state.chat.messages = messages;
+      scheduleSave();
+    },
+    onEntry: (entry) => agentFacade.emit(entry),
+  });
+
+  /**
+   * 写一条聊天记录。
+   *
+   * **所有写入都走它**——写一条就通知一次订阅者，
+   * 插件的聊天记录界面要实时更新（规格 §10.2）。
+   */
+  const appendChatRecord = (entry) => {
+    // 状态还没读出来时（启动前）：没地方可写，也不通知。
+    if (!state) return null;
+    return recordSink(entry);
+  };
+
   // ------------------------------------------------------------------
   // agent 的任务中枢（L3）
   //
@@ -257,15 +285,10 @@ export function createAssistant({  userDataDir,
       }),
     getMessages: (prompt) =>
       buildChatMessages({ history: state?.chat?.messages || [], userText: prompt, trigger: 'user' }),
-    appendRecord: (entry) => {
-      if (!state) return;
-      state.chat.messages = appendMessage(state.chat.messages, entry);
-      scheduleSave();
-    },
+    appendRecord: appendChatRecord,
     notify: ({ text, ok }) => {
       say(text, { emotion: ok ? 'happy' : 'sad', sound: ok ? 'success' : '' });
     },
-    onEvent: (event) => agentFacade.emit(event),
     getMaxConcurrent: () => state?.agent?.maxConcurrent || DEFAULT_AGENT.maxConcurrent,
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
     getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
@@ -974,14 +997,13 @@ export function createAssistant({  userDataDir,
     // 把用户说的话记下来：说过就是说过，
     // 哪怕模型没回（没配 key、断网），这句话也不该丢。
     if (trigger === 'user') {
-      state.chat.messages = appendMessage(state.chat.messages, {
+      appendChatRecord({
         role: 'user',
         text: content,
         at: Date.now(),
         proactive: false,
       });
       lastUserMessageAt = Date.now();
-      scheduleSave();
     }
 
     const apiKey = await loadLlmApiKey(userDataDir, rootDir);
@@ -1034,9 +1056,9 @@ export function createAssistant({  userDataDir,
           ack.noteText();
           reply?.push(delta);
         },
-        // agent 的步骤事件转发给插件：插件只认 ctx.agent.onEvent 这一个入口，
-        // 换了后端也不用改插件（规格 §5.5）。
-        onEvent: (event) => agentFacade.emit(event),
+        // agent 的步骤事件**不**转发给插件：插件订阅的是**聊天记录条目**
+        // （写一条就推一条，见 appendChatRecord）。
+        // 原始事件是中间产物，条目里什么都有（kind / text / meta）。
       });
     } catch (err) {
       ack.cancel();
@@ -1062,7 +1084,7 @@ export function createAssistant({  userDataDir,
     reply?.finish({ text: result.text, emotion: result.emotion });
 
     // 记下这一轮。
-    state.chat.messages = appendMessage(state.chat.messages, {
+    appendChatRecord({
       role: 'assistant',
       text: result.text,
       at: Date.now(),
@@ -1262,8 +1284,7 @@ export function createAssistant({  userDataDir,
       // 假装能恢复是自欺欺人。
       const interrupted = interruptedTasks(state.chat.messages);
       for (const task of interrupted) {
-        state.chat.messages = appendMessage(
-          state.chat.messages,
+        appendChatRecord(
           taskRecord({
             taskId: task.taskId,
             status: TASK_STATUS.INTERRUPTED,
@@ -1271,7 +1292,6 @@ export function createAssistant({  userDataDir,
           })
         );
       }
-      if (interrupted.length > 0) scheduleSave();
       if (state.clipboard.enabled) clipboardWatcher.start();
       // 台词语音预先合成好（后台）：点桌宠时要立刻出声。
       void prewarmTapLines();

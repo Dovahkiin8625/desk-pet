@@ -120,3 +120,22 @@ test('聊天记录插件：清空记录的动作真的清了', async () => {
     await cleanup();
   }
 });
+
+test('聊天记录插件：记录一变就推给界面', async () => {
+  const assistant = fakeAssistant([entry('user', '在吗')]);
+  const { host, cleanup } = await makeHost(assistant);
+  try {
+    const pushed = [];
+    host.attachBroadcaster((pluginId, kind, payload) =>
+      pushed.push({ pluginId, kind, payload })
+    );
+
+    assistant.agent.emit(entry('reply', '在呢'));
+
+    assert.deepEqual(pushed, [
+      { pluginId: 'chat-history', kind: 'data', payload: { entries: [entry('reply', '在呢')] } },
+    ]);
+  } finally {
+    await cleanup();
+  }
+});

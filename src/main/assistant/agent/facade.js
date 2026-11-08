@@ -69,7 +69,10 @@ export function createAgentFacade({ tools = null, runtime = null, getHistory = n
     },
 
     /**
-     * 订阅 agent 事件。返回取消订阅的函数。
+     * 订阅 agent 的动静。返回取消订阅的函数。
+     *
+     * **收到的是聊天记录条目**（带 kind / text / meta）：
+     * 写一条记录就推一条，插件页面照着画就行。
      *
      * 订阅者抛异常不许带崩别人——一个插件的坏回调不该让
      * 另一个插件收不到事件。
@@ -81,15 +84,19 @@ export function createAgentFacade({ tools = null, runtime = null, getHistory = n
     },
 
     /**
-     * 把一个事件推给订阅者。
+     * 把一条**聊天记录条目**推给订阅者。
      *
-     * 运行时（L3）产出事件后调它——插件只认这一个入口，
-     * 运行时换了实现也不用改插件。
+     * 运行时（L3）每写一条记录就调它——插件的聊天记录界面
+     * 靠它实时更新（规格 §10.2）。
+     *
+     * **推的是条目，不是运行时事件**：条目里有 kind、text、meta，
+     * 页面拿到就能画；原始事件（task / step / approval）
+     * 在写成条目之前是中间产物。
      */
-    emit(event) {
+    emit(entry) {
       for (const cb of [...listeners]) {
         try {
-          cb(event);
+          cb(entry);
         } catch (err) {
           console.warn('[desk-pet] agent 事件的订阅者出错：', err?.message);
         }
