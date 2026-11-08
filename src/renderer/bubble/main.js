@@ -115,23 +115,25 @@ function render(message) {
 }
 
 /**
- * 审批气泡的三个按钮。
+ * 审批气泡的四个按钮。
  *
- * **三个按钮的语义不对称**：允许（这次放行）、拒绝（这次不给）、
- * 自动（本任务内同风险的后续操作都放行）。
+ * **四个按钮的语义不对称**：允许（这次放行）、拒绝（这次不给）、
+ * 自动（本任务内同风险的后续操作都放行）、取消任务（整个任务停掉）。
  */
 function renderApproval(payload) {
   approvalId = payload?.approvalId ?? null;
   clearActions();
   if (!approvalId) return;
   const buttons = [
-    { decision: 'allow', text: '允许' },
-    { decision: 'deny', text: '拒绝' },
-    { decision: 'always', text: '自动' },
+    { decision: 'allow', text: '允许', title: '这一次放行' },
+    { decision: 'deny', text: '拒绝', title: '这一次不给（模型会换条路）' },
+    { decision: 'always', text: '自动', title: '本任务内，同风险的操作都自动放行' },
+    { decision: 'cancel', text: '取消任务', title: '把这个任务停掉' },
   ];
   for (const item of buttons) {
     const button = document.createElement('button');
     button.textContent = item.text;
+    button.title = item.title;
     button.dataset.decision = item.decision;
     button.addEventListener('click', () => {
       window.bubble?.respondApproval?.({ id: approvalId, decision: item.decision });
@@ -156,6 +158,11 @@ function openStream(payload) {
   streamId = payload?.streamId ?? null;
   titleEl.textContent = payload?.title || '';
   textEl.textContent = '';
+  // 流的正文会把审批的正文顶掉：按钮要跟着收走。
+  // 不然用户点的是「允许」，看到的却是另一段话——
+  // 等于让用户批准一个他没看过的东西。
+  approvalId = null;
+  clearActions();
   // 用文本节点追加：每次 `textContent +=` 都会把整段重新解析一遍。
   streamNode = document.createTextNode('');
   textEl.append(streamNode);

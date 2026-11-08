@@ -82,7 +82,7 @@
     #text { white-space: pre-wrap; word-break: break-word; }
     #text:empty { display: none; }
 
-    /* 审批气泡的三个按钮：允许 / 拒绝 / 自动。 */
+    /* 审批气泡的四个按钮：允许 / 拒绝 / 自动 / 取消任务。 */
     #actions {
       display: flex;
       gap: 8px;
@@ -101,6 +101,7 @@
     #actions button:hover { background: #e9dfc9; }
     #actions button[data-decision="allow"] { color: #2f6b3d; }
     #actions button[data-decision="deny"] { color: #8a3b32; }
+    #actions button[data-decision="cancel"] { color: #6d6152; }
 
     /* 流式回复：末尾跟一个闪烁的光标，让用户知道「还在写」。 */
     #bubble.streaming #text::after {

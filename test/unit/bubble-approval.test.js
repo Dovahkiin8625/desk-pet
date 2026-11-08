@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createApprovalInbox } from '../../src/main/bubbleApproval.js';
+import { APPROVAL_DECISION } from '../../src/shared/assistant.js';
 
 /**
  * 审批气泡的「等答复」这件事（规格 §8.2）。
@@ -51,6 +52,13 @@ test('审批：取消（clear）让挂着的请求都有个交代', async () => 
   const inbox = createApprovalInbox();
   const p = inbox.request({ id: 'a1', text: '甲' });
   inbox.clear();
-  assert.equal(await p, 'deny');
+  assert.equal(await p, APPROVAL_DECISION.SUPERSEDE);
   assert.equal(inbox.pending(), 0);
+});
+
+test('审批：用户可以点「取消这次任务」', async () => {
+  const inbox = createApprovalInbox();
+  const p = inbox.request({ id: 'a1', text: '甲' });
+  assert.equal(inbox.respond({ id: 'a1', decision: APPROVAL_DECISION.CANCEL }), true);
+  assert.equal(await p, APPROVAL_DECISION.CANCEL);
 });

@@ -6,6 +6,7 @@ import {
   TTS_HOSTS,
   LLM_BASE_URLS,
   DEFAULT_AGENT,
+  TASK_STATUS,
   chatKindOf,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
@@ -1263,7 +1264,11 @@ export function createAssistant({  userDataDir,
       for (const task of interrupted) {
         state.chat.messages = appendMessage(
           state.chat.messages,
-          taskRecord({ taskId: task.taskId, status: 'interrupted', title: task.title })
+          taskRecord({
+            taskId: task.taskId,
+            status: TASK_STATUS.INTERRUPTED,
+            title: task.title,
+          })
         );
       }
       if (interrupted.length > 0) scheduleSave();

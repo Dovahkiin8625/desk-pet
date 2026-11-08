@@ -195,6 +195,9 @@ export function createAgentRuntime({
           task.slotResolve = resolve;
         });
         task.status = TASK_STATUS.QUEUED;
+        // **插到队首**：任务按提交顺序起跑，所以一个醒着的任务
+        // 一定比还在排队的任务都早——插队不破坏 FIFO。
+        // 而且用户刚答完审批，让它接着走最省事。
         queue.unshift(task.id);
         pump();
         await granted;

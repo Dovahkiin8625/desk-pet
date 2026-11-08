@@ -102,9 +102,42 @@ test('中枢：审批留一笔记录', async () => {
   });
   const t = tasks.submit({ prompt: '跑个命令', messages: [] });
   await t.done;
-  const approval = records.find((r) => r.kind === 'approval');
+  const approval = records.find((r) => r.kind === 'approval' && r.meta.decision === 'allow');
   assert.ok(approval, '要有审批记录');
   assert.equal(approval.meta.decision, 'allow');
+});
+
+test('中枢：审批请求一发出就写一条「等你点头」的记录', async () => {
+  // 规格 §15：记录里要有审批项，用户才知道任务还卡着。
+  const records = [];
+  const tasks = createAgentTasks({
+    backend: fakeBackend(),
+    getPolicy: () => 'graded',
+    ask: async () => 'allow',
+    appendRecord: (entry) => records.push(entry),
+  });
+  const t = tasks.submit({ prompt: '跑个命令', messages: [] });
+  await t.done;
+  const approvals = records.filter((r) => r.kind === 'approval');
+  assert.ok(
+    approvals.some((r) => r.meta.decision === 'pending'),
+    '要有一条还在等的记录'
+  );
+  assert.ok(
+    approvals.some((r) => r.meta.decision === 'allow'),
+    '决议也要有一条'
+  );
+});
+
+test('中枢：用户点「取消」时，任务真的停了', async () => {
+  const tasks = createAgentTasks({
+    backend: fakeBackend(),
+    getPolicy: () => 'graded',
+    ask: async () => 'cancel',
+  });
+  const t = tasks.submit({ prompt: '跑个命令', messages: [] });
+  await assert.rejects(() => t.done, /取消/);
+  assert.equal(tasks.list()[0].status, TASK_STATUS.CANCELLED);
 });
 
 test('中枢：后台任务做完了要通知用户', async () => {

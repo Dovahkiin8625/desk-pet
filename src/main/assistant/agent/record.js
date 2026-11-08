@@ -1,4 +1,9 @@
-import { CHAT_KIND, TASK_FINAL_STATUS, TASK_STATUS } from '../../../shared/assistant.js';
+import {
+  APPROVAL_DECISION,
+  CHAT_KIND,
+  TASK_FINAL_STATUS,
+  TASK_STATUS,
+} from '../../../shared/assistant.js';
 
 /**
  * agent 的分类记录（规格 §4.2）。
@@ -54,6 +59,21 @@ export function stepRecord({
   };
 }
 
+/**
+ * 审批决议的中文短句（给记录看）。
+ *
+ * 「没等到确认」与「已拒绝」必须分开：
+ * 用户没点过按钮的事，不能记成他拒绝了。
+ */
+const APPROVAL_LABEL = Object.freeze({
+  [APPROVAL_DECISION.PENDING]: '等你点头',
+  [APPROVAL_DECISION.ALLOW]: '已允许',
+  [APPROVAL_DECISION.ALWAYS]: '本任务内自动放行',
+  [APPROVAL_DECISION.DENY]: '已拒绝',
+  [APPROVAL_DECISION.CANCEL]: '用户取消了任务',
+  [APPROVAL_DECISION.SUPERSEDE]: '未确认',
+});
+
 /** 一次审批请求与它的决议。 */
 export function approvalRecord({
   taskId = '',
@@ -64,8 +84,7 @@ export function approvalRecord({
   at = Date.now(),
 } = {}) {
   const name = String(tool || '工具');
-  const label =
-    decision === 'allow' ? '已允许' : decision === 'always' ? '本任务内自动放行' : '已拒绝';
+  const label = APPROVAL_LABEL[decision] || '未确认';
   return {
     kind: CHAT_KIND.APPROVAL,
     role: 'assistant',

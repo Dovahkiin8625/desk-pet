@@ -346,10 +346,12 @@ export function createAgentLoop({
       const decision = await gate.request({ tool, args, risk: tool.risk, signal });
       const d = String(decision?.decision || decision || '').toLowerCase();
       if (d === 'allow' || d === 'always') return { allowed: true };
+      // 闸门给了哪句就用哪句：「没等到确认」与「用户拒绝」是两回事，
+      // 在这里一律改写成「拒绝」，模型就分不清该换条路还是该等用户。
       return {
         allowed: false,
-        reason: `用户拒绝了「${tool.name}」这次调用`,
-        userReason: `「${tool.name}」这次没有获准。`,
+        reason: decision?.reason || `用户拒绝了「${tool.name}」这次调用`,
+        userReason: decision?.userReason || `「${tool.name}」这次没有获准。`,
       };
     }
     if (tool.risk === TOOL_RISK.READ) return { allowed: true };

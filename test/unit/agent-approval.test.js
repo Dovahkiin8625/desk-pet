@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  APPROVAL_DECISION,
   createApprovalGate,
   decideApproval,
   describeToolCall,
 } from '../../src/main/assistant/agent/approval.js';
+import { APPROVAL_DECISION } from '../../src/shared/assistant.js';
 
 /**
  * 审批闸门（规格 §8）。
@@ -151,4 +151,43 @@ test('说明：给人看的一行话说清要做什么', () => {
   const text = describeToolCall({ name: 'shell.exec', label: '执行命令' }, { command: 'npm test' });
   assert.match(text, /npm test/);
   assert.match(text, /执行命令|命令/);
+});
+
+test('闸门：没等到确认时，不能说成「用户拒绝了」', async () => {
+  // 用户压根没点过按钮：审批被别的东西顶掉了，或者任务被取消了。
+  // 说成「用户拒绝」是冤枉人——记录里也会留下假的拒绝。
+  const gate = createApprovalGate({
+    getPolicy: () => 'graded',
+    ask: async () => APPROVAL_DECISION.SUPERSEDE,
+  });
+  const v = await gate.request({ tool: EXEC_TOOL, args: {}, risk: 'exec' });
+  assert.equal(v.allowed, false);
+  assert.equal(v.decision, APPROVAL_DECISION.SUPERSEDE);
+  assert.doesNotMatch(v.reason, /拒绝/, '用户没拒绝过');
+  assert.match(v.reason, /没有等到|没等到/);
+});
+
+test('闸门：用户点「取消」时，任务真的被取消', async () => {
+  let cancelled = 0;
+  const gate = createApprovalGate({
+    getPolicy: () => 'graded',
+    ask: async () => APPROVAL_DECISION.CANCEL,
+    cancelTask: () => { cancelled += 1; },
+  });
+  const v = await gate.request({ tool: EXEC_TOOL, args: {}, risk: 'exec' });
+  assert.equal(v.allowed, false);
+  assert.equal(v.decision, APPROVAL_DECISION.CANCEL);
+  assert.equal(cancelled, 1, '点了「取消」就要真的把任务停掉');
+});
+
+test('闸门：请求一发出就留一笔「等你点头」', async () => {
+  const seen = [];
+  const gate = createApprovalGate({
+    getPolicy: () => 'graded',
+    ask: async () => APPROVAL_DECISION.ALLOW,
+    onRequest: (e) => seen.push(e),
+  });
+  await gate.request({ tool: EXEC_TOOL, args: { command: 'ls' }, risk: 'exec' });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].tool, 'shell.exec');
 });

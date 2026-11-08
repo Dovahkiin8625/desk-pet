@@ -219,8 +219,9 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
   function setInteractive(on) {
     if (!win || win.isDestroyed()) return;
     win.setIgnoreMouseEvents(!on, { forward: true });
-    // 不可聚焦的窗口收不到键盘输入，按钮也就按不了回车。
-    win.setFocusable(Boolean(on));
+    // **不**把窗口变成可聚焦的：桌宠是背景程序。
+    // 用户点一下「允许」就把键盘焦点抢走，手上的活儿全断了——
+    // 按钮靠鼠标点就够了（回车激活不了，但气泡本来就不是键盘界面）。
   }
 
   /**
@@ -232,11 +233,11 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
    *    所以这里干脆**不装计时器**（sticky 是结构上的，不是靠一个魔数）。
    * 2. **能点**：普通气泡永远点击穿透，审批气泡是唯一例外。
    *
-   * @returns {Promise<'allow'|'deny'|'always'>} 用户的答复
+   * @returns {Promise<'allow'|'deny'|'always'|'cancel'>} 用户的答复
    */
   function showApproval({ id = '', title = '', text = '', risk = '' } = {}) {
     const key = String(id || `approval-${++approvalSeq}`);
-    // 气泡只有一只：上一个审批问不了了就作废（它会被判成「拒绝」，
+    // 气泡只有一只：上一个审批问不了了就作废（它会被判成「没等到确认」，
     // 那个任务还能换条路，不会死）。
     approvals.clear();
     // 审批是**阻塞**的：它卡在任务的关键路径上，
@@ -338,6 +339,13 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
    * @returns {number} 流 id：后面的增量与定稿都带着它。
    */
   function openStream({ kind = MESSAGE_KIND.CHAT, title = '', ttlMs = CHAT_TTL_MS } = {}) {
+    // 有审批挂着的时候开流：那个审批**问不了了**——
+    // 流的正文会把审批的正文顶掉，用户看到的就不是他要点的东西，
+    // 按钮却还在（用户会点一个自己没看过的审批）。
+    //
+    // 所以作废它：判「没等到确认」，不是「用户拒绝」（他压根没点过按钮）。
+    // 渲染层那边也会把按钮收走。
+    if (approvals.pending() > 0) approvals.clear();
     // 上一个流直接作废：不能有两个流同时往一个气泡里写字。
     cancelStream();
     const id = ++streamSeq;
@@ -517,14 +525,14 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
 
   // 气泡当前的状态。
   //
-  // `interactive` 恒为 false：气泡永远是点击穿透的。
+  // `interactive` 只在**审批气泡**挂着时为 true：普通气泡永远点击穿透。
   // 它留在这里是为了让「气泡不挡桌面」这件事有个可断言的出口——
   // Electron 只有 setIgnoreMouseEvents（setter），没有对应的 getter。
   ipcMain.handle('pet:bubbleState', (event) => {
     if (!win || event.sender !== win.webContents) return null;
     return {
       kind: currentMessage?.kind || '',
-      interactive: false,
+      interactive: approvals.pending() > 0,
       visible: win.isVisible(),
     };
   });
@@ -549,7 +557,7 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     /**
      * 显示审批气泡，等用户点头。
      *
-     * @returns {Promise<'allow'|'deny'|'always'>}
+     * @returns {Promise<'allow'|'deny'|'always'|'cancel'>}
      */
     showApproval,
     openStream,

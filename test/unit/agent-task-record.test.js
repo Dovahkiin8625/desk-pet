@@ -53,6 +53,23 @@ test('审批记录：带工具与决议', () => {
   assert.equal(entry.meta.decision, 'allow');
 });
 
+test('审批记录：还在等的时候写「等你点头」', () => {
+  // 规格 §15：任务卡在审批上时，记录里要看得见它还卡着。
+  const entry = approvalRecord({ taskId: 't1', tool: 'shell.exec', risk: 'exec', decision: 'pending' });
+  assert.match(entry.text, /等你点头/);
+});
+
+test('审批记录：没等到确认不能写成「已拒绝」', () => {
+  const entry = approvalRecord({ taskId: 't1', tool: 'shell.exec', risk: 'exec', decision: 'supersede' });
+  assert.doesNotMatch(entry.text, /已拒绝/, '用户没拒绝过');
+  assert.match(entry.text, /未确认/);
+});
+
+test('审批记录：用户取消了任务', () => {
+  const entry = approvalRecord({ taskId: 't1', tool: 'shell.exec', risk: 'exec', decision: 'cancel' });
+  assert.match(entry.text, /取消/);
+});
+
 test('中断检测：上次退出时还在跑的任务被找出来', () => {
   const messages = [
     taskRecord({ taskId: 't1', status: TASK_STATUS.QUEUED, title: '甲' }),

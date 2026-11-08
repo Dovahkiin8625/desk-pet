@@ -237,6 +237,35 @@ test('闸门拒绝：工具不执行，拒绝是给模型的信号而不是终�
   assert.match(toolMsg.content, /拒绝/);
 });
 
+test('闸门的说法原样喂回模型', async () => {
+  // 「没等到确认」与「用户拒绝」对模型是两回事：
+  // 闸门给了哪句就用哪句，循环里不要一律改写成「拒绝」。
+  const execTool = {
+    name: 'shell.exec',
+    risk: 'exec',
+    async run() {
+      return { text: '不该出现' };
+    },
+  };
+  const model = fakeModel([{ toolCalls: [call('shell.exec', { command: 'ls' })] }, { text: '那算了' }]);
+  await loop(model, {
+    tools: [execTool],
+    gate: {
+      request: async () => ({
+        decision: 'supersede',
+        reason: '这次调用没有等到确认',
+        userReason: '没能等到你的确认',
+      }),
+    },
+  }).run({
+    system: 's',
+    messages: [{ role: 'user', content: 'u' }],
+  });
+  const toolMsg = model.seen[1].find((m) => m.role === 'tool');
+  assert.match(toolMsg.content, /没有等到确认/);
+  assert.doesNotMatch(toolMsg.content, /拒绝/, '用户没拒绝过，不能这么说');
+});
+
 test('闸门放行：工具照常执行', async () => {
   let ran = 0;
   const execTool = {

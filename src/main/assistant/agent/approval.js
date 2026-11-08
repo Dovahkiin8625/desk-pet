@@ -1,4 +1,4 @@
-import { TOOL_RISK } from '../../../shared/assistant.js';
+import { APPROVAL_DECISION, TOOL_RISK } from '../../../shared/assistant.js';
 
 /**
  * 审批闸门（规格 §8）。
@@ -14,17 +14,14 @@ import { TOOL_RISK } from '../../../shared/assistant.js';
  *
  * 「拒绝」不是终止任务：把它当异常抛出，
  * agent 就只会「失败」，而不会「换条路」。
+ *
+ * ## 「没等到确认」不等于「拒绝」
+ *
+ * 审批请求被别的东西顶掉了、或者任务在等的时候被取消了——
+ * 用户压根没点过按钮。这种时候给模型的话不能说「用户拒绝」，
+ * 记录里也不能写「已拒绝」（那是冤枉人）。
+ * 所以决议里单列了 `supersede`（没等到）与 `cancel`（用户要取消）。
  */
-
-/** 审批决议。 */
-export const APPROVAL_DECISION = Object.freeze({
-  /** 本次放行。 */
-  ALLOW: 'allow',
-  /** 本次不给（喂回模型）。 */
-  DENY: 'deny',
-  /** 本任务内同风险的后续调用都放行。 */
-  ALWAYS: 'always',
-});
 
 /**
  * 判定一个工具要不要用户点头。
@@ -63,7 +60,9 @@ export function decideApproval({ policy = 'graded', allowAlways = [], tool = {},
  *   宁可什么都不做，也不能在用户没点头的情况下动他的机器。
  * @param {object} [options.hooks] 运行时的挂起接口（wait / wake）
  * @param {string} [options.taskId]
+ * @param {Function} [options.onRequest] 请求**发出**时留一笔（记录里要看得见「还卡着」）
  * @param {Function} [options.onDecision] 每次决议留一笔（给记录用）
+ * @param {Function} [options.cancelTask] 用户点「取消」时：真的把任务停掉
  */
 export function createApprovalGate({
   getPolicy = () => 'graded',
@@ -71,7 +70,9 @@ export function createApprovalGate({
   ask = null,
   hooks = null,
   taskId = '',
+  onRequest = null,
   onDecision = null,
+  cancelTask = null,
 } = {}) {
   /** 本任务里被「自动」放行的风险等级。 */
   const autoRisks = new Set();
@@ -107,6 +108,10 @@ export function createApprovalGate({
         };
       }
 
+      // 请求一发出就留一笔「等你点头」：
+      // 任务卡在审批上时，记录里要看得见它还卡着（规格 §15）。
+      onRequest?.({ taskId, tool: name, args, risk: level });
+
       // 先问用户（气泡要出来），再挂起（让出并发槽）。
       //
       // 顺序不能反：先挂起的话，气泡还没弹出来用户就点不到。
@@ -119,15 +124,12 @@ export function createApprovalGate({
         try {
           await waiting;
         } catch {
-          // 任务被取消了（挂起被中止）：下面与 abort 赛跑会给出「拒绝」。
+          // 任务被取消了（挂起被中止）：下面与 abort 赛跑会给出「没等到」。
         }
       }
       // 任务被取消时，用户可能一直不答复——不能干等着。
       const outcome = await raceAbort(pending, signal);
-      const decision =
-        outcome === APPROVAL_DECISION.ALLOW || outcome === APPROVAL_DECISION.ALWAYS
-          ? outcome
-          : APPROVAL_DECISION.DENY;
+      const decision = normalizeDecision(outcome);
 
       if (decision === APPROVAL_DECISION.ALWAYS) autoRisks.add(level);
 
@@ -142,8 +144,31 @@ export function createApprovalGate({
       if (decision === APPROVAL_DECISION.ALLOW || decision === APPROVAL_DECISION.ALWAYS) {
         return { allowed: true, decision };
       }
+      // 用户要取消整个任务：真的停掉它。
+      //
+      // 停在**这里**（而不是等 abort 赛跑）是有意的：
+      // 决议已经拿到了，就别让 abort 把它抢成「没等到」。
+      if (decision === APPROVAL_DECISION.CANCEL) {
+        cancelTask?.();
+        return {
+          allowed: false,
+          decision,
+          reason: `用户取消了这次任务，「${name}」没有执行`,
+          userReason: '这个任务被取消了，所以我没有动它。',
+        };
+      }
+      // 没等到确认：用户没点过按钮（或任务已经没了）。
+      if (decision === APPROVAL_DECISION.SUPERSEDE) {
+        return {
+          allowed: false,
+          decision,
+          reason: `这次调用没有等到确认（「${name}」），先不做了`,
+          userReason: '有个操作没能等到你的确认，所以没有执行。',
+        };
+      }
       return {
         allowed: false,
+        decision,
         reason: `用户拒绝了「${name}」这次调用`,
         userReason: `「${name}」这次没有获准。`,
       };
@@ -152,17 +177,39 @@ export function createApprovalGate({
 }
 
 /**
+ * 把答复收敛成一个合法的决议。
+ *
+ * 不认识的答复一律当**拒绝**：宁可多问一次，
+ * 也不要因为一个坏值就放行。
+ */
+function normalizeDecision(raw) {
+  const d = String(raw || '');
+  if (
+    d === APPROVAL_DECISION.ALLOW ||
+    d === APPROVAL_DECISION.ALWAYS ||
+    d === APPROVAL_DECISION.CANCEL ||
+    d === APPROVAL_DECISION.SUPERSEDE
+  ) {
+    return d;
+  }
+  return APPROVAL_DECISION.DENY;
+}
+
+/**
  * 答复与取消赛跑。
  *
  * 任务被取消时，用户可能一直不答复——不能干等着。
+ *
+ * 中止给的是「没等到确认」而不是「拒绝」：用户没点过按钮，
+ * 说成拒绝是冤枉人（记录里也会留下假的拒绝）。
  */
 function raceAbort(pending, signal) {
   if (!signal) return pending;
-  if (signal.aborted) return Promise.resolve(APPROVAL_DECISION.DENY);
+  if (signal.aborted) return Promise.resolve(APPROVAL_DECISION.SUPERSEDE);
   return Promise.race([
     pending,
     new Promise((resolve) => {
-      signal.addEventListener('abort', () => resolve(APPROVAL_DECISION.DENY), { once: true });
+      signal.addEventListener('abort', () => resolve(APPROVAL_DECISION.SUPERSEDE), { once: true });
     }),
   ]);
 }
@@ -172,6 +219,10 @@ function raceAbort(pending, signal) {
  *
  * 审批气泡上要写清楚「到底要干什么」——
  * 只写工具名的话，用户只能凭感觉点头。
+ *
+ * **参数会原样显示在屏幕上**：模型要是把敏感串当参数传了
+ * （比如 token），它会出现在气泡里。这是刻意的取舍——
+ * 不显示参数，用户就不知道自己在批准什么。
  */
 export function describeToolCall(tool = {}, args = {}) {
   const label = String(tool?.label || tool?.name || '这个操作');

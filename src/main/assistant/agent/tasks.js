@@ -1,7 +1,7 @@
 import { createAgentRuntime } from './runtime.js';
 import { createApprovalGate } from './approval.js';
 import { approvalRecord, stepRecord, taskRecord } from './record.js';
-import { AGENT_EVENT } from '../../../shared/assistant.js';
+import { AGENT_EVENT, APPROVAL_DECISION } from '../../../shared/assistant.js';
 
 /**
  * agent 任务的中枢。
@@ -25,7 +25,7 @@ import { AGENT_EVENT } from '../../../shared/assistant.js';
  *
  * @param {object} options
  * @param {object} options.backend agent 后端（chat/agent.js 造出来的那个）
- * @param {Function} [options.ask] 问用户：({taskId, tool, args, risk}) → Promise<'allow'|'deny'|'always'>
+ * @param {Function} [options.ask] 问用户：({taskId, tool, args, risk}) → Promise<'allow'|'deny'|'always'|'cancel'>
  * @param {Function} [options.getMessages] 后台任务的对话上下文
  * @param {Function} [options.appendRecord] 写一条分类记录
  * @param {Function} [options.notify] 通知用户：({ title, text, ok })
@@ -147,6 +147,16 @@ export function createAgentTasks({
                   ask,
                   hooks: scope.hooks,
                   taskId: scope.taskId,
+                  // 请求一发出就留一笔「等你点头」：
+                  // 任务卡在审批上时，记录里要看得见它还卡着（规格 §15）。
+                  onRequest: (info) =>
+                    publish({
+                      type: AGENT_EVENT.APPROVAL,
+                      taskId: scope.taskId,
+                      at: now(),
+                      ...info,
+                      decision: APPROVAL_DECISION.PENDING,
+                    }),
                   onDecision: (decision) =>
                     publish({
                       type: AGENT_EVENT.APPROVAL,
@@ -154,6 +164,8 @@ export function createAgentTasks({
                       at: now(),
                       ...decision,
                     }),
+                  // 用户在审批气泡上点「取消」：真的把任务停掉。
+                  cancelTask: () => runtime.cancel(scope.taskId),
                 })
               : null;
           const convo = Array.isArray(messages)
