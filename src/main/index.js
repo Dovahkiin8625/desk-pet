@@ -1203,6 +1203,14 @@ app.whenReady().then(async () => {
   // 宿主负责找插件，窗口负责开窗：两者互相认识一下。
   plugins.attachWindows(pluginWindows);
 
+  // 插件推数据的通道：接上界面路由。
+  //
+  // **晚一步接上**：界面路由（surface.js）在宿主之后才建好，
+  // 所以宿主先留了 ctx.push 这个口子，这里把真正的通道接上去。
+  plugins.attachBroadcaster((pluginId, kind, payload) => {
+    pluginSurfaces?.broadcast(pluginId, kind, payload);
+  });
+
   // 本机程序索引：面板的搜索框要能搜到本机的程序。
   //
   // 扫盘要几百毫秒，所以**后台**先扫一遍（warm）：

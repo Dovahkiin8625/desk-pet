@@ -75,6 +75,14 @@ export async function createPluginHost({
   const listeners = new Set();
   /** 打开独立窗口的入口（window.js 装上来）。 */
   let windowOpener = null;
+  /**
+   * 把数据推给某个插件的界面落点。
+   *
+   * **接缝**：界面路由（surface.js）在宿主之后才建好，
+   * 所以宿主先留一个口子（`ctx.push`），main/index.js 建好路由再接上
+   * （`attachBroadcaster`）——与 `attachWindows` 同一个套路。
+   */
+  let broadcaster = null;
   /** 插件界面开合的回调（插件想知道「我的界面开着吗」）。 */
   const surfaceListeners = new Set();
   /** 真正在用的工具表：注入的优先，其次助理的。 */
@@ -129,6 +137,16 @@ export async function createPluginHost({
        */
       agent: agentApi,
       openSettings,
+      /**
+       * 把数据推给自己的界面（实时更新用）。
+       *
+       * **界面没开着时推了也没有地方去**——推不丢：
+       * 界面打开时宿主会先给一份完整快照（`data()`），
+       * 插件自己保证快照与推送说的是同一件事。
+       */
+      push(data) {
+        broadcaster?.(record.manifest.id, 'data', data);
+      },
       update: typeof update === 'function' ? update : () => {},
       ui: UI,
       host: {
@@ -609,6 +627,15 @@ export async function createPluginHost({
     /** 把「开独立窗口」的能力接上（window.js 晚一步创建）。 */
     attachWindows: (opener) => {
       windowOpener = opener;
+    },
+    /**
+     * 接上「推数据」的通道。
+     *
+     * 与 `attachWindows` 同一个套路：宿主比界面路由先建，
+     * 晚建的那边来接上。
+     */
+    attachBroadcaster: (fn) => {
+      broadcaster = typeof fn === 'function' ? fn : null;
     },
     /**
      * 某个插件的界面开合了。

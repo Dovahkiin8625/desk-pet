@@ -13,6 +13,7 @@ import {
 } from '../../src/shared/plugin.js';
 import { discoverPlugins, loadPluginFactory } from '../../src/main/plugins/loader.js';
 import { createPluginHost } from '../../src/main/plugins/host.js';
+import { createSurfaceController } from '../../src/main/plugins/surface.js';
 
 /**
  * 插件的测试分两层：
@@ -628,6 +629,92 @@ export default (ctx) => {
     assert.deepEqual(record.instance.seen(), [
       { pluginId: 'todo', open: true },
       { pluginId: 'todo', open: false },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('插件能通过 ctx.push 把数据推给自己的界面', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'pusher',
+      { id: 'pusher', name: '推送' },
+      `export default function create(ctx) {
+         return {
+           page: () => null,
+           pushIt: (data) => ctx.push(data),
+         };
+       }`
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+    const record = host.get('pusher');
+
+    // **通道还没接上**：推出去也不该炸——
+    // 插件不知道宿主什么时候把路由建好，它只管推。
+    record.instance.pushIt({ n: 1 });
+
+    const pushed = [];
+    host.attachBroadcaster((pluginId, kind, payload) =>
+      pushed.push({ pluginId, kind, payload })
+    );
+    record.instance.pushIt({ n: 2 });
+
+    assert.deepEqual(pushed, [{ pluginId: 'pusher', kind: 'data', payload: { n: 2 } }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('推过去的数据真的到了界面落点（包成信封）', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = await mkdtemp(join(tmpdir(), 'desk-pet-userdata-'));
+  try {
+    await makePlugin(
+      root,
+      'pusher',
+      { id: 'pusher', name: '推送' },
+      `export default function create(ctx) {
+         return {
+           page: () => null,
+           pushIt: (data) => ctx.push(data),
+         };
+       }`
+    );
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await host.load();
+
+    // 界面路由：面板工作台与独立窗口都是「界面落点」。
+    const surfaces = createSurfaceController({ host, onChange: () => {} });
+    const delivered = [];
+    surfaces.attach('pusher', {
+      mode: 'window',
+      deliver: (kind, payload) => delivered.push({ kind, payload }),
+    });
+    host.attachBroadcaster((pluginId, kind, payload) =>
+      surfaces.broadcast(pluginId, kind, payload)
+    );
+
+    host.get('pusher').instance.pushIt({ n: 3 });
+
+    assert.deepEqual(delivered, [
+      { kind: 'data', payload: { pluginId: 'pusher', data: { n: 3 } } },
     ]);
   } finally {
     await rm(root, { recursive: true, force: true });
