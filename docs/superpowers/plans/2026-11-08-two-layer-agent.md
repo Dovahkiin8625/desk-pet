@@ -1379,6 +1379,17 @@ test('派单：记一条 dispatch 记录，正文里有任务号', async () => {
   assert.match(records[0].text, /t-9/, '任务号要在正文里：交互层下一轮要靠它说「停掉 t-9」');
 });
 
+test('派单：说明太长就让它写短点', async () => {
+  const { byName } = makeTools();
+  // **为什么要限长**：交互层的 `maxTokens` 按普通对话（默认 800），
+  // 而工具参数与正文**共用**同一个额度——说明被截断，
+  // 参数就不是合法 JSON，循环报错，白烧掉 3 步里的 1 步。
+  await assert.rejects(
+    () => byName.get('task.submit').run({ title: '查视频', brief: '看'.repeat(300) }),
+    /太长/
+  );
+});
+
 test('派单关了：不能派，也不该真的派出去', async () => {
   const { byName, tasks } = makeTools({ dispatchEnabled: false });
   await assert.rejects(
@@ -1632,6 +1643,16 @@ import { dispatchRecord } from '../agent/record.js';
  * 2. **交互层的理解**（title + brief）：要干什么、要什么结果、有什么约束；
  * 3. **相关历史**：执行层自己再读最近几条 user/reply。
  */
+
+/**
+ * 派单说明最多几个字。
+ *
+ * **为什么限长**：交互层的 `maxTokens` 按普通对话（默认 800），
+ * 而工具参数与正文**共用**同一个额度——说明被截断，
+ * 参数就不是合法 JSON，循环报错，白烧掉 3 步里的 1 步。
+ */
+const BRIEF_MAX_CHARS = 200;
+
 export function createTaskTools({
   tasks = null,
   turn = {},
@@ -1658,7 +1679,7 @@ export function createTaskTools({
         type: 'object',
         properties: {
           title: { type: 'string', description: '一句话说明这个任务要做什么' },
-          brief: { type: 'string', description: '任务说明：要干什么、要什么结果、有什么约束' },
+          brief: { type: 'string', description: '任务说明：要干什么、要什么结果、有什么约束（200 字以内）' },
         },
         required: ['title', 'brief'],
       },
@@ -1668,6 +1689,15 @@ export function createTaskTools({
         const title = String(args?.title || '').trim() || '一件事';
         const brief = String(args?.brief || '').trim();
         if (!brief) throw new Error('任务说明还没写：要说清要干什么');
+        // **限长**：交互层的 `maxTokens` 按普通对话（默认 800），
+        // 而工具参数与正文共用同一个额度——说明被截断，
+        // 参数就不是合法 JSON，循环报错，白烧掉 3 步里的 1 步。
+        // 超了就让模型写短点：用户的完整原话本来也会一起传过去，不会丢信息。
+        if (brief.length > BRIEF_MAX_CHARS) {
+          throw new Error(
+            `任务说明太长了（${brief.length} 字）：请写到 ${BRIEF_MAX_CHARS} 字以内`,
+          );
+        }
         const messages = [
           ...buildHistoryMessages({ history, layer: LAYER.EXECUTION }),
           { role: 'user', content: `${brief}\n\n用户原话：${userText}` },
