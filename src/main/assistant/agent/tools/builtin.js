@@ -1,7 +1,7 @@
-import { readFile, writeFile, readdir, mkdir, realpath, stat } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { DEFAULT_AGENT, TOOL_RISK } from '../../../../shared/assistant.js';
 
@@ -14,14 +14,16 @@ import { DEFAULT_AGENT, TOOL_RISK } from '../../../../shared/assistant.js';
  * 这么做的理由很实在——它们是本项目里**最危险**的一批能力，
  * 能在普通 node 里测，才谈得上「测试盯着它」。
  *
- * ## 路径边界：只读工具关住，写/执行工具不关
+ * ## 路径：不设目录边界
  *
- * 规格 §5.3 说得很明确：**路径逃逸的检查只在 `risk: 'read'` 的内置工具上强制**。
+ * 规格 §5.3 原本要求：**路径逃逸的检查只在 `risk: 'read'` 的内置工具上强制**——
+ * 只读工具自动放行（用户不在场），所以得靠工作区把它们关住。
  *
- * 理由是审批模型：只读工具**自动放行**（用户不在场），
- * 所以它们必须被工作区关住——不然一次注入就能把整台机器上的文件读出来。
- * 写与执行工具要走用户审批，用户看得见具体路径、自己点头，
- * 再关边界就只会让 agent 什么都干不了。
+ * 现在**一律不设边界**：用户要 agent 能碰到工作区之外的目录（素材在别的盘符上）。
+ * 代价是：一次提示词注入就能把本机的文件读出来。
+ * 收紧的口子是**审批策略**（设置里的 `approval.policy`），
+ * 但审批气泡是 L3 的活，还没上线——在那之前只读操作完全放行。
+ * 工作区仍然有用：它是相对路径的基准，也是 `shell.exec` 的默认目录。
  *
  * ## 工具出错一律抛错
  *
@@ -73,55 +75,21 @@ function truncate(text, max) {
 }
 
 /**
- * 判断一个路径有没有跑出根目录。
+ * 把一个路径解析成绝对路径。
  *
- * rel 以 '..' 开头就是跑到外面去了；
- * isAbsolute(rel) 是另一头的情况（不同的盘符）。
+ * 相对路径按工作区解析；绝对路径原样解析（别的盘符也算）。
+ *
+ * 原来这里有一道「只能碰工作区」的护栏，越界就抛错。
+ * 用户明确要 agent 能访问工作区之外的目录，于是这道护栏撤了：
+ * 要收紧只能靠审批策略，而审批气泡还没上线。
+ *
+ * 相对路径里带 `..` 也不再拦：它只是回到工作区的上级目录，
+ * 既然绝对路径随便给，这一点上没有区别。
  */
-function escapes(root, full) {
-  const rel = relative(root, full);
-  return rel === '..' || rel.startsWith(`..${'/'}`) || rel.startsWith('..\\') || isAbsolute(rel);
-}
-
-/**
- * 把一个路径解析成工作区里的绝对路径；越界就抛错。
- *
- * **只读工具用它**，写/执行工具不用（见文件头的说明）。
- *
- * 相对路径按工作区解析；绝对路径原样解析，但要检查它是不是还在工作区里。
- *
- * ## 要查两遍：词法一遍，真实路径一遍
- *
- * 词法检查（`..` 穿越）挡不住**符号链接**与 Windows 的**目录联接**：
- * 链接本身在工作区里，它指的东西在外面。只读工具是自动放行的，
- * 工作区边界是它们唯一的护栏，所以链接也得挡。
- *
- * 查真实路径的办法是 `realpath`：它把整条路径上的链接都解开。
- * 目标不存在时 `realpath` 会报 ENOENT——那不是越界，
- * 留给后面的操作去报错（fs.read 会说「读不了 …」）。
- */
-export async function resolveInsideWorkspace(base, target) {
+export function resolveToolPath(base, target) {
   const root = resolve(base);
-  const full = isAbsolute(String(target)) ? resolve(String(target)) : resolve(root, String(target));
-  if (escapes(root, full)) {
-    throw new Error(`路径「${target}」在工作区（${root}）外面，不给碰`);
-  }
-  let realRoot = root;
-  let realFull = full;
-  try {
-    realRoot = await realpath(root);
-    realFull = await realpath(full);
-  } catch (err) {
-    // 目标不存在（ENOENT）不是越界；别的错（没权限）就当挡住了。
-    if (err?.code !== 'ENOENT') {
-      throw new Error(`路径「${target}」查不到，不给碰：${err?.message || err}`);
-    }
-    return full;
-  }
-  if (escapes(realRoot, realFull)) {
-    throw new Error(`路径「${target}」在工作区（${root}）外面，不给碰`);
-  }
-  return full;
+  const t = String(target);
+  return isAbsolute(t) ? resolve(t) : resolve(root, t);
 }
 
 /**
@@ -130,8 +98,8 @@ export async function resolveInsideWorkspace(base, target) {
  * 搜文件用：node_modules 与 .git 里几十万文件，
  * 全翻一遍能把一次搜索拖到几十秒。
  *
- * **链接一律跳过**：链接可能指向工作区外面（`fs.read` 那边会挡住，
- * 但搜索是遍历，读一个链接指向的文件就漏出去了）。
+ * **链接一律跳过**：链接可能绕回上级目录，跟着走就会陷入死循环；
+ * 顺着链接读文件用 `fs.read` 指定完整路径就行，不需要靠遍历。
  */
 async function walkFiles(root, visit) {
   const stack = [root];
@@ -323,7 +291,7 @@ export function createBuiltinTools({
       async run(args) {
         const path = String(args?.path || '').trim();
         if (!path) throw new Error('要读哪个文件？给个 path');
-        const full = await resolveInsideWorkspace(workspaceDir(), path);
+        const full = resolveToolPath(workspaceDir(), path);
         // 先看大小再读：整份读进内存，一个大文件就能把主进程撑爆。
         let size = 0;
         try {
@@ -368,14 +336,14 @@ export function createBuiltinTools({
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '目录路径，默认是工作区' },
+          path: { type: 'string', description: '目录路径，默认是工作区；可以给绝对路径' },
         },
         required: [],
       },
       risk: TOOL_RISK.READ,
       async run(args) {
         const path = String(args?.path || '').trim() || '.';
-        const full = await resolveInsideWorkspace(workspaceDir(), path);
+        const full = resolveToolPath(workspaceDir(), path);
         let entries = [];
         try {
           entries = await readdir(full, { withFileTypes: true });
@@ -404,7 +372,7 @@ export function createBuiltinTools({
         type: 'object',
         properties: {
           pattern: { type: 'string', description: '要搜的那段文字（按字面匹配，不认正则）' },
-          path: { type: 'string', description: '从哪个目录开始搜，默认是工作区' },
+          path: { type: 'string', description: '从哪个目录开始搜，默认是工作区；可以给绝对路径' },
         },
         required: ['pattern'],
       },
@@ -412,7 +380,7 @@ export function createBuiltinTools({
       async run(args) {
         const pattern = String(args?.pattern || '').trim();
         if (!pattern) throw new Error('要搜什么？给个 pattern');
-        const root = await resolveInsideWorkspace(
+        const root = resolveToolPath(
           workspaceDir(),
           String(args?.path || '').trim() || '.'
         );
@@ -461,12 +429,12 @@ export function createBuiltinTools({
         required: ['path', 'content'],
       },
       risk: TOOL_RISK.WRITE,
-      // **不设工作区边界**：写工具要走用户审批，用户看得见路径、自己点头。
-      // 只读工具是自动放行的，所以只有它们必须被关住（见文件头）。
+      // **写工具要走用户审批**：用户看得见路径、自己点头。
+      // 只读工具是自动放行的，所以要收紧就靠审批策略（见文件头）。
       async run(args) {
         const path = String(args?.path || '').trim();
         if (!path) throw new Error('要写哪个文件？给个 path');
-        const full = isAbsolute(path) ? resolve(path) : resolve(workspaceDir(), path);
+        const full = resolveToolPath(workspaceDir(), path);
         const content = String(args?.content ?? '');
         try {
           await mkdir(dirname(full), { recursive: true });

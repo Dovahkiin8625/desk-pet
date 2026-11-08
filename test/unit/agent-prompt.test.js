@@ -86,6 +86,11 @@ test('提示词：工作区为空时说清楚是用户主目录', () => {
   assert.match(prompt, /用户主目录/);
 });
 
+test('提示词：告诉模型绝对路径能去任何地方', () => {
+  const prompt = buildAgentSystemPrompt({ tools: TOOLS, workspace: 'E:/project/desk-pet' });
+  assert.match(prompt, /绝对路径/);
+});
+
 test('提示词：一个工具都没有时，不列工具表', () => {
   const prompt = buildAgentSystemPrompt({ tools: [] });
   assert.doesNotMatch(prompt, /shell\.exec/);

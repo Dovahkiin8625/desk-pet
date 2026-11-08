@@ -970,6 +970,11 @@ app.whenReady().then(async () => {
     },
     // 渲染层注册好推送频道的监听器了。
     onRendererReady,
+    // 渲染层回报「这段语音播完了」——
+    // 「先应一声」要靠它决定什么时候把答案气泡放出来。
+    onSpeechEnded: (id) => {
+      assistant?.notifySpeechEnded?.(id);
+    },
     // 渲染层报告形象切换的结果（成功 / 失败 / 被顶掉）。
     onModelSwitchResult,
     // 渲染层报告模型加载失败（启动阶段）。
@@ -1138,9 +1143,10 @@ app.whenReady().then(async () => {
       if (win && !win.isDestroyed()) win.webContents.send('pet:emotion', { emotion, mood });
     },
     // 合成好的语音交给渲染层播放（口型同步也在那边）。
-    onSpeak: (audio, mime) => {
+    // 带上 id：渲染层播完要回报同一个 id，主进程才知道「这一声念完了」。
+    onSpeak: (audio, mime, id) => {
       if (win && !win.isDestroyed()) {
-        win.webContents.send('pet:speak', { audio, mime });
+        win.webContents.send('pet:speak', { audio, mime, id });
       }
     },
     onSound: (name) => {

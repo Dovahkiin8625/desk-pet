@@ -29,6 +29,8 @@ export function createPlainBackend({ fetchImpl = fetch } = {}) {
           temperature: config.temperature,
           maxTokens: config.maxTokens,
           maxTokensField: config.maxTokensField,
+          // think 模式：模型先思考再回答（关着时只是一个「不要思考」）。
+          think: config.think,
         },
         {
           fetchImpl,

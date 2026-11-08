@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import {
   createBuiltinTools,
-  resolveInsideWorkspace,
+  resolveToolPath,
   killProcessTree,
 } from '../../src/main/assistant/agent/tools/builtin.js';
 import { createToolRegistry } from '../../src/main/assistant/agent/tools/registry.js';
@@ -16,8 +16,8 @@ import { createToolRegistry } from '../../src/main/assistant/agent/tools/registr
  * 内置工具集。
  *
  * 三条最容易做错的：
- * 1. **只读工具**必须被工作区关住（它们自动放行，没人盯着）；
- * 2. **写/执行工具不设边界**——它们要走用户审批，用户看得见路径；
+ * 1. **路径没有目录边界**——相对路径按工作区解析，绝对路径随便给；
+ * 2. **写/执行工具要走用户审批**——用户看得见路径；
  * 3. 工具出错要**抛**，不是返回空字符串——错误要喂回模型，让它换条路。
  */
 
@@ -32,12 +32,12 @@ function pick(tools, name) {
   return t;
 }
 
-test('工作区：路径越界要拦住', async () => {
+test('路径：相对路径按工作区解析，绝对路径原样给', () => {
   const base = join(tmpdir(), 'ws');
-  assert.equal(await resolveInsideWorkspace(base, 'a/b.txt'), join(base, 'a', 'b.txt'));
-  assert.equal(await resolveInsideWorkspace(base, join(base, 'x.txt')), join(base, 'x.txt'));
-  await assert.rejects(() => resolveInsideWorkspace(base, '../逃出去.txt'), /工作区/);
-  await assert.rejects(() => resolveInsideWorkspace(base, join(base, '..', '逃出去.txt')), /工作区/);
+  assert.equal(resolveToolPath(base, 'a/b.txt'), join(base, 'a', 'b.txt'));
+  assert.equal(resolveToolPath(base, join(base, 'x.txt')), join(base, 'x.txt'));
+  // 别的盘符 / 工作区外面：不再拦。
+  assert.equal(resolveToolPath(base, join(base, '..', '逃出去.txt')), join(tmpdir(), '逃出去.txt'));
 });
 
 test('工具集：七个内置工具齐活，风险等级对得上', () => {
@@ -102,15 +102,14 @@ test('fs.read：能只读一段行', async () => {
   }
 });
 
-test('fs.read：读工作区外面的文件要拦住', async () => {
+test('fs.read：工作区外面的文件读得到', async () => {
   const dir = await tmpDir();
   try {
     await mkdir(join(dir, 'inside'), { recursive: true });
+    await writeFile(join(dir, 'outside.txt'), '外面的内容', 'utf8');
     const tools = createBuiltinTools({ getWorkspace: () => join(dir, 'inside') });
-    await assert.rejects(
-      () => pick(tools, 'fs.read').run({ path: join(dir, 'outside.txt') }),
-      /工作区/
-    );
+    const out = await pick(tools, 'fs.read').run({ path: join(dir, 'outside.txt') });
+    assert.match(out.text, /外面的内容/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -301,13 +300,14 @@ test('clipboard.read：开着了才读得到', async () => {
 });
 
 /**
- * 工作区边界要挡得住**符号链接**（Windows 上是目录联接）。
+ * 链接：fs.read 跟得过去，fs.search 不跟。
  *
- * 词法检查（`..` 穿越）在链接面前没用：链接在工作区里，
- * 真实路径却在外面。只读工具是自动放行的，这道边界是它们唯一的护栏。
+ * 边界没了，所以读链接指向的文件是允许的。
+ * 但搜索是**遍历目录**：跟着链接走可能绕回上级目录形成死循环，
+ * 所以遍历一律跳过链接——要读链接里的东西，用 fs.read 指名完整路径。
  */
 
-test('工作区：链接指向外面要拦住（fs.read 与 fs.search 都不许钻出去）', async () => {
+test('链接：fs.read 读得到，fs.search 不顺着链接爬', async () => {
   const outer = await tmpDir();
   const ws = await tmpDir();
   try {
@@ -316,24 +316,22 @@ test('工作区：链接指向外面要拦住（fs.read 与 fs.search 都不许�
     const read = pick(tools, 'fs.read');
     const search = pick(tools, 'fs.search');
 
-    // **目录联接**（Windows 上不需要管理员权限）：词法上在工作区里，
-    // 真实路径在外面。
+    // **目录联接**（Windows 上不需要管理员权限）。
     try {
       await symlink(outer, join(ws, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
     } catch {
       return; // 这个系统连目录链接都不让建（没权限），那这条测不了
     }
-    await assert.rejects(() => read.run({ path: 'link/secret.txt' }), /工作区/);
+    assert.match((await read.run({ path: 'link/secret.txt' })).text, /TOP SECRET/);
     assert.equal((await search.run({ pattern: 'TOP SECRET' })).data.hits.length, 0);
 
-    // **文件链接**：搜索是遍历目录，链接文件会被直接读出去。
-    // 建文件链接在 Windows 上要开发者模式或管理员，没有就跳过这一段。
+    // **文件链接**：建文件链接在 Windows 上要开发者模式或管理员，没有就跳过这一段。
     try {
       await symlink(join(outer, 'secret.txt'), join(ws, 'secret-link.txt'), 'file');
     } catch {
       return;
     }
-    await assert.rejects(() => read.run({ path: 'secret-link.txt' }), /工作区/);
+    assert.match((await read.run({ path: 'secret-link.txt' })).text, /TOP SECRET/);
     assert.equal((await search.run({ pattern: 'TOP SECRET' })).data.hits.length, 0);
   } finally {
     await rm(outer, { recursive: true, force: true });

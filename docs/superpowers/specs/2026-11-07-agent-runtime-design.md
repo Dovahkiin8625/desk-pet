@@ -182,7 +182,13 @@
 | `app.launch` | exec | 启动本机程序（复用 `src/main/apps.js`） |
 | `clipboard.read` | read | 读剪贴板（复用 `assistant/clipboard.js`） |
 
-`shell.exec` 的工作目录默认是设置里的「工作区」，**不设则用用户主目录**。所有路径参数都要归一化后检查是否逃出工作区（`..` 穿越）——但**检查只在 `risk: 'read'` 的内置工具上强制**，用户主动开的写/执行工具不受此限（否则 agent 什么都干不了）。
+`shell.exec` 的工作目录默认是设置里的「工作区」，**不设则用用户主目录**。
+
+> **2026-11-08 变更**：原设计要求「所有路径参数都要归一化后检查是否逃出工作区，
+> 检查只在 `risk: 'read'` 的内置工具上强制」。**这条已撤销**——
+> 用户要求 agent 能访问工作区之外的目录（素材在别的盘符上），
+> 于是内置工具一律不设目录边界：相对路径按工作区解析，绝对路径原样给。
+> 收紧改由审批策略（`approval.policy`）负责，审批气泡上线后生效。
 
 ### 5.4 插件提供的工具
 
@@ -531,7 +537,7 @@ agent: {
 | # | 任务 | 涉及 | 依赖 | 验收 |
 |---|---|---|---|---|
 | T3 | 工具描述符与注册表 | `agent/tools/registry.js` | T2 | 注册 / 查找 / 未知工具；风险等级取严格者 |
-| T4 | 内置工具集 | `agent/tools/builtin.js`、`src/main/apps.js`、`assistant/clipboard.js` | T3 | 六个工具可用；工作区路径逃逸被拦 |
+| T4 | 内置工具集 | `agent/tools/builtin.js`、`src/main/apps.js`、`assistant/clipboard.js` | T3 | 六个工具可用；路径不设目录边界（见 §5.3 的变更说明） |
 | T5 | 插件提供工具 | `shared/plugin.js`（清单加 `tools[]`）、`plugins/host.js`（收集注册）、插件实例 `tools()` 钩子 | T3 | 插件声明的工具进 agent 工具表；清单/实现不一致时不注册 |
 | T6 | 插件反向调用 agent | `plugins/host.js`（`ctx.agent`） | T9 | 插件能提交/取消任务、能订阅事件 |
 

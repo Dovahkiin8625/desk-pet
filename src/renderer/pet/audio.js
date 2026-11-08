@@ -182,10 +182,15 @@ export async function playSpeech(bytes, onAmplitude) {
   source.connect((speechTarget = masterGain || ac.destination));
   const startedAt = ac.currentTime;
   let stopped = false;
-  source.onended = () => {
-    stopped = true;
-    onAmplitude?.(0);
-  };
+  // **播完才 resolve**：主进程在等这个信号——
+  // 「先应一声」要等应答念完，才把答案气泡放出来。
+  const finished = new Promise((resolve) => {
+    source.onended = () => {
+      stopped = true;
+      onAmplitude?.(0);
+      resolve();
+    };
+  });
   source.start();
 
   const tick = () => {
@@ -196,6 +201,8 @@ export async function playSpeech(bytes, onAmplitude) {
     else onAmplitude?.(0);
   };
   requestAnimationFrame(tick);
+
+  await finished;
 }
 
 /**

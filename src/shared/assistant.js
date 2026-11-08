@@ -123,6 +123,82 @@ export const DEFAULT_TAP_LINES = Object.freeze([
 ]);
 
 /**
+ * think 模式的思考深度档位。
+ *
+ * **只认这三个值**：磁盘上的值可能被手改过，
+ * 认不出来的当「中」（省一半，最不容易出错）。
+ */
+export const THINK_LEVELS = Object.freeze(['low', 'medium', 'high']);
+
+/**
+ * 「先应一声」最多等多久（毫秒）。
+ *
+ * 等更久没意义——模型都答完了，应答就多余了。
+ */
+export const MAX_ACK_DELAY_MS = 5000;
+
+/**
+ * 「先应一声」默认等多久（毫秒）。
+ *
+ * 默认 1 秒：短了会打断正在想的人，长了用户以为程序坏了。
+ */
+export const DEFAULT_ACK_DELAY_MS = 1000;
+
+/**
+ * 「先应一声」的等待时长选项（毫秒）。
+ *
+ * 设置页的下拉框从这儿填，不在 HTML 里写死一份：
+ * 预设值比自由输入更不容易被改坏（填错 1200 毫秒谁也看不出来）。
+ *
+ * **不含「关闭」**：关掉是另一件事（ackEnabled），
+ * 那是「一声不吭地等答案」，不是「等 0 毫秒」。
+ */
+export const ACK_DELAY_PRESETS = Object.freeze([
+  { value: 0, label: '立即' },
+  { value: 500, label: '0.5 秒' },
+  { value: 1000, label: '1 秒' },
+  { value: 2000, label: '2 秒' },
+  { value: 3000, label: '3 秒' },
+  { value: 5000, label: '5 秒' },
+]);
+
+/**
+ * 下拉框里「关闭」那项的值。
+ *
+ * 它不是一个时长，所以不在 ACK_DELAY_PRESETS 里——
+ * 那是「等多久」，这个是「要不要应」。
+ */
+export const ACK_DELAY_OFF = 'off';
+
+/**
+ * 把下拉框的值翻译成「开不开、等多久」。
+ *
+ * 放在共享契约里：设置页按下拉框，主进程读状态，
+ * 两边对「off 是什么意思」的理解必须一致。
+ */
+export function ackPrefsFromValue(value) {
+  if (value === ACK_DELAY_OFF) {
+    return { ackEnabled: false, ackDelayMs: DEFAULT_ACK_DELAY_MS };
+  }
+  const ms = Number(value);
+  return {
+    ackEnabled: true,
+    ackDelayMs: Number.isFinite(ms) ? ms : DEFAULT_ACK_DELAY_MS,
+  };
+}
+
+/**
+ * 反过来：把状态翻译成下拉框该显示哪个值。
+ *
+ * 关掉就是「关闭」——没有「关掉但还留着时长」这种状态。
+ */
+export function ackValueFromPrefs(ackEnabled, ackDelayMs) {
+  if (!ackEnabled) return ACK_DELAY_OFF;
+  const ms = Number(ackDelayMs);
+  return String(Number.isFinite(ms) ? ms : DEFAULT_ACK_DELAY_MS);
+}
+
+/**
  * 大模型对话的默认配置。
  *
  * `enabled` 默认关：它要花钱、要联网，
@@ -142,6 +218,19 @@ export const DEFAULT_LLM = Object.freeze({
   // 用哪个后端（见 src/main/assistant/chat/backend.js 的注册表）。
   // 将来加 agent 后端时，这里换一个 id 就行。
   backend: 'chat',
+  // think 模式：模型先思考再回答。默认关——
+  // 关着时请求里明确说「不要思考」（有些模型本来总在思考）。
+  think: false,
+  // 思考深度（只在 think 打开时生效）。
+  thinkLevel: 'medium',
+  /**
+   * 「先应一声」：模型还在忙的时候，桌宠先给用户一个回应。
+   *
+   * `ackEnabled` 关掉 = 一声不吭地等答案（有人不喜欢被插嘴）。
+   * `ackDelayMs` 是等多久没人说话才应一声；0 = 立刻就应。
+   */
+  ackEnabled: true,
+  ackDelayMs: DEFAULT_ACK_DELAY_MS,
   // 探测出来的可用地址；空表示还没探测过。
   lastWorkingBaseUrl: '',
   /** 人设：写进系统提示词。 */

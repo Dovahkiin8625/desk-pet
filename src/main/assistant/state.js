@@ -7,6 +7,8 @@ import {
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
   LLM_BACKENDS,
+  THINK_LEVELS,
+  MAX_ACK_DELAY_MS,
   hasChatKind,
 } from '../../shared/assistant.js';
 import { normalizeChatEntry, truncateByKind } from './chat/memory.js';
@@ -182,6 +184,21 @@ export function sanitizeAssistant(raw) {
       // 后端只认 LLM_BACKENDS 里的值：磁盘上的值可能是旧版本留下的，
       // 也可能被手改过——认不出来的当普通对话（最保险的那个）。
       backend: LLM_BACKENDS.includes(raw.llm.backend) ? raw.llm.backend : DEFAULT_LLM.backend,
+      // think 模式与深度：深度只认三个档位，认不出来当「中」。
+      think: Boolean(raw.llm.think),
+      thinkLevel: THINK_LEVELS.includes(raw.llm.thinkLevel)
+        ? raw.llm.thinkLevel
+        : DEFAULT_LLM.thinkLevel,
+      // 「先应一声」：关掉就一直等答案；等待时长夹在 [0, 5000]。
+      // 字段缺了（老版本写出来的文件）沿用默认值——
+      // Boolean(undefined) 是 false，会把默认开启的应答关掉。
+      ackEnabled:
+        raw.llm.ackEnabled === undefined
+          ? out.llm.ackEnabled
+          : Boolean(raw.llm.ackEnabled),
+      ackDelayMs: Math.round(
+        clampNumber(raw.llm.ackDelayMs, 0, MAX_ACK_DELAY_MS, DEFAULT_LLM.ackDelayMs)
+      ),
       lastWorkingBaseUrl: str(raw.llm.lastWorkingBaseUrl).slice(0, 300),
       persona: {
         name: str(persona.name, DEFAULT_LLM.persona.name).slice(0, 40),

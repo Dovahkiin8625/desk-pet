@@ -1,7 +1,15 @@
 import { DEFAULT_VOLUME } from '../shared/volume.js';
 import { parseTapLines } from '../shared/tapVoice.js';
 import { resolveVoiceId, applyVoiceChoice } from '../shared/voiceChoice.js';
-import { LLM_BACKENDS, llmBackendInfo } from '../shared/assistant.js';
+import {
+  LLM_BACKENDS,
+  llmBackendInfo,
+  THINK_LEVELS,
+  ACK_DELAY_PRESETS,
+  ACK_DELAY_OFF,
+  ackPrefsFromValue,
+  ackValueFromPrefs,
+} from '../shared/assistant.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
@@ -54,6 +62,8 @@ const llmTemperatureInput = document.getElementById('llmTemperature');
 const llmTemperatureVal = document.getElementById('llmTemperatureVal');
 const llmMaxTokensSelect = document.getElementById('llmMaxTokens');
 const llmTokensFieldSelect = document.getElementById('llmTokensField');
+const llmThinkBox = document.getElementById('llmThink');
+const llmThinkLevelSelect = document.getElementById('llmThinkLevel');
 const llmApiKeyInput = document.getElementById('llmApiKey');
 const saveLlmKeyBtn = document.getElementById('saveLlmKey');
 const clearLlmKeyBtn = document.getElementById('clearLlmKey');
@@ -63,6 +73,7 @@ const llmPersonaStyleInput = document.getElementById('llmPersonaStyle');
 const llmPersonaBackstoryInput = document.getElementById('llmPersonaBackstory');
 const llmProactiveBox = document.getElementById('llmProactive');
 const llmProactiveIntervalSelect = document.getElementById('llmProactiveInterval');
+const llmAckDelaySelect = document.getElementById('llmAckDelay');
 const llmFactsList = document.getElementById('llmFacts');
 const clearFactsBtn = document.getElementById('clearFacts');
 
@@ -162,8 +173,8 @@ function setRangeFill(input) {
 // 左边是目录，右边一次只显示一节。
 // ---------------------------------------------------------------------------
 
-/** 七个分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['appearance', 'assistant', 'voice', 'chat', 'memory', 'plugins', 'system'];
+/** 六个分区：目录项、面板、摘要都用同一个 key。 */
+const SECTION_KEYS = ['pet', 'voice', 'chat', 'memory', 'plugins', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -176,7 +187,7 @@ for (const key of SECTION_KEYS) {
   navSummaries.set(key, nav.querySelector(`[data-summary="${key}"]`));
 }
 
-let currentSection = 'appearance';
+let currentSection = 'pet';
 
 /**
  * 切到某个分区。
@@ -239,9 +250,6 @@ syncOrientation();
 // 目录因此兼作一块仪表盘：不进每一节，也看得出整个应用现在是什么状态。
 // ---------------------------------------------------------------------------
 
-/** 助理那三个开关（插件的开关在插件页面里，这里不算）。 */
-const ASSISTANT_TOGGLES = [chimeBox, greetingBox, soundBox];
-
 function setSummary(key, text) {
   const el = navSummaries.get(key);
   if (el && el.textContent !== text) el.textContent = text;
@@ -255,10 +263,7 @@ function setSummary(key, text) {
  */
 function refreshNavSummaries() {
   const modelName = modelSelect.selectedOptions?.[0]?.textContent?.trim();
-  setSummary('appearance', modelName || '—');
-
-  const on = ASSISTANT_TOGGLES.filter((b) => b.checked).length;
-  setSummary('assistant', `${on}/${ASSISTANT_TOGGLES.length}`);
+  setSummary('pet', modelName || '—');
 
   // 语音与对话是三态，不是两态：用户最常见的坑是「开关开了但没填 Key」，
   // 只报「已开」反而把这个坑盖住了。
@@ -428,10 +433,56 @@ function fillBackendOptions() {
 }
 fillBackendOptions();
 
+/**
+ * 填「先应一声」的下拉框。
+ *
+ * 「关闭」不是时长，单独放第一项——它表示「一声不吭地等答案」。
+ * 其余按 shared/assistant.js 的 ACK_DELAY_PRESETS 填，不在这里写死。
+ */
+function fillAckOptions() {
+  llmAckDelaySelect.textContent = '';
+  const off = document.createElement('option');
+  off.value = ACK_DELAY_OFF;
+  off.textContent = '关闭';
+  llmAckDelaySelect.appendChild(off);
+  for (const preset of ACK_DELAY_PRESETS) {
+    const opt = document.createElement('option');
+    opt.value = String(preset.value);
+    opt.textContent = preset.label;
+    llmAckDelaySelect.appendChild(opt);
+  }
+}
+fillAckOptions();
+
+/**
+ * 把当前值补进下拉框（如果预设里没有它）。
+ *
+ * 磁盘上的值可能是手改的，也可能是旧版本留下的——
+ * 下拉框里没有对应选项时它会显示成空的，
+ * 那等于骗用户说「没设置」，还会在下一次保存时把它改掉。
+ */
+function ensureAckOption(value) {
+  const str = String(value);
+  if (Array.from(llmAckDelaySelect.options).some((o) => o.value === str)) return;
+  const opt = document.createElement('option');
+  opt.value = str;
+  opt.textContent = `${(Number(str) / 1000).toFixed(1)} 秒`;
+  llmAckDelaySelect.appendChild(opt);
+}
+
 /** 把当前后端的说明写在下面——用户切过去时得当场看见差别。 */
 function updateBackendHint() {
   const info = llmBackendInfo(llmBackendSelect.value);
   llmBackendHint.textContent = info.hint || `后端：${info.label}`;
+}
+
+/**
+ * think 没打开时，深度那一栏是**用不上的**——灰掉它。
+ *
+ * 不灰掉的话，用户会以为「中」正在生效。
+ */
+function updateThinkLevelEnabled() {
+  llmThinkLevelSelect.disabled = !llmThinkBox.checked;
 }
 
 /** 把助理状态填进桌面助理/语音那一区的控件。 */
@@ -469,22 +520,54 @@ function applyAssistantState(state) {
   setRangeFill(llmTemperatureInput);
   llmMaxTokensSelect.value = String(llm.maxTokens ?? 800);
   llmTokensFieldSelect.value = llm.maxTokensField || 'max_tokens';
+  // think 模式与深度：深度只认三个档位，认不出来当「中」。
+  llmThinkBox.checked = Boolean(llm.think);
+  llmThinkLevelSelect.value = THINK_LEVELS.includes(llm.thinkLevel) ? llm.thinkLevel : 'medium';
+  updateThinkLevelEnabled();
   llmPersonaNameInput.value = llm.persona?.name || '';
   llmPersonaStyleInput.value = llm.persona?.style || '';
   llmPersonaBackstoryInput.value = llm.persona?.backstory || '';
   llmProactiveBox.checked = Boolean(llm.proactive?.enabled);
   llmProactiveIntervalSelect.value = String(llm.proactive?.minIntervalMs ?? 1800000);
+  // 「先应一声」：下拉框的值 = 关掉还是等多久。
+  const ackValue = ackValueFromPrefs(llm.ackEnabled, llm.ackDelayMs);
+  ensureAckOption(ackValue);
+  llmAckDelaySelect.value = ackValue;
 
   // 「它记住的事」：用户有权知道桌宠记住了什么。
   renderFacts(state.chat?.facts || []);
 }
 
-/** 画「它记住的事」。 */
+/** 当前显示着的事实（删一条时要从它算出剩下哪些）。 */
+let currentFacts = [];
+
+/**
+ * 画「它记住的事」。
+ *
+ * 每条右边一个删除按钮：整页记住的东西一起清掉太粗，
+ * 想忘掉一句时用不着把别的也搭进去。
+ */
 function renderFacts(facts) {
+  currentFacts = Array.isArray(facts) ? [...facts] : [];
   llmFactsList.textContent = '';
-  for (const fact of facts || []) {
+  for (const fact of currentFacts) {
     const li = document.createElement('li');
-    li.textContent = fact;
+
+    const text = document.createElement('span');
+    text.className = 'fact-text';
+    text.textContent = fact;
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'fact-del';
+    del.textContent = '×';
+    del.title = '忘掉这一条';
+    del.setAttribute('aria-label', `忘掉这一条：${fact}`);
+    del.addEventListener('click', () => {
+      void deleteFact(fact);
+    });
+
+    li.append(text, del);
     llmFactsList.appendChild(li);
   }
   refreshNavSummaries();
@@ -518,6 +601,8 @@ function assistantPatchFromControls() {
       temperature: Number(llmTemperatureInput.value),
       maxTokens: Number(llmMaxTokensSelect.value),
       maxTokensField: llmTokensFieldSelect.value,
+      think: llmThinkBox.checked,
+      thinkLevel: llmThinkLevelSelect.value,
       persona: {
         name: llmPersonaNameInput.value.trim(),
         style: llmPersonaStyleInput.value.trim(),
@@ -527,6 +612,8 @@ function assistantPatchFromControls() {
         enabled: llmProactiveBox.checked,
         minIntervalMs: Number(llmProactiveIntervalSelect.value),
       },
+      // 「先应一声」：下拉框一个控件管两件事——关不关、等多久。
+      ...ackPrefsFromValue(llmAckDelaySelect.value),
     },
   };
 }
@@ -614,14 +701,23 @@ for (const input of [
     persistAssistantPrefs();
   });
 }
-for (const select of [llmMaxTokensSelect, llmTokensFieldSelect, llmProactiveIntervalSelect]) {
+for (const select of [llmMaxTokensSelect, llmTokensFieldSelect, llmProactiveIntervalSelect, llmThinkLevelSelect]) {
   select.addEventListener('change', () => {
     persistAssistantPrefs();
   });
 }
+// think 的开关：先把深度那栏灰掉，再存盘。
+llmThinkBox.addEventListener('change', () => {
+  updateThinkLevelEnabled();
+  persistAssistantPrefs();
+});
 // 换后端：说明先换，再存盘（顺序反了的话，摘要里会慢半拍显示上一个后端）。
 llmBackendSelect.addEventListener('change', () => {
   updateBackendHint();
+  persistAssistantPrefs();
+});
+// 「先应一声」的等待时长：改了立刻生效（下一轮对话就用新的了）。
+llmAckDelaySelect.addEventListener('change', () => {
   persistAssistantPrefs();
 });
 llmTemperatureInput.addEventListener('input', () => {
@@ -723,13 +819,13 @@ clearLlmKeyBtn.addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // 「它记住的事」
 //
-// 世代号：刷新与「忘掉这些」并发时，别把已经清掉的事实写回去。
+// 世代号：刷新与「删掉/清空」并发时，别把已经删掉的事实写回去。
 // ---------------------------------------------------------------------------
 
 let factsEpoch = 0;
-// 清除进行中：这段时间里发起的刷新一律作废——
-// 那时候主进程里的事实还没清完，拉回来的是旧的。
-let factsClearPending = false;
+// 写入进行中：这段时间里发起的刷新一律作废——
+// 那时候主进程里的事实还没删完，拉回来的是旧的。
+let factsWritePending = false;
 
 /**
  * 重拉「它记住的事」。
@@ -738,21 +834,49 @@ let factsClearPending = false;
  * 不重拉的话，列表和计数都是陈的。
  */
 async function refreshFacts() {
-  if (factsClearPending) return;
+  if (factsWritePending) return;
   const epoch = factsEpoch;
   try {
     const state = await window.pet.getAssistantState();
-    // 期间用户点了「忘掉这些」：这次拉回来的是旧事实，丢掉。
-    if (epoch !== factsEpoch || factsClearPending) return;
+    // 期间用户删掉了事实：这次拉回来的是旧事实，丢掉。
+    if (epoch !== factsEpoch || factsWritePending) return;
     renderFacts(state?.chat?.facts || []);
   } catch {
     // 拉不到就先用页面上已有的，别把列表清空。
   }
 }
 
+/**
+ * 忘掉一条。
+ *
+ * 先改界面再存盘：等磁盘写完才动界面，用户会以为按钮没反应。
+ * 存盘失败就把真的那份拉回来——不能界面说没了、磁盘上还在。
+ */
+async function deleteFact(fact) {
+  const next = currentFacts.filter((f) => f !== fact);
+  factsEpoch += 1;
+  factsWritePending = true;
+  renderFacts(next);
+  let failed = false;
+  try {
+    // 只写 facts：聊天记录（chat.messages）不受影响。
+    await window.pet.saveAssistantPrefs({ chat: { facts: next } });
+    show('忘掉了一条');
+  } catch (err) {
+    failed = true;
+    show(`删除失败：${err?.message || err}`, 'error');
+  } finally {
+    factsWritePending = false;
+    factsEpoch += 1;
+  }
+  // 存盘失败：把真的那份拉回来——不能界面说没了、磁盘上还在。
+  // 必须在解除「写入进行中」之后拉：刷新会被正在进行的写入挡住。
+  if (failed) void refreshFacts();
+}
+
 clearFactsBtn.addEventListener('click', async () => {
   showPending('清除中…');
-  factsClearPending = true;
+  factsWritePending = true;
   factsEpoch += 1;
   try {
     await window.pet.saveAssistantPrefs({ chat: { messages: [], facts: [] } });
@@ -761,7 +885,7 @@ clearFactsBtn.addEventListener('click', async () => {
   } catch (err) {
     show(`清除失败：${err?.message || err}`, 'error');
   } finally {
-    factsClearPending = false;
+    factsWritePending = false;
     factsEpoch += 1;
   }
 });
@@ -1179,8 +1303,8 @@ async function init() {
   // 插件清单：目录上的「N/M」摘要要一开始就对。
   await refreshPlugins();
   refreshNavSummaries();
-  // 落在默认分区（外观）。roving tabindex 也在这一步定下来。
-  activateSection('appearance');
+  // 落在默认分区（桌宠）。roving tabindex 也在这一步定下来。
+  activateSection('pet');
 }
 
 modelSelect.addEventListener('change', async () => {

@@ -23,6 +23,8 @@ import { tapTalkNeedsPrewarm } from '../../shared/tapVoice.js';
 import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
 import { createAgentBackend } from './chat/agent.js';
+import { createAck, ACK_HOLD_MS } from './chat/ack.js';
+import { createReplyBubble } from './chat/stream.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools } from './agent/tools/builtin.js';
 import { createAgentFacade } from './agent/facade.js';
@@ -70,6 +72,21 @@ const PREWARM_DEBOUNCE_MS = 800;
 
 /** 深夜不搭话：[开始小时, 结束小时)。 */
 const QUIET_HOURS = [23, 8];
+
+/**
+ * 语音播完的最长等待（毫秒）。
+ *
+ * 渲染层播完会回报一个 id；回报不来（窗口没了、解码失败）就到这里为止，
+ * 免得界面一直等下去。
+ */
+const SPEECH_WAIT_TIMEOUT_MS = 10000;
+
+/** 等一会儿。 */
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 /**
  * 把一份补丁合并进状态。
@@ -121,6 +138,16 @@ export function createAssistant({  userDataDir,
   let chatSeq = 0;
   // 有对话正在进行吗：主动搭话要避开。
   let chatBusy = false;
+  // 语音序号：发出去时带上 id，渲染层播完回报同一个 id。
+  let speechSeq = 0;
+  // 等着「播完了」回报的语音。
+  const pendingSpeech = new Map();
+  // **不认 think 参数的模型**：同一个模型再问一次时就不发那些参数了，
+  // 免得每轮都先撞一次 400。
+  const thinkUnsupportedModels = new Set();
+  // 这一轮是不是已经告诉过用户「这个模型不支持 think」了：
+  // 告诉过了就别再应一声——刚说过的话不用再说一遍。
+  let thinkNoticeShown = false;
 
   // 对话后端注册表。
   //
@@ -385,8 +412,19 @@ export function createAssistant({  userDataDir,
     return tapTalker.tapTalk();
   }
 
-  /** 合成语音并交给渲染层播放。 */
-  async function speakNow(text, { cacheDir = '' } = {}) {
+  /**
+   * 合成语音并交给渲染层播放。
+   *
+   * `wait: true` 时**等它播完**才 resolve——
+   * 「先应一声」要用这个：应答念完，答案才能顶上。
+   */
+  async function speakNow(text, { cacheDir = '', wait = false } = {}) {
+    // id 先发后用：这一声从头到尾归它，播完了渲染层拿它回报。
+    const id = ++speechSeq;
+    let played = null;
+    if (wait) {
+      played = new Promise((resolve) => pendingSpeech.set(id, resolve));
+    }
     try {
       const apiKey = await loadApiKey(userDataDir, rootDir);
       if (!apiKey) return;
@@ -413,11 +451,53 @@ export function createAssistant({  userDataDir,
         state.tts.host = result.host;
         scheduleSave();
       }
-      onSpeak?.(result.audio, result.mime || 'mp3');
+      onSpeak?.(result.audio, result.mime || 'mp3', id);
+      if (played) {
+        // 渲染层可能永远不回报（窗口没了）：兜底超时，别把界面卡住。
+        await Promise.race([played, sleep(SPEECH_WAIT_TIMEOUT_MS)]);
+      }
     } catch (err) {
       // 留一行痕就够了：终端里能看到，用户界面里不必再打扰。
       console.warn('[desk-pet] 语音合成失败：', err?.message || err);
+    } finally {
+      // 这一声不管成没成，都不再等了：不留着占位。
+      pendingSpeech.delete(id);
     }
+  }
+
+  /**
+   * 渲染层回报「这段语音播完了」。
+   *
+   * 播完才知道这一声念到哪了——「先应一声」要靠它决定
+   * 什么时候把答案气泡放出来。
+   */
+  function notifySpeechEnded(id) {
+    const resolve = pendingSpeech.get(id);
+    if (!resolve) return;
+    pendingSpeech.delete(id);
+    resolve();
+  }
+
+  /**
+   * 应答：弹**一只单独的气泡**，并念出来。
+   *
+   * **单独一只**是因为答案气泡要等这一声念完才出现——
+   * 两句挤在同一个气泡里，用户会以为前半句是答案的一部分。
+   *
+   * **要插队**（interrupt）：上一轮的回答还挂在气泡上时，
+   * 不插队的话这句应答会排到它后面——用户先看到的是上一轮的旧回答，
+   * 等它自己消失才轮到应答，那就白等了。
+   *
+   * 没开语音时没有「念完」这个信号：让应答气泡露一会儿脸，
+   * 再把位置让给答案。
+   */
+  async function speakAck(line) {
+    bubble.show({ kind: MESSAGE_KIND.SAY, text: line, interrupt: true });
+    if (!state?.tts?.enabled) {
+      await sleep(ACK_HOLD_MS);
+      return;
+    }
+    await speakNow(line, { wait: true });
   }
 
   // ------------------------------------------------------------------
@@ -760,6 +840,36 @@ export function createAssistant({  userDataDir,
   }
 
   /**
+   * think 模式的请求参数。
+   *
+   * **不认这些参数的模型要记住**：同一个模型再问一次时就不发了，
+   * 免得每轮都先撞一次 400。
+   */
+  function buildThinkConfig() {
+    const think = {
+      mode: state.llm.think ? 'on' : 'off',
+      level: state.llm.thinkLevel,
+      // 接口不认这些参数时会调它：去掉参数重试，并告诉用户一声。
+      onUnsupported: ({ model, mode }) => {
+        think.mode = 'none';
+        if (!model || thinkUnsupportedModels.has(model)) return;
+        thinkUnsupportedModels.add(model);
+        thinkNoticeShown = true;
+        // 要插队：不然这句提醒会排在上一轮的回答后面，用户看不到。
+        // 关着的时候语气不一样：用户本来就不要 think，没什么可惊讶的。
+        say(
+          mode === 'off'
+            ? '这个模型不认 think 的开关，普通模式也一样～'
+            : '这个模型好像不支持 think 模式，我先按普通模式来啦',
+          { speak: false, interrupt: true }
+        );
+      },
+    };
+    if (thinkUnsupportedModels.has(state.llm.model)) think.mode = 'none';
+    return think;
+  }
+
+  /**
    * 跑一轮对话。
    *
    * @param {object} options
@@ -809,11 +919,31 @@ export function createAssistant({  userDataDir,
       temperature: state.llm.temperature,
       maxTokens: state.llm.maxTokens,
       maxTokensField: state.llm.maxTokensField,
+      think: buildThinkConfig(),
     };
 
     // 桌宠不在屏幕上时不要凭空浮一个气泡（没有角色在说话）。
     const petVisible = !isPetVisible || isPetVisible();
-    const streamId = petVisible ? bubble.openStream({ kind: MESSAGE_KIND.CHAT }) : 0;
+
+    // 上一轮的气泡先收掉：新一轮要重新开流。
+    // 不收的话旧流还占着气泡，「先应一声」那句话会排进队里
+    // （气泡控制器不打断正在进行的流），等旧流结束才显示——那就白应了。
+    bubble.cancelStream();
+
+    // 「先应一声」：模型还在忙的时候，先给用户一个回应。
+    // 这一轮的开头：先假设「还没告诉过用户 think 不支持」。
+    thinkNoticeShown = false;
+    const ack = createAck({
+      // 等多久没人说话就先应一声——用户在设置页里改的。
+      delayMs: state.llm.ackDelayMs,
+      speak: (line) => (thinkNoticeShown ? undefined : speakAck(line)),
+      logger: console,
+    });
+    // 关掉「先应一声」就不上计时器：一声不吭地等答案。
+    if (trigger === 'user' && petVisible && state.llm.ackEnabled) ack.arm();
+
+    // 答案气泡：应答让位之后才开（见 chat/stream.js）。
+    const reply = petVisible ? createReplyBubble({ bubble }) : null;
 
     let result;
     try {
@@ -823,24 +953,37 @@ export function createAssistant({  userDataDir,
         trigger,
         config,
         onDelta: (delta) => {
-          if (streamId) bubble.appendStream(streamId, delta);
+          if (!delta) return;
+          // 有可见正文了：不必再应一声。
+          ack.noteText();
+          reply?.push(delta);
         },
         // agent 的步骤事件转发给插件：插件只认 ctx.agent.onEvent 这一个入口，
         // 换了后端也不用改插件（规格 §5.5）。
         onEvent: (event) => agentFacade.emit(event),
       });
     } catch (err) {
-      if (streamId) bubble.cancelStream();
+      ack.cancel();
+      reply?.cancel();
       // 只有**这一轮**还在跑的时候才清标记：
       // 被后一轮取代时提前清掉，主动搭话会以为「没人说话」而插进来。
       if (token === chatSeq) chatBusy = false;
       throw err;
     }
     // 被后一轮对话取代了：这一轮不写进历史，也不动气泡。
-    if (token !== chatSeq) return { ok: false, message: '这一轮被新的对话取代了' };
+    if (token !== chatSeq) {
+      ack.cancel();
+      reply?.cancel();
+      return { ok: false, message: '这一轮被新的对话取代了' };
+    }
     chatBusy = false;
 
-    if (streamId) bubble.endStream(streamId, { text: result.text, emotion: result.emotion });
+    // 答案好了：应答要么还没轮到（那就不必应了），要么正在念（那就等它念完）。
+    ack.release();
+    await ack.whenReady();
+    if (token !== chatSeq) return { ok: false, message: '这一轮被新的对话取代了' };
+    reply?.open();
+    reply?.finish({ text: result.text, emotion: result.emotion });
 
     // 记下这一轮。
     state.chat.messages = appendMessage(state.chat.messages, {
@@ -1116,6 +1259,13 @@ export function createAssistant({  userDataDir,
 
     // 点桌宠时念一句台词（渲染层点到了桌宠）。
     tapTalk,
+
+    /**
+     * 渲染层回报「这段语音播完了」。
+     *
+     * 「先应一声」要靠它决定什么时候把答案气泡放出来。
+     */
+    notifySpeechEnded,
 
     // —— 插件接口 ——
     // 「读」是给插件界面显示的，「改」是用户动了之后要落地的；

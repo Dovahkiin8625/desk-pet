@@ -736,8 +736,13 @@ function registerChannels() {
   });
 
   // 合成好的语音：播放它，并用响度包络驱动口型。
-  window.pet.onSpeak?.((audio, mime) => {
-    if (!audio) return;
+  window.pet.onSpeak?.((audio, mime, id) => {
+    if (!audio) {
+      // 没有音频可播：**也得回报**——主进程在等这个信号，
+      // 不回报的话它会一直等到兜底超时才放答案。
+      window.pet.reportSpeechEnded?.(id);
+      return;
+    }
     // IPC 传过来的是 Uint8Array；字节序由 StructuredClone 保证。
     const bytes = audio instanceof Uint8Array ? audio : new Uint8Array(audio);
     window.__pet.speechCount += 1;
@@ -752,6 +757,11 @@ function registerChannels() {
       })
       .catch((err) => {
         console.warn('[desk-pet] 语音播放失败：', err?.message || err);
+      })
+      .finally(() => {
+        // 播完了（或者压根没播成）：回报主进程。
+        // **失败也要回报**——不然主进程会一直等到兜底超时才放答案。
+        window.pet.reportSpeechEnded?.(id);
       });
   });
 

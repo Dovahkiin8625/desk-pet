@@ -154,6 +154,7 @@ export function buildRequestBody({
   maxTokensField = 'max_tokens',
   stream = false,
   tools = [],
+  think = null,
 } = {}) {
   // 只发一个 token 字段：两个都发的话有的服务端会直接 400。
   const field = maxTokensField === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
@@ -167,7 +168,121 @@ export function buildRequestBody({
   // **空数组不发**：有的服务端见到 `tools: []` 直接 400。
   const requestTools = toRequestTools(tools);
   if (requestTools.length) body.tools = requestTools;
+  // think 模式的字段：不发就等于「不请求思考」。
+  const thinkFields = buildThinkFields(think);
+  if (thinkFields) Object.assign(body, thinkFields);
   return body;
+}
+
+/**
+ * think 模式要发哪些字段。
+ *
+ * 三种状态，区别只在「模型要不要思考」：
+ *
+ * - `on`：让它思考，并且把思考内容**拆开**（`reasoning_split`）——
+ *   不拆的话思考会带着标签混进正文，气泡里会冒出一堆胡话。
+ * - `off`：明确不要思考。
+ * - `none`：**什么都不发**。这是模型不认这些参数时的退路
+ *   （见 `chatCompletionStreamWithProbe` 里的回退重试）。
+ *
+ * `reasoning_effort` 是思考深度：认不出来的档位当「中」。
+ */
+export function buildThinkFields(think) {
+  const mode = String(think?.mode || '');
+  if (mode === 'on') {
+    return {
+      thinking: { type: 'adaptive' },
+      reasoning_split: true,
+      reasoning_effort: THINK_EFFORT[think?.level] || THINK_EFFORT.medium,
+    };
+  }
+  if (mode === 'off') return { thinking: { type: 'disabled' } };
+  return null;
+}
+
+/** 思考深度档位（认不出来的当「中」）。 */
+const THINK_EFFORT = Object.freeze({ low: 'low', medium: 'medium', high: 'high' });
+
+/**
+ * 剥掉正文里**内联**的思考内容。
+ *
+ * 服务端不认 `reasoning_split` 时，思考会带着 `<reasoning_content>` 标签
+ * 混在正文里——那是模型心里的想法，**绝不能进气泡**。
+ *
+ * 标签可能跨 chunk 边界（`<reason` + `aining_content>`），
+ * 所以要按住「可能是标签前缀」的尾巴，跟元数据分离器一个套路。
+ */
+export function createReasoningStripper() {
+  const OPEN = '<reasoning_content>';
+  const CLOSE = '</reasoning_content>';
+  let raw = '';
+  // 已经处理到 raw 的哪儿。
+  let pos = 0;
+  // 攒下的可见正文。
+  let visible = '';
+  // 已经返回出去多少（`visible` 的前缀）。
+  let shown = 0;
+  // 现在是不是正处在思考内容里面。
+  let skipping = false;
+
+  /** 还没处理的部分里，尾巴有多长是「标签的一部分」。 */
+  function partialLength(marker) {
+    const tail = raw.slice(pos);
+    const max = Math.min(tail.length, marker.length - 1);
+    for (let len = max; len > 0; len -= 1) {
+      if (marker.startsWith(tail.slice(-len))) return len;
+    }
+    return 0;
+  }
+
+  function flush(final = false) {
+    for (;;) {
+      if (skipping) {
+        const idx = raw.indexOf(CLOSE, pos);
+        if (idx >= 0) {
+          // 闭合标签与它里面的内容一起丢掉。
+          pos = idx + CLOSE.length;
+          skipping = false;
+          continue;
+        }
+        // 还没闭合：思考内容**全部丢掉**，只留住可能是 CLOSE 前缀的尾巴。
+        const hold = final ? 0 : partialLength(CLOSE);
+        pos = raw.length - hold;
+        break;
+      }
+      const idx = raw.indexOf(OPEN, pos);
+      if (idx >= 0) {
+        // 标签前面的正文要留下；标签本身要吃掉。
+        visible += raw.slice(pos, idx);
+        pos = idx + OPEN.length;
+        skipping = true;
+        continue;
+      }
+      const hold = final ? 0 : partialLength(OPEN);
+      const end = raw.length - hold;
+      if (end > pos) {
+        visible += raw.slice(pos, end);
+        pos = end;
+      }
+      break;
+    }
+    const result = visible.slice(shown);
+    shown = visible.length;
+    return result;
+  }
+
+  return {
+    push(delta) {
+      raw += String(delta ?? '');
+      return flush(false);
+    },
+    finish() {
+      return flush(true);
+    },
+    get text() {
+      return visible;
+    },
+  };
 }
 
 /** HTTP 状态码 → 错误分类。 */
@@ -359,7 +474,7 @@ function normalizeToolCalls(list) {
  * @returns {Promise<{text: string, raw: object, toolCalls: object[]}>}
  */
 export async function chatCompletion(params, fetchImpl = fetch) {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools } = params;
+  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools, think } = params;
   if (!apiKey) throw new LlmError('没有配置 API Key', { code: LLM_ERRORS.CONFIG });
   const url = buildUrl(baseUrl);
   if (!url) throw new LlmError('没有配置接口地址', { code: LLM_ERRORS.CONFIG });
@@ -375,7 +490,7 @@ export async function chatCompletion(params, fetchImpl = fetch) {
         Accept: 'application/json',
       },
       body: JSON.stringify(
-        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: false, tools })
+        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: false, tools, think })
       ),
       signal: AbortSignal.timeout(60000),
     });
@@ -408,7 +523,10 @@ export async function chatCompletion(params, fetchImpl = fetch) {
       body: String(text).slice(0, 500),
     });
   }
-  return { text: parsed.content, raw: parsed.raw, toolCalls };
+  // 思考内容不能带出去：它只是模型心里的想法。
+  const stripper = createReasoningStripper();
+  const content = stripper.push(parsed.content) + stripper.finish();
+  return { text: content, raw: parsed.raw, toolCalls };
 }
 
 /**
@@ -433,7 +551,7 @@ export function mergeSignals(signal, timeoutMs = 120000) {
  * @returns {Promise<{text: string, toolCalls: object[]}>} 累积起来的完整正文与工具调用
  */
 export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta, onToolCall, signal } = {}) {
-  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools } = params;
+  const { apiKey, baseUrl, model, messages, temperature, maxTokens, maxTokensField, tools, think } = params;
   if (!apiKey) throw new LlmError('没有配置 API Key', { code: LLM_ERRORS.CONFIG });
   const url = buildUrl(baseUrl);
   if (!url) throw new LlmError('没有配置接口地址', { code: LLM_ERRORS.CONFIG });
@@ -449,7 +567,7 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
         Accept: 'text/event-stream',
       },
       body: JSON.stringify(
-        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: true, tools })
+        buildRequestBody({ model, messages, temperature, maxTokens, maxTokensField, stream: true, tools, think })
       ),
       signal: mergeSignals(signal, 120000),
     });
@@ -469,15 +587,17 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
   // 有些服务端无视 stream:true，直接回一整段 JSON。
   // 与其报错，不如把它当成非流式处理——用户照样能看到回复。
   const contentType = headerValue(res, 'content-type');
+  const stripper = createReasoningStripper();
   if (!contentType.includes('text/event-stream')) {
     const text = await res.text();
     const whole = parseCompletionBody(text);
     if (whole && (whole.content || whole.toolCalls.length)) {
-      if (whole.content) onDelta?.(whole.content);
+      const out = stripper.push(whole.content) + stripper.finish();
+      if (out) onDelta?.(out);
       // 整段 JSON 里的 tool_calls 同样是完整的：按数组顺序映射，不塞进按 index 的堆。
       const toolCalls = normalizeToolCalls(whole.toolCalls);
       if (toolCalls.length) onToolCall?.(toolCalls);
-      return { text: whole.content, toolCalls };
+      return { text: out, toolCalls };
     }
     throw new LlmError('接口返回的不是 SSE 也不是 JSON', {
       code: LLM_ERRORS.MALFORMED,
@@ -509,8 +629,12 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
           onToolCall?.(toolCalls);
         }
         if (content) {
-          full += content;
-          onDelta?.(content);
+          // 思考内容不进正文：它只是模型心里的想法。
+          const out = stripper.push(content);
+          if (out) {
+            full += out;
+            onDelta?.(out);
+          }
         }
       }
       if (done) break;
@@ -534,10 +658,19 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
         onToolCall?.(toolCalls);
       }
       if (content) {
-        full += content;
-        onDelta?.(content);
+        const out = stripper.push(content);
+        if (out) {
+          full += out;
+          onDelta?.(out);
+        }
       }
     }
+  }
+  // 尾巴：冲掉解码器残留，也把没闭合的思考内容收干净。
+  const tail = stripper.finish();
+  if (tail) {
+    full += tail;
+    onDelta?.(tail);
   }
 
   return { text: full, toolCalls: toolAccumulator.calls() };
@@ -554,6 +687,15 @@ export async function chatCompletionStream(params, { fetchImpl = fetch, onDelta,
  *   立刻失败，把错误原样报给用户。
  *
  * **流已经开始之后失败不重来**：用户已经看到半句了，重来会重复。
+ *
+ * ## think 参数的回退
+ *
+ * 有的模型不认 `thinking` / `reasoning_effort`，见到就 400。
+ * 那样的话用户只会看到「接口返回 HTTP 400」——他根本不知道
+ * 是自己刚打开的 think 模式惹的祸。
+ *
+ * 所以这里**去掉 think 参数在同一个地址上再试一次**，
+ * 并且告诉调用方「这个模型不支持」（调用方拿它去弹个气泡）。
  */
 export async function chatCompletionStreamWithProbe(
   params,
@@ -563,8 +705,9 @@ export async function chatCompletionStreamWithProbe(
   let emitted = 0;
   const list = (Array.isArray(baseUrls) ? baseUrls : []).filter(Boolean);
   for (const baseUrl of list) {
-    try {
-      const result = await chatCompletionStream({ ...params, baseUrl }, {
+    // 发一次请求。`thinkMode` 决定思考参数怎么发。
+    const call = (thinkMode) =>
+      chatCompletionStream({ ...params, baseUrl, think: { ...(params.think || {}), mode: thinkMode } }, {
         fetchImpl,
         // 取消信号要一路传到底：agent 的循环被取消时，
         // 正在流式的那次请求也得停下来，不能让它把 token 烧完。
@@ -579,21 +722,52 @@ export async function chatCompletionStreamWithProbe(
           emitted += 1;
         },
       });
+
+    try {
+      const result = await call(params.think?.mode || 'none');
       return { ...result, baseUrl };
     } catch (err) {
+      // 模型不认 think 参数：去掉它们，在**同一个地址**上再试一次。
+      if (emitted === 0 && params.think?.mode && params.think.mode !== 'none' && isThinkUnsupported(err)) {
+        params.think.onUnsupported?.({ baseUrl, model: params.model, mode: params.think.mode });
+        try {
+          const result = await call('none');
+          return { ...result, baseUrl, thinkUnsupported: true };
+        } catch (err2) {
+          tried.push(`${redactUrl(baseUrl)}（${err2?.message || err2}）`);
+          if (emitted > 0) throw err2;
+          if (isFatalError(err2)) throw err2;
+          continue;
+        }
+      }
       tried.push(`${redactUrl(baseUrl)}（${err?.message || err}）`);
       if (emitted > 0) throw err;
-      if (
-        err instanceof LlmError &&
-        (err.code === LLM_ERRORS.BAD_REQUEST ||
-          err.code === LLM_ERRORS.MALFORMED ||
-          err.code === LLM_ERRORS.CONFIG)
-      ) {
-        throw err;
-      }
+      if (isFatalError(err)) throw err;
     }
   }
   throw new LlmError(`没有可用的接口地址：${tried.join('；')}`, { code: LLM_ERRORS.NETWORK });
+}
+
+/** 换地址也没用的错误：立刻失败，把原文报给用户。 */
+function isFatalError(err) {
+  return (
+    err instanceof LlmError &&
+    (err.code === LLM_ERRORS.BAD_REQUEST ||
+      err.code === LLM_ERRORS.MALFORMED ||
+      err.code === LLM_ERRORS.CONFIG)
+  );
+}
+
+/**
+ * 这个错误是不是「模型不认 think 参数」？
+ *
+ * **只看 400 且原文提到 thinking/reasoning**：别的 400（上下文超长、
+ * 参数写错）跟 think 无关，换个地址重发也是一样的结果。
+ */
+function isThinkUnsupported(err) {
+  if (!(err instanceof LlmError) || err.code !== LLM_ERRORS.BAD_REQUEST) return false;
+  const text = `${err?.message || ''} ${err?.body || ''}`.toLowerCase();
+  return /thinking|reasoning/.test(text);
 }
 
 /**

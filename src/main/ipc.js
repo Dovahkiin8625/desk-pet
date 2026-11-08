@@ -18,6 +18,7 @@ export function registerIpc({
   onVisibleRect,
   onSetClickThrough,
   onRendererReady,
+  onSpeechEnded,
   onModelSwitchResult,
   onModelError,
   getAssistantState,
@@ -56,6 +57,8 @@ export function registerIpc({
   // 渲染层只是回报结果，主进程不需要回执；单向通道也不会产生
   // 「invoke 找不到处理器」的拒绝。
   ipcMain.on('pet:rendererReady', () => onRendererReady());
+  // 语音播完了：主进程在等这个信号（「先应一声」要等应答念完）。
+  ipcMain.on('pet:speechEnded', (_e, id) => onSpeechEnded?.(id));
   ipcMain.on('pet:modelSwitchResult', (_e, result) => onModelSwitchResult(result));
   ipcMain.on('pet:modelError', (_e, info) => onModelError(info));
   // 增量位移：主进程负责累加、夹紧到可见区域并持久化位置。

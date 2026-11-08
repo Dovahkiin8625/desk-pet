@@ -88,6 +88,8 @@ export function createAgentBackend({
                 AGENT_MIN_MAX_TOKENS
               ),
               maxTokensField: config.maxTokensField,
+              // think 模式：模型先思考再回答（关着时只是一个「不要思考」）。
+              think: config.think,
               tools: toolList,
             },
             {

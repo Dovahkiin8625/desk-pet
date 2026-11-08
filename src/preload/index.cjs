@@ -79,9 +79,14 @@ contextBridge.exposeInMainWorld('pet', {
     );
   },
   // 合成好的语音：主进程合成完发过来，渲染层播放并驱动口型。
+  // 第三个参数是语音的 id：播完要用它回报主进程。
   onSpeak: (cb) => {
-    ipcRenderer.on('pet:speak', (_e, payload) => cb(payload?.audio, payload?.mime));
+    ipcRenderer.on('pet:speak', (_e, payload) =>
+      cb(payload?.audio, payload?.mime, payload?.id)
+    );
   },
+  // 「这段语音播完了」。
+  reportSpeechEnded: (id) => ipcRenderer.send('pet:speechEnded', id),
   // 提示音：待办完成、提醒响起之类的界面反馈。
   onSound: (cb) => {
     ipcRenderer.on('pet:sound', (_e, payload) => cb(payload?.name));
