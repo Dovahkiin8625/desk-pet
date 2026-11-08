@@ -99,10 +99,11 @@ test.describe('插件面板', () => {
       expect(ids).toContain('reminders');
       expect(ids).toContain('pomodoro');
       expect(ids).toContain('system');
-      // 设置与聊天记录是**内置功能**，不是插件：
-      // 它们照样出现在搜索结果里，但不在 plugins/ 目录里。
+      // 设置是**内置功能**，不是插件：
+      // 它照样出现在搜索结果里，但不在 plugins/ 目录里。
       expect(ids).toContain('settings');
-      expect(ids).toContain('history');
+      // 聊天记录已经是**插件**了（以前是内置功能，id 叫 history）。
+      expect(ids).toContain('chat-history');
       // 「插件管理」不是插件了：它变成了设置窗口里的一个分区。
       expect(ids).not.toContain('manager');
 
