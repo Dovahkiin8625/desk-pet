@@ -22,6 +22,7 @@
  * @property {'user'|'proactive'} trigger 这次是谁发起的
  * @property {object} config { apiKey, baseUrls, model, temperature, maxTokens, maxTokensField }
  * @property {AbortSignal} [signal]
+ * @property {object} [turn] 这一轮带进来的东西：历史、用户原话、config
  * @property {(delta: string) => void} onDelta 流式增量；不支持流式的后端可以不调
  * @property {(event: object) => void} [onEvent] 中间事件（工具调用、步骤…）——给将来的 agent 用
  *

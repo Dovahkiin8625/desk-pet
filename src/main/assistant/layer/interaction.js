@@ -4,6 +4,7 @@ import { createStreamSplitter, parseReply } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
 import { createFastToolSet } from './fastTools.js';
 import { buildInteractionPrompt } from './prompt.js';
+import { TOOL_RISK } from '../../../shared/assistant.js';
 
 /**
  * 交互层后端（规格 §3、§4）。
@@ -37,7 +38,7 @@ export const INTERACTION_MAX_STEPS = 3;
  * @param {Function} [options.getFacts]
  * @param {Function} [options.getNow]
  * @param {Function} [options.getTaskCounts] () => {running, queued}
- * @param {number|Function} [options.getMaxSteps]
+ * @param {Function} [options.getMaxSteps] () => 步数上限
  */
 export function createInteractionBackend({
   fetchImpl = fetch,
@@ -56,7 +57,7 @@ export function createInteractionBackend({
     label: '交互层',
 
     async chat(ctx) {
-      const { messages = [], config = {}, onDelta, turn = {} } = ctx || {};
+      const { messages = [], config = {}, onDelta, turn = {}, signal = null } = ctx || {};
       const registry = getRegistry();
       const dispatchEnabled = Boolean(getDispatchEnabled());
 
@@ -68,6 +69,23 @@ export function createInteractionBackend({
       const tools = [...fastTools, ...taskTools];
       const toolMap = new Map(tools.map((t) => [t.name, t]));
 
+      // **只读工具这道关**（规格 §8.1 的「没有闸门时」的语义）：
+      // 循环里没有闸门时，只放行 risk 为 READ 的工具，其余一律被拒，
+      // 模型收到的是「需要用户确认，但审批功能还没上线」——
+      // 用户只看到一句莫名其妙的话。
+      //
+      // 交互层**没有审批渠道**，所以它的工具必须全是只读的。
+      // 与其等到运行时被静默拒掉，不如在**接线时**当场报错：
+      // 错在哪（哪个工具）一目了然。
+      for (const tool of tools) {
+        if (tool?.risk !== TOOL_RISK.READ) {
+          throw new Error(
+            `交互层的工具「${tool?.name || '（无名）'}」不是只读的（risk=${tool?.risk || '未声明'}）：` +
+              '没有审批渠道时它会被直接拒掉，请换一个只读工具。'
+          );
+        }
+      }
+
       const counts = getTaskCounts() || {};
       const system = buildInteractionPrompt({
         persona: getPersona(),
@@ -76,7 +94,9 @@ export function createInteractionBackend({
         runningCount: counts.running || 0,
         queuedCount: counts.queued || 0,
         dispatchEnabled,
-        hasFastTools: fastTools.length > 0,
+        // 报**这一轮实际可用**的快工具：注册表里没有的就不报，
+        // 否则模型会去调一个不存在的工具，白烧一步。
+        fastToolNames: fastTools.map((t) => t.name),
       });
 
       // **流式正文与元数据要分开**：模型会在正文后面接一段 <<META>> 的 JSON，
@@ -87,7 +107,8 @@ export function createInteractionBackend({
       const loop = createAgentLoop({
         callModel: (params) => callModel(params, config),
         resolveTool: (name) => toolMap.get(name) || null,
-        // **不设闸门**：交互层的工具全是瞬时只读或任务管理，不需要用户点头。
+        // **不设闸门**：交互层没有审批渠道，循环里没有闸门时只放行只读工具，
+        // 其余一律被拒（上面那道检查就是为了不让它发生）。
         gate: null,
         maxSteps: getMaxSteps(),
         // 步数用尽时不做总结那一轮：交互层要的是秒级回应。
@@ -101,6 +122,7 @@ export function createInteractionBackend({
           system,
           messages,
           tools,
+          signal,
           onDelta: (delta) => {
             const out = splitter.push(delta);
             if (out) onDelta?.(out);

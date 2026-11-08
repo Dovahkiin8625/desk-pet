@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createInteractionBackend } from '../../src/main/assistant/layer/interaction.js';
+import { AGENT_OUTCOME } from '../../src/main/assistant/agent/loop.js';
+import { TOOL_RISK } from '../../src/shared/assistant.js';
 
 /**
  * 交互层（规格 §4）。
@@ -192,4 +194,116 @@ test('轮次上限：3 步还没给答复就收尾，不空着', async () => {
   });
   assert.equal(result.steps, 3);
   assert.match(result.text, /没能在这 3 步之内/);
+});
+
+test('步数用尽：不再多跑一轮总结（交互层要秒级）', async () => {
+  const { calls, fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '做点什么' }],
+    config: CONFIG,
+  });
+  // 3 步用尽之后**不该有第 4 次请求**——
+  // 那一轮是「让模型总结」，交互层不要它（多一次往返就慢一倍）。
+  assert.equal(calls.length, 3, '步数用尽后还多跑了一轮总结');
+  assert.equal(result.outcome, AGENT_OUTCOME.MAX_STEPS);
+});
+
+test('取消：已经 abort 的 signal，一条模型请求都不该发', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  const ac = new AbortController();
+  ac.abort();
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+    signal: ac.signal,
+  });
+  assert.equal(calls.length, 0, '已经取消了还去调模型');
+  assert.equal(result.outcome, AGENT_OUTCOME.ABORTED);
+});
+
+test('工具：不是只读的工具当场报错（接线时就拦下）', async () => {
+  // 没有闸门时，循环只放行只读工具，其余一律被拒——
+  // 模型收到的是「需要用户确认，但审批功能还没上线」，
+  // 用户只看到一句莫名其妙的话。所以要在**接线时**就说清楚。
+  const { fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getTaskTools: () => [
+      {
+        name: 'task.submit',
+        label: '派单',
+        description: '派一个后台任务',
+        parameters: { type: 'object', properties: {} },
+        risk: TOOL_RISK.WRITE,
+        run: async () => ({ text: '派了' }),
+      },
+    ],
+  });
+  await assert.rejects(
+    () =>
+      backend.chat({
+        messages: [{ role: 'user', content: '干活' }],
+        config: CONFIG,
+      }),
+    (err) => {
+      assert.match(err.message, /task\.submit/);
+      return true;
+    }
+  );
+});
+
+test('请求：没配 maxTokens 时按 800 兜底', async () => {
+  // 少了这个兜底，`Number(undefined) || 0` 会算出 0，
+  // 而 0 是「合法数字」——于是真的发出去 max_tokens: 0。
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  const { apiKey, baseUrls, model, temperature, maxTokensField } = CONFIG;
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: { apiKey, baseUrls, model, temperature, maxTokensField },
+  });
+  assert.equal(calls[0].body.max_tokens, 800);
+});
+
+test('提示词：只报这一轮实际可用的快工具', async () => {
+  // 注册表里没有的工具不能报：报了模型就会去调，
+  // 循环回一句「没有这个工具」——白烧一步。
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(system.includes('fs.list'), `提示词里没有 fs.list：\n${system}`);
+  assert.ok(!system.includes('fs.read'), `提示词里报了没注册的工具 fs.read：\n${system}`);
+});
+
+test('提示词：注册表里没有 fs.list 时就不报它', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([]),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(!system.includes('fs.list'), `提示词里报了没注册的工具 fs.list：\n${system}`);
 });

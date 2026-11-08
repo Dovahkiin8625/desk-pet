@@ -20,13 +20,18 @@ export function createModelCaller({ fetchImpl = fetch, minMaxTokens = 0 } = {}) 
     { system = '', messages = [], tools = [], onDelta = null, signal = null } = {},
     config = {}
   ) {
+    // 缺省时按 800 兜底（与 llm/openai.js 一致）：
+    // 少了它，`Number(undefined) || 0` 会算出 0——而 0 是「合法数字」，
+    // 于是真的发出去 max_tokens: 0，服务端会当成「一个字也不许说」。
+    const wanted = Number(config.maxTokens);
+    const base = Number.isFinite(wanted) && wanted > 0 ? wanted : 800;
     const result = await chatCompletionStreamWithProbe(
       {
         apiKey: config.apiKey,
         model: config.model,
         messages: [{ role: 'system', content: system }, ...messages],
         temperature: config.temperature,
-        maxTokens: Math.max(Number(config.maxTokens) || 0, minMaxTokens),
+        maxTokens: Math.max(base, minMaxTokens),
         maxTokensField: config.maxTokensField,
         // think 模式：模型先思考再回答（关着时只是一个「不要思考」）。
         think: config.think,
