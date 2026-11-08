@@ -42,7 +42,7 @@
 |---|---|
 | 记录有六种分类：user / reply / task / step / approval / dispatch | `src/shared/assistant.js` 的 `CHAT_KIND` |
 | 只有 user 与 reply 进模型上下文；dispatch 只进交互层 | 同上，`CHAT_KIND_FOR_LAYER` |
-| 新分类**必须**加进 `CHAT_KIND`：不认识��� kind 会被 `chatKindOf` **降级成 `reply`**——不是被丢掉，而是混进两层模型上下文（比丢掉更糟） | `src/main/assistant/chat/memory.js` 的 `normalizeChatEntry`；`src/main/assistant/state.js` 的 `sanitizeAssistant` |
+| 新分类**必须**加进 `CHAT_KIND`：不认识的 kind 会被 `chatKindOf` **降级成 `reply`**——不是被丢掉，而是混进两层模型上下文（比丢掉更糟） | `src/main/assistant/chat/memory.js` 的 `normalizeChatEntry`；`src/main/assistant/state.js` 的 `sanitizeAssistant` |
 | `meta` 单串 ≤1000 字、单条 ≤4000 字、数组 ≤20 项、深度 ≤4 | `src/main/assistant/chat/memory.js` 的 `capMeta` |
 | 派单记录只有 tool / taskId / title / action，**没有 brief** | `src/main/assistant/agent/record.js` 的 `dispatchRecord` |
 | 执行层的工具调用记成 `step`（带 taskId / args / result / error） | 同上，`stepRecord` |
@@ -139,7 +139,7 @@
 
 - 重画前的展开状态 → 重画后恢复；
 - 用户手动改过展开状态的块，**下次重画不再被默认值覆盖**（默认展开只作用于"用户没碰过的块"）；
-- 贴着底部时新记录来了照旧跟着往下走（现有行为，不变）。
+- **新的在前**（块按时间倒序）。所以新记录进来是在**上面**，不是下面——现在那句"贴着底部就跟着往下走"要改成"他在看最新就保持不动，往下滚了就别拽他"。
 
 ### 4.5 界面文案
 
