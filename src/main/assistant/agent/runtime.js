@@ -1,0 +1,305 @@
+import { randomUUID } from 'node:crypto';
+import { TASK_STATUS } from '../../../shared/assistant.js';
+
+/**
+ * 后台任务运行时（规格 §7）。
+ *
+ * 桌宠的一个 agent 任务 = 一个后台任务：排队、跑、等审批、结束。
+ * 运行时只管**生命周期**，不管任务里干什么（那是 agent 循环的事）。
+ *
+ * ## 三条最容易做错的
+ *
+ * 1. **等待审批不占并发槽。**
+ *    用户可能几分钟不回，槽位应该让给别的任务——
+ *    所以挂起时把槽位还回去，醒来时再重新拿（拿不到就排队等）。
+ * 2. **取消要叫醒挂起中的任务。**
+ *    挂着的任务正 `await` 用户的答复，不叫醒它的话：
+ *    取消之后它还挂着，槽位也回不来。
+ * 3. **不做隐式打断。**
+ *    正在执行的命令被悄悄杀掉，事后极难排查。要停就显式停（`cancel`）。
+ */
+
+/** 终态：这些状态的任务不会再动。 */
+const FINAL = new Set([
+  TASK_STATUS.DONE,
+  TASK_STATUS.FAILED,
+  TASK_STATUS.CANCELLED,
+  TASK_STATUS.INTERRUPTED,
+]);
+
+/**
+ * 任务被取消时的那个错误。
+ *
+ * 用 AbortError 的名字：它跟 AbortController 是一套说法，
+ * 「这个任务被中止了」而不是「出了什么故障」。
+ */
+function abortError() {
+  const err = new Error('任务已取消');
+  err.name = 'AbortError';
+  return err;
+}
+
+/**
+ * 造一个任务运行时。
+ *
+ * @param {object} options
+ * @param {Function} [options.getMaxConcurrent] 同时跑几个任务（默认 1）
+ * @param {Function} [options.onEvent] 状态变化事件
+ * @param {object} [options.logger] 日志器
+ * @param {Function} [options.now] 取当前时刻
+ * @param {Function} [options.makeId] 造任务号
+ */
+export function createAgentRuntime({
+  getMaxConcurrent = () => 1,
+  onEvent = null,
+  logger = console,
+  now = () => Date.now(),
+  makeId = () => randomUUID(),
+} = {}) {
+  /** id → 任务。 */
+  const tasks = new Map();
+  /** 等着起跑的任务 id（FIFO）。 */
+  const queue = [];
+  /** 正占着并发槽的任务数。 */
+  let active = 0;
+
+  function maxConcurrent() {
+    const n = Number(getMaxConcurrent());
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+  }
+
+  function emit(event) {
+    try {
+      onEvent?.(event);
+    } catch (err) {
+      // 订阅者抛异常不许带崩运行时——事件只是通知。
+      logger?.warn?.('[desk-pet] agent 任务的订阅者出错：', err?.message);
+    }
+  }
+
+  /** 任务状态变化的事件。 */
+  function taskEvent(task, extra = {}) {
+    emit({
+      type: 'task',
+      taskId: task.id,
+      status: task.status,
+      title: task.title,
+      at: now(),
+      ...extra,
+    });
+  }
+
+  /** 把任务从队列里摘掉。 */
+  function dequeue(taskId) {
+    const at = queue.indexOf(taskId);
+    if (at >= 0) queue.splice(at, 1);
+  }
+
+  /** 起跑一个任务（或给挂起中的任务补一个槽位）。 */
+  function pump() {
+    while (active < maxConcurrent() && queue.length > 0) {
+      const id = queue.shift();
+      const task = tasks.get(id);
+      if (!task || task.finished) continue;
+      active += 1;
+      task.holdsSlot = true;
+      task.status = TASK_STATUS.RUNNING;
+      task.startedAt = task.startedAt || now();
+      // 挂起中的任务在等这个槽位：给它。
+      const granted = task.slotResolve;
+      task.slotResolve = null;
+      granted?.();
+      if (!task.started) {
+        task.started = true;
+        launch(task);
+      }
+      taskEvent(task);
+    }
+  }
+
+  /** 真正开跑。 */
+  function launch(task) {
+    const controller = new AbortController();
+    task.controller = controller;
+    const scope = {
+      taskId: task.id,
+      signal: controller.signal,
+      hooks: makeHooks(task),
+    };
+    task.scope = scope;
+    Promise.resolve()
+      .then(() => task.run(scope))
+      .then((result) => finish(task, { ok: true, result }))
+      .catch((error) => finish(task, { ok: false, error }));
+  }
+
+  /** 任务结束：收尾、还槽、发事件、兑现承诺。 */
+  function finish(task, { ok, result, error }) {
+    if (task.finished) return;
+    task.finished = true;
+    task.finishedAt = now();
+    if (task.holdsSlot) {
+      task.holdsSlot = false;
+      active -= 1;
+    }
+    dequeue(task.id);
+    const cancelled = task.status === TASK_STATUS.CANCELLED;
+    task.status = cancelled
+      ? TASK_STATUS.CANCELLED
+      : ok
+        ? TASK_STATUS.DONE
+        : TASK_STATUS.FAILED;
+    task.result = result;
+    task.error = error || null;
+    taskEvent(task, { error: error ? String(error?.message || error) : '' });
+    pump();
+    task.resolve?.({
+      ok: ok && !cancelled,
+      status: task.status,
+      result,
+      error: error || null,
+      taskId: task.id,
+    });
+  }
+
+  /**
+   * 挂起与叫醒。
+   *
+   * `wait` 会**让出并发槽**：用户可能几分钟不回，
+   * 槽位应该让给别的任务（规格 §7.2）。
+   */
+  function makeHooks(task) {
+    return {
+      /**
+       * 挂起（等用户点头）。醒来之前这个任务不占并发槽。
+       *
+       * **任务被取消时它会抛错**（AbortError），不是安静地返回——
+       * 安静返回的话，任务会接着往下跑该做的事：
+       * 用户明明取消了，它还在动他的机器。
+       *
+       * @param {string} [reason] 'approval' 表示在等审批
+       */
+      async wait(reason = 'approval') {
+        if (task.finished) throw abortError();
+        task.waitReason = reason;
+        task.status =
+          reason === 'approval' ? TASK_STATUS.WAITING_APPROVAL : TASK_STATUS.QUEUED;
+        if (task.holdsSlot) {
+          task.holdsSlot = false;
+          active -= 1;
+          pump();
+        }
+        taskEvent(task);
+        await new Promise((resolve) => {
+          task.wakeResolve = resolve;
+        });
+        task.wakeResolve = null;
+        if (task.finished) throw abortError();
+        // 醒来：重新拿槽位（拿不到就排队等）。
+        const granted = new Promise((resolve) => {
+          task.slotResolve = resolve;
+        });
+        task.status = TASK_STATUS.QUEUED;
+        queue.unshift(task.id);
+        pump();
+        await granted;
+        if (task.finished) throw abortError();
+        task.status = TASK_STATUS.RUNNING;
+        task.waitReason = '';
+        taskEvent(task);
+      },
+
+      /** 叫醒挂起的任务（用户答复了、或者它被取消了）。 */
+      wake() {
+        const resolve = task.wakeResolve;
+        task.wakeResolve = null;
+        resolve?.();
+      },
+    };
+  }
+
+  return {
+    /**
+     * 提交一个任务。
+     *
+     * @param {object} job
+     * @param {string} [job.title] 一句话说明（给记录与通知用）
+     * @param {string} [job.prompt] 任务的内容
+     * @param {Function} job.run (scope) => Promise<any>
+     * @returns {{ok: boolean, taskId: string, done: Promise<object>, position: number}}
+     */
+    submit({ title = '', prompt = '', run } = {}) {
+      const id = String(makeId());
+      const task = {
+        id,
+        title: String(title || ''),
+        prompt: String(prompt || ''),
+        status: TASK_STATUS.QUEUED,
+        createdAt: now(),
+        startedAt: 0,
+        finishedAt: 0,
+        run: typeof run === 'function' ? run : async () => null,
+        controller: null,
+        scope: null,
+        holdsSlot: false,
+        started: false,
+        finished: false,
+        waitReason: '',
+        result: undefined,
+        error: null,
+        resolve: null,
+        wakeResolve: null,
+        slotResolve: null,
+      };
+      tasks.set(id, task);
+      const done = new Promise((resolve) => {
+        task.resolve = resolve;
+      });
+      task.done = done;
+      queue.push(id);
+      taskEvent(task);
+      pump();
+      return { ok: true, taskId: id, done, position: queue.length };
+    },
+
+    /**
+     * 取消一个任务。
+     *
+     * **显式**取消：不做隐式打断（规格 §7.3）。
+     */
+    cancel(taskId) {
+      const task = tasks.get(String(taskId || ''));
+      if (!task) return { ok: false, message: '没有这个任务' };
+      if (task.finished || FINAL.has(task.status)) {
+        return { ok: false, message: '这个任务已经结束了' };
+      }
+      task.status = TASK_STATUS.CANCELLED;
+      dequeue(task.id);
+      // 叫醒挂起中的任务：它正 await 用户的答复，不叫醒就一直挂着。
+      task.wakeResolve?.();
+      task.wakeResolve = null;
+      task.slotResolve?.();
+      task.slotResolve = null;
+      task.controller?.abort();
+      finish(task, { ok: false, error: new Error('任务已取消') });
+      return { ok: true };
+    },
+
+    /** 查一个任务。 */
+    get(taskId) {
+      return tasks.get(String(taskId || '')) || null;
+    },
+
+    /** 所有任务（新的在前）。 */
+    list() {
+      return [...tasks.values()].reverse();
+    },
+
+    /** 应用退出：取消所有任务。 */
+    stop() {
+      for (const task of [...tasks.values()]) {
+        if (!task.finished) this.cancel(task.id);
+      }
+    },
+  };
+}

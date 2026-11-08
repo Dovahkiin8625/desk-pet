@@ -368,6 +368,52 @@ export function chatKindOf(entry) {
 }
 
 /**
+ * agent 任务的状态（规格 §7.1 的状态机）。
+ *
+ * 放在共享契约里：主进程写任务记录、渲染层读任务记录，
+ * 两边对「这个任务到哪一步了」的理解必须一致。
+ */
+export const TASK_STATUS = Object.freeze({
+  /** 排队中（还没拿到并发槽）。 */
+  QUEUED: 'queued',
+  /** 正在跑。 */
+  RUNNING: 'running',
+  /** 等用户点头（**不占并发槽**）。 */
+  WAITING_APPROVAL: 'waiting_approval',
+  /** 跑完了。 */
+  DONE: 'done',
+  /** 失败了。 */
+  FAILED: 'failed',
+  /** 被取消了。 */
+  CANCELLED: 'cancelled',
+  /** 应用退出时被中断（重启后补记的）。 */
+  INTERRUPTED: 'interrupted',
+});
+
+/** 任务已到终态：不会再变了。 */
+export const TASK_FINAL_STATUS = Object.freeze([
+  TASK_STATUS.DONE,
+  TASK_STATUS.FAILED,
+  TASK_STATUS.CANCELLED,
+  TASK_STATUS.INTERRUPTED,
+]);
+
+/**
+ * agent 事件的类型（插件与记录都认这一套）。
+ *
+ * L2 把它留在各人自己嘴里（提示词、循环、后端各写各的字段），
+ * L3 有了任务号与状态机，事件的形状才定得下来。
+ */
+export const AGENT_EVENT = Object.freeze({
+  /** 任务状态变化。 */
+  TASK: 'task',
+  /** 任务中的一次工具调用。 */
+  STEP: 'step',
+  /** 一次审批请求与它的决议。 */
+  APPROVAL: 'approval',
+});
+
+/**
  * 工具的风险等级。
  *
  * 风险等级决定「要不要用户点头」：
