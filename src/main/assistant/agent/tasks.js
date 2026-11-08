@@ -1,6 +1,7 @@
 import { createAgentRuntime } from './runtime.js';
 import { createApprovalGate } from './approval.js';
 import { approvalRecord, stepRecord, taskRecord } from './record.js';
+import { AGENT_EVENT } from '../../../shared/assistant.js';
 
 /**
  * agent 任务的中枢。
@@ -48,7 +49,7 @@ export function createAgentTasks({
 } = {}) {
   /** 把一个事件转成记录。 */
   function recordFor(event) {
-    if (event.type === 'step') {
+    if (event.type === AGENT_EVENT.STEP) {
       return stepRecord({
         taskId: event.taskId,
         index: event.index,
@@ -59,7 +60,7 @@ export function createAgentTasks({
         at: event.at,
       });
     }
-    if (event.type === 'approval') {
+    if (event.type === AGENT_EVENT.APPROVAL) {
       return approvalRecord({
         taskId: event.taskId,
         tool: event.tool,
@@ -69,7 +70,7 @@ export function createAgentTasks({
         at: event.at,
       });
     }
-    if (event.type === 'task') {
+    if (event.type === AGENT_EVENT.TASK) {
       return taskRecord({
         taskId: event.taskId,
         status: event.status,
@@ -147,7 +148,12 @@ export function createAgentTasks({
                   hooks: scope.hooks,
                   taskId: scope.taskId,
                   onDecision: (decision) =>
-                    publish({ type: 'approval', taskId: scope.taskId, at: now(), ...decision }),
+                    publish({
+                      type: AGENT_EVENT.APPROVAL,
+                      taskId: scope.taskId,
+                      at: now(),
+                      ...decision,
+                    }),
                 })
               : null;
           const convo = Array.isArray(messages)
@@ -196,7 +202,14 @@ export function createAgentTasks({
         }
       );
 
-      return { ok: job.ok, taskId: job.taskId, position: job.position, done };
+      return {
+        ok: job.ok,
+        taskId: job.taskId,
+        position: job.position,
+        // 排队中吗：排队了要告诉用户「排第 N 位」（规格 §7.2）。
+        queued: job.queued,
+        done,
+      };
     },
 
     /** 取消一个任务。 */

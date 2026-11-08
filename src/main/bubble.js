@@ -239,10 +239,15 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     // 气泡只有一只：上一个审批问不了了就作废（它会被判成「拒绝」，
     // 那个任务还能换条路，不会死）。
     approvals.clear();
-    clearTimer();
     // 审批是**阻塞**的：它卡在任务的关键路径上，
     // 别的消息排后面（用户得先点头，任务才能继续）。
-    if (streamId) cancelStream();
+    //
+    // **撤流时不装计时器**：撤流会把排队的消息放出来，
+    // 那条消息会顺手装一个「几秒后收掉气泡」的计时器——
+    // 留着它，审批气泡自己就消失了：用户还没点，任务先被判成拒绝。
+    if (streamId) cancelStream({ hide: false });
+    // 计时器要**最后**清：上面的撤流可能又装了一个。
+    clearTimer();
     const payload = { approvalId: key, title, text, risk };
     const promise = approvals.request({ id: key, title, text, risk });
     if (!win || win.isDestroyed()) {

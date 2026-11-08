@@ -286,6 +286,14 @@ export function createAssistant({  userDataDir,
         onDelta: ctx.onDelta,
         foreground: true,
       });
+      // 排队了要说一声（规格 §7.2）：不然用户只看到桌宠不动，
+      // 不知道自己的话是在排队还是丢了。
+      if (task.queued) {
+        say(`前面还有 ${task.position - 1} 件事，这个排第 ${task.position} 位`, {
+          emotion: 'neutral',
+          speak: false,
+        });
+      }
       return task.done;
     },
   });

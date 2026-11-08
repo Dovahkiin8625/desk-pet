@@ -1,4 +1,4 @@
-import { CHAT_KIND, TASK_STATUS } from '../../../shared/assistant.js';
+import { CHAT_KIND, TASK_FINAL_STATUS, TASK_STATUS } from '../../../shared/assistant.js';
 
 /**
  * agent 的分类记录（规格 §4.2）。
@@ -76,12 +76,7 @@ export function approvalRecord({
 }
 
 /** 到终态的状态：这些任务不用再管了。 */
-const FINAL_STATUS = new Set([
-  TASK_STATUS.DONE,
-  TASK_STATUS.FAILED,
-  TASK_STATUS.CANCELLED,
-  TASK_STATUS.INTERRUPTED,
-]);
+const FINAL_STATUS = new Set(TASK_FINAL_STATUS);
 
 /**
  * 找出**上次退出时还在跑**的任务（规格 §7.4）。

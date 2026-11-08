@@ -36,6 +36,14 @@ function fakeBackend(actions = []) {
   };
 }
 
+/** 造一个永远不结束的后端：用来把后面的任务挤到队列里。 */
+function neverEndingBackend() {
+  return {
+    id: 'agent',
+    chat: () => new Promise(() => {}),
+  };
+}
+
 test('中枢：提交一个任务，结果回来了', async () => {
   const tasks = createAgentTasks({ backend: fakeBackend() });
   const t = tasks.submit({ prompt: '查天气', messages: [{ role: 'user', content: '查天气' }] });
@@ -143,4 +151,22 @@ test('中枢：取消一个任务', async () => {
   const tasks = createAgentTasks({ backend: fakeBackend() });
   const t = tasks.submit({ prompt: '查天气', messages: [] });
   assert.equal(tasks.cancel(t.taskId).ok, true);
+});
+
+test('中枢：第二个任务知道自己排第 2 位', async () => {
+  // 规格 §7.2：排队时要告诉用户「排第 N 位」。
+  // 所以中枢得把位置算出来——不然界面上只能说「排队中」。
+  const tasks = createAgentTasks({ backend: neverEndingBackend() });
+  const first = tasks.submit({ prompt: '甲', messages: [] });
+  const second = tasks.submit({ prompt: '乙', messages: [] });
+  assert.equal(first.queued, false, '第一个任务直接开跑');
+  assert.equal(second.queued, true, '第二个任务要排队');
+  assert.equal(second.position, 2, '第二个任务排第 2 位');
+});
+
+test('中枢：排队的任务不算「已排队」，跑着的才算', async () => {
+  const tasks = createAgentTasks({ backend: neverEndingBackend() });
+  const first = tasks.submit({ prompt: '甲', messages: [] });
+  assert.equal(first.queued, false);
+  assert.equal(first.position, 1, '第一个任务就是第 1 位');
 });

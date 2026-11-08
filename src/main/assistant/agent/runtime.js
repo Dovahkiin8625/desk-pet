@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { TASK_STATUS } from '../../../shared/assistant.js';
+import { AGENT_EVENT, TASK_FINAL_STATUS, TASK_STATUS } from '../../../shared/assistant.js';
 
 /**
  * 后台任务运行时（规格 §7）。
@@ -20,12 +20,7 @@ import { TASK_STATUS } from '../../../shared/assistant.js';
  */
 
 /** 终态：这些状态的任务不会再动。 */
-const FINAL = new Set([
-  TASK_STATUS.DONE,
-  TASK_STATUS.FAILED,
-  TASK_STATUS.CANCELLED,
-  TASK_STATUS.INTERRUPTED,
-]);
+const FINAL = new Set(TASK_FINAL_STATUS);
 
 /**
  * 任务被取消时的那个错误。
@@ -80,7 +75,7 @@ export function createAgentRuntime({
   /** 任务状态变化的事件。 */
   function taskEvent(task, extra = {}) {
     emit({
-      type: 'task',
+      type: AGENT_EVENT.TASK,
       taskId: task.id,
       status: task.status,
       title: task.title,
@@ -259,7 +254,19 @@ export function createAgentRuntime({
       queue.push(id);
       taskEvent(task);
       pump();
-      return { ok: true, taskId: id, done, position: queue.length };
+      // 我排第几：**前面**还有几个没做完的任务（按提交的先后算）。
+      //
+      // 不能用队列的长度：跑着的任务不在队列里，
+      // 但它确实占着位子——用户要等的是它。
+      const ahead = [...tasks.values()].filter((t) => t !== task && !t.finished).length;
+      return {
+        ok: true,
+        taskId: id,
+        done,
+        position: ahead + 1,
+        // 拿到槽位了吗：没拿到就是排队中（要告诉用户「排第 N 位」）。
+        queued: task.status === TASK_STATUS.QUEUED,
+      };
     },
 
     /**
