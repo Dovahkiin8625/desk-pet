@@ -465,4 +465,53 @@ test('每轮模型调用都交出正文', async () => {
   assert.equal(rounds[0].text, '我先看看剪贴板');
   assert.deepEqual(rounds[0].toolCalls, ['clipboard.read']);
   assert.equal(rounds[1].text, '在你剪贴板里');
+  // 轮次从 1 开始、连着排——记录里的「第几轮」靠它。
+  assert.equal(rounds[0].index, 1);
+  assert.equal(rounds[1].index, 2);
+});
+
+test('只调工具的那一轮照样交出来：正文是空串', async () => {
+  const rounds = [];
+  const loop = createAgentLoop({
+    callModel: async () => ({
+      text: '',
+      toolCalls: [{ id: 'c1', function: { name: 'clipboard.read', arguments: '{}' } }],
+    }),
+    resolveTool: () => ({ name: 'clipboard.read', risk: 'read', run: async () => ({ text: '内容' }) }),
+    maxSteps: 1,
+    onRound: (r) => rounds.push(r),
+  });
+  await loop.run({ system: '', messages: [{ role: 'user', content: '在吗' }] });
+  assert.equal(rounds.length, 1);
+  assert.equal(rounds[0].text, '');
+  assert.deepEqual(rounds[0].toolCalls, ['clipboard.read']);
+});
+
+test('交出去的正文里没有 META 那段', async () => {
+  const rounds = [];
+  const loop = createAgentLoop({
+    callModel: async () => ({ text: '我先看看\n<<META>>{"emotion":"happy"}', toolCalls: [] }),
+    resolveTool: () => null,
+    maxSteps: 1,
+    onRound: (r) => rounds.push(r),
+  });
+  await loop.run({ system: '', messages: [{ role: 'user', content: '在吗' }] });
+  assert.equal(rounds.length, 1);
+  assert.equal(rounds[0].text.includes('META'), false);
+});
+
+test('模型这一轮报错：没有正文，也就不交出去', async () => {
+  const rounds = [];
+  const loop = createAgentLoop({
+    callModel: async () => {
+      throw new Error('挂了');
+    },
+    resolveTool: () => null,
+    maxSteps: 1,
+    onRound: (r) => rounds.push(r),
+  });
+  await assert.rejects(
+    () => loop.run({ system: '', messages: [{ role: 'user', content: '在吗' }] })
+  );
+  assert.equal(rounds.length, 0);
 });
