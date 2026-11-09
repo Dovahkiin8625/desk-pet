@@ -38,17 +38,37 @@ async function seedChat() {
           { kind: 'user', role: 'user', text: '在吗', at: 1 },
           { kind: 'reply', role: 'assistant', text: '在呢', at: 2 },
           {
+            kind: 'model',
+            role: 'assistant',
+            text: '我先看看剪贴板',
+            at: 3,
+            meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' },
+          },
+          {
+            kind: 'dispatch',
+            role: 'assistant',
+            text: '派了个后台任务：查视频',
+            at: 4,
+            meta: {
+              tool: 'task.submit',
+              taskId: 't-1',
+              title: '查视频',
+              brief: '看看 F 盘 video 下有什么',
+              layer: 'interaction',
+            },
+          },
+          {
             kind: 'task',
             role: 'assistant',
             text: '完成 · 查视频',
-            at: 3,
+            at: 5,
             meta: { taskId: 't-1', status: 'done', title: '查视频' },
           },
           {
             kind: 'step',
             role: 'assistant',
             text: 'fs.list',
-            at: 4,
+            at: 6,
             meta: { taskId: 't-1', tool: 'fs.list' },
           },
         ],
@@ -116,7 +136,7 @@ test.describe('聊天记录插件', () => {
     await seedChat();
   });
 
-  test('面板里能打开：对话一句一条，任务的过程合成一块', async () => {
+  test('面板里能打开：一次发话一块，块里分两段', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPanel(app, pet);
@@ -136,21 +156,27 @@ test.describe('聊天记录插件', () => {
       // 插件自己的页面装在 iframe 里。
       const frame = panel.frameLocator('#plugin-frame');
 
-      // 对话：用户一句、桌宠一句，各一个气泡。
-      await expect(frame.locator('.chat.user')).toHaveText('在吗');
-      await expect(frame.locator('.chat.reply')).toHaveText('在呢');
+      // 一次发话 = 一块
+      await expect(frame.locator('.turn')).toHaveCount(1);
+      await expect(frame.locator('.turn-title')).toHaveText('在吗');
 
-      // 任务：状态、标题、步骤合成一块（步骤默认折起来）。
-      await expect(frame.locator('.task')).toHaveCount(1);
-      await expect(frame.locator('.task .title')).toHaveText('查视频');
-      await expect(frame.locator('.task .status')).toHaveText('完成 · 查视频');
-      await expect(frame.locator('.task details')).toBeVisible();
-      await expect(frame.locator('.task ol li')).toHaveText('fs.list');
+      // 块里分两段
+      await expect(frame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
+      await expect(frame.locator('.lane-back .lane-title')).toHaveText('后台那边');
+
+      // 交底默认折起，展开看得到原文
+      await frame.locator('.turn > summary').click();
+      await frame.locator('.detail[data-detail="dispatch:t-1"] > summary').click();
+      const brief = frame.locator('.detail[data-detail="brief:t-1"]');
+      await expect(brief).not.toHaveAttribute('open', '');
+      await brief.locator('summary').click();
+      await expect(brief).toHaveAttribute('open', '');
+      await expect(brief.locator('.detail-pre')).toHaveText('看看 F 盘 video 下有什么');
 
       // 清空：动作走 iframe → 壳 → IPC → 插件 → 助理，回来后页面自己重取一份。
       await frame.locator('#clear').click();
       await expect(frame.locator('#empty')).toBeVisible();
-      await expect(frame.locator('#count')).toHaveText('0 条');
+      await expect(frame.locator('#count')).toHaveText('0 块');
     } finally {
       await app.close();
     }
@@ -177,8 +203,9 @@ test.describe('聊天记录插件', () => {
       await pluginWin.waitForLoadState('domcontentloaded');
 
       const winFrame = pluginWin.frameLocator('#plugin-frame');
-      await expect(winFrame.locator('.chat.user')).toHaveText('在吗');
-      await expect(winFrame.locator('.task .title')).toHaveText('查视频');
+      await expect(winFrame.locator('.turn-title')).toHaveText('在吗');
+      await expect(winFrame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
+      await expect(winFrame.locator('.lane-back .lane-title')).toHaveText('后台那边');
     } finally {
       await app.close();
     }
@@ -206,11 +233,12 @@ test.describe('聊天记录插件', () => {
       await pluginWin.waitForLoadState('domcontentloaded');
 
       const winFrame = pluginWin.frameLocator('#plugin-frame');
-      await expect(winFrame.locator('.chat.user')).toHaveText('在吗');
+      await expect(winFrame.locator('.turn-title')).toHaveText('在吗');
 
-      // 先把任务的步骤展开：用户正在看的东西不该被新记录挤掉。
-      await winFrame.locator('.task details summary').click();
-      await expect(winFrame.locator('.task details')).toHaveAttribute('open', '');
+      // 先把后台任务的步骤展开：用户正在看的东西不该被新记录挤掉。
+      await winFrame.locator('.turn > summary').first().click();
+      await winFrame.locator('.detail[data-detail="steps:t-1"] summary').click();
+      await expect(winFrame.locator('.detail[data-detail="steps:t-1"]')).toHaveAttribute('open', '');
 
       // 重新打开面板（回到搜索视图），说一句话。
       await pet.evaluate(() => window.pet.openPanel?.());
@@ -219,13 +247,11 @@ test.describe('聊天记录插件', () => {
       await panel.press('#query', 'Control+Enter');
 
       // 这句话被记下来了 → 开着的页面自己就更新了，不用重开。
-      await expect(winFrame.locator('.chat.user')).toHaveCount(2);
-      await expect(winFrame.locator('.chat.user').nth(1)).toHaveText('你好呀');
+      await expect(winFrame.locator('.turn')).toHaveCount(2);
 
       // 更新不能把用户正在看的东西收起来。
-      await expect(winFrame.locator('.task details')).toHaveAttribute('open', '');
-      await expect(winFrame.locator('.task ol li')).toHaveText('fs.list');
-
+      await expect(winFrame.locator('.detail[data-detail="steps:t-1"]')).toHaveAttribute('open', '');
+      await expect(winFrame.locator('.detail[data-detail="steps:t-1"] .step-list li')).toHaveText('fs.list');
     } finally {
       await app.close();
     }

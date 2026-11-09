@@ -1,7 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stepLabel, argsPreview } from '../../plugins/chat-history/pages/format.js';
+import {
+  approvalLabel,
+  argsPreview,
+  badgeLabel,
+  BRIEF_LABEL,
+  dispatchLabel,
+  fastToolLabel,
+  modelHeadLabel,
+  modelRoundLabel,
+  ORPHAN_LABEL,
+  PET_LABEL,
+  resultLabel,
+  statusLabel,
+  statusTrail,
+  stepLabel,
+  stepsLabel,
+  TOOL_ERROR_LABEL,
+  taskLabel,
+} from '../../plugins/chat-history/pages/format.js';
 
 /**
  * 聊天记录页面上的**纯逻辑**：一条步骤怎么变成一行字。
@@ -45,4 +63,83 @@ test('参数预览：不是对象就当没有', () => {
   assert.equal(argsPreview(null), '');
   assert.equal(argsPreview('src/'), '');
   assert.equal(argsPreview(['a']), '');
+});
+
+test('快工具：说人话，带上第一个参数', () => {
+  assert.equal(fastToolLabel('clipboard.read', null), '调了一次剪贴板');
+  assert.equal(fastToolLabel('fs.read', { path: 'a.txt' }), '读了一个文件 a.txt');
+  assert.equal(fastToolLabel('fs.list', { path: 'F:/video' }), '看了目录 F:/video');
+  assert.equal(fastToolLabel('clock.now', null), '问了时间');
+});
+
+test('快工具：不认识的工具就照原样说', () => {
+  assert.equal(fastToolLabel('weird.tool', null), 'weird.tool');
+});
+
+test('快工具：参数太长截到 40 字', () => {
+  const label = fastToolLabel('fs.read', { path: 'x'.repeat(80) });
+  assert.ok(label.startsWith('读了一个文件 '));
+  assert.ok(label.endsWith('…'));
+  assert.equal(label.length, '读了一个文件 '.length + 41);
+});
+
+test('派单：五个任务管理工具各有一句', () => {
+  assert.equal(dispatchLabel({ tool: 'task.submit', title: '查视频' }), '派了个后台任务：查视频');
+  assert.equal(dispatchLabel({ tool: 'task.list' }), '看了看后台任务');
+  assert.equal(dispatchLabel({ tool: 'task.cancel', taskId: 't-1' }), '停掉了任务 t-1');
+  assert.equal(dispatchLabel({ tool: 'task.delete', taskId: 't-1' }), '归档了任务 t-1');
+  assert.equal(dispatchLabel({ tool: 'task.steer' }), '给任务追加了一句要求');
+});
+
+test('派单：不认识的工具就显示它自己的动作原文', () => {
+  assert.equal(dispatchLabel({ tool: 'other', action: '干点别的' }), '干点别的');
+});
+
+test('任务状态：说人话', () => {
+  assert.equal(statusLabel('queued'), '排队中');
+  assert.equal(statusLabel('running'), '进行中');
+  assert.equal(statusLabel('waiting_approval'), '等你点头');
+  assert.equal(statusLabel('done'), '完成');
+  assert.equal(statusLabel('failed'), '失败');
+});
+
+test('任务状态：流水写成「排队中 → 进行中」', () => {
+  assert.equal(statusTrail(['queued', 'running']), '排队中 → 进行中');
+  assert.equal(statusTrail([]), '');
+  assert.equal(statusTrail(null), '');
+});
+
+test('徽标：四种', () => {
+  assert.equal(badgeLabel('answered'), '已答');
+  assert.equal(badgeLabel('running'), '后台运行中');
+  assert.equal(badgeLabel('done'), '已完成');
+  assert.equal(badgeLabel('failed'), '失败');
+});
+
+test('模型：标题写模型名与轮数', () => {
+  assert.equal(modelHeadLabel('MiniMax-M2', 3), '问模型 MiniMax-M2 · 3 轮');
+});
+
+test('模型：每一轮写自己的号', () => {
+  assert.equal(modelRoundLabel(1, '我先看看剪贴板'), '第 1 轮：我先看看剪贴板');
+  assert.equal(modelRoundLabel(0, '我先看看剪贴板'), '我先看看剪贴板');
+});
+
+test('后台那边：步骤、结果、任务标题', () => {
+  assert.equal(stepsLabel(3), '步骤（3）');
+  assert.equal(resultLabel('有 12 个视频'), '结果：有 12 个视频');
+  assert.equal(taskLabel('查视频', 'running'), '查视频 · 进行中');
+});
+
+test('审批：说人话', () => {
+  assert.equal(approvalLabel('allow'), '有个操作已允许');
+  assert.equal(approvalLabel('deny'), '有个操作已拒绝');
+  assert.equal(approvalLabel(''), '有个操作等你点头');
+});
+
+test('页面上的固定说法', () => {
+  assert.equal(BRIEF_LABEL, '交底');
+  assert.equal(TOOL_ERROR_LABEL, '这个工具这次没调成');
+  assert.equal(ORPHAN_LABEL, '没有对应的那句话');
+  assert.equal(PET_LABEL, '桌宠自己起的头');
 });
