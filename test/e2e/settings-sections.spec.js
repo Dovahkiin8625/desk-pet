@@ -175,4 +175,16 @@ test.describe('设置页分区与记忆', () => {
       await app.close();
     }
   });
+
+  test('设置里没有「对话后端」下拉了', async () => {
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA);
+    try {
+      const settings = await openSettings(app);
+      // 前台恒定走交互层，没得选了——留着就是个骗人的控件。
+      await expect(settings.locator('#llmBackend')).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  });
 });

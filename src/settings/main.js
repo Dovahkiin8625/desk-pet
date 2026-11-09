@@ -2,8 +2,6 @@ import { DEFAULT_VOLUME } from '../shared/volume.js';
 import { parseTapLines } from '../shared/tapVoice.js';
 import { resolveVoiceId, applyVoiceChoice } from '../shared/voiceChoice.js';
 import {
-  LLM_BACKENDS,
-  llmBackendInfo,
   THINK_LEVELS,
   ACK_DELAY_PRESETS,
   ACK_DELAY_OFF,
@@ -54,8 +52,6 @@ const tapTalkLinesInput = document.getElementById('tapTalkLines');
 
 // 对话
 const llmEnabledBox = document.getElementById('llmEnabled');
-const llmBackendSelect = document.getElementById('llmBackend');
-const llmBackendHint = document.getElementById('llmBackendHint');
 const llmBaseUrlInput = document.getElementById('llmBaseUrl');
 const llmModelInput = document.getElementById('llmModel');
 const llmTemperatureInput = document.getElementById('llmTemperature');
@@ -271,12 +267,11 @@ function refreshNavSummaries() {
   setSummary('voice', ttsEnabledBox.checked ? (ttsKey ? '已开' : '缺 Key') : '已关');
 
   const llmKey = llmKeyStatus.dataset.configured === 'true';
-  // 摘要里带上后端：用户最常问的「它现在是 agent 模式吗」，
-  // 不该靠切进分区去看下拉框。
-  const backendName = llmBackendInfo(llmBackendSelect.value).label;
+  // 摘要只说「开没开」：前台恒定走交互层，没有后端可选了，
+  // 摘要里再挂个后端名反而是在说一件不成立的事。
   setSummary(
     'chat',
-    llmEnabledBox.checked ? (llmKey ? `已开 · ${backendName}` : '缺 Key') : '已关'
+    llmEnabledBox.checked ? (llmKey ? '已开' : '缺 Key') : '已关'
   );
 
   setSummary('memory', `${llmFactsList.children.length} 条`);
@@ -414,26 +409,6 @@ function updateVoiceCurrent() {
 }
 
 /**
- * 填「对话后端」的下拉框。
- *
- * 选项按 shared/assistant.js 的 LLM_BACKENDS 填，不在这里写死：
- * 写死一份的话，加了第三个后端，设置页上还是那两个。
- *
- * 模块加载时就填好：init() 要拉一堆数据，万一哪步失败，
- * 设置页至少还能看见下拉框。
- */
-function fillBackendOptions() {
-  llmBackendSelect.textContent = '';
-  for (const id of LLM_BACKENDS) {
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = llmBackendInfo(id).label;
-    llmBackendSelect.appendChild(opt);
-  }
-}
-fillBackendOptions();
-
-/**
  * 填「先应一声」的下拉框。
  *
  * 「关闭」不是时长，单独放第一项——它表示「一声不吭地等答案」。
@@ -470,12 +445,6 @@ function ensureAckOption(value) {
   llmAckDelaySelect.appendChild(opt);
 }
 
-/** 把当前后端的说明写在下面——用户切过去时得当场看见差别。 */
-function updateBackendHint() {
-  const info = llmBackendInfo(llmBackendSelect.value);
-  llmBackendHint.textContent = info.hint || `后端：${info.label}`;
-}
-
 /**
  * think 没打开时，深度那一栏是**用不上的**——灰掉它。
  *
@@ -509,10 +478,6 @@ function applyAssistantState(state) {
 
   const llm = state.llm || {};
   llmEnabledBox.checked = Boolean(llm.enabled);
-  // 后端：磁盘上的值可能是旧版本留下的，也可能是手改的——
-  // 认不出来就退回「普通对话」（最保险的那个）。
-  llmBackendSelect.value = LLM_BACKENDS.includes(llm.backend) ? llm.backend : 'chat';
-  updateBackendHint();
   llmBaseUrlInput.value = llm.baseUrl || '';
   llmModelInput.value = llm.model || '';
   llmTemperatureInput.value = String(llm.temperature ?? 0.7);
@@ -595,7 +560,6 @@ function assistantPatchFromControls() {
     },
     llm: {
       enabled: llmEnabledBox.checked,
-      backend: llmBackendSelect.value,
       baseUrl: llmBaseUrlInput.value.trim(),
       model: llmModelInput.value.trim(),
       temperature: Number(llmTemperatureInput.value),
@@ -709,11 +673,6 @@ for (const select of [llmMaxTokensSelect, llmTokensFieldSelect, llmProactiveInte
 // think 的开关：先把深度那栏灰掉，再存盘。
 llmThinkBox.addEventListener('change', () => {
   updateThinkLevelEnabled();
-  persistAssistantPrefs();
-});
-// 换后端：说明先换，再存盘（顺序反了的话，摘要里会慢半拍显示上一个后端）。
-llmBackendSelect.addEventListener('change', () => {
-  updateBackendHint();
   persistAssistantPrefs();
 });
 // 「先应一声」的等待时长：改了立刻生效（下一轮对话就用新的了）。
