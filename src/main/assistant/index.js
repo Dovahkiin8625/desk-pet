@@ -359,6 +359,9 @@ export function createAssistant({  userDataDir,
     getNow: () => new Date(),
     getTaskCounts: () => agentTasks.counts(),
     getMaxSteps: () => INTERACTION_MAX_STEPS,
+    // **这一回合的过程要落盘**：模型说了什么、调了什么快工具——
+    // 聊天历史页靠它们还原过程。不接这一行，交互层在生产上一条记录都不写。
+    appendRecord: appendChatRecord,
     logger: console,
   });
   backends.register('interaction', interactionBackend);

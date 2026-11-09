@@ -50,9 +50,15 @@ export function createTaskTools({
   const userText = String(turn.userText || '');
   const config = turn.config || {};
 
-  /** 记一条派单记录：交互层下一轮要看得见自己派过什么。 */
-  function record(tool, { taskId = '', title = '', action = '' } = {}) {
-    appendRecord(dispatchRecord({ tool, taskId, title, action, at: now() }));
+  /**
+   * 记一条派单记录：交互层下一轮要看得见自己派过什么。
+   *
+   * **`brief` 只有派单才有**：那是模型写给执行层的说明，
+   * 聊天历史页要把它原样显示出来，用户才知道这活儿到底是让谁去干了什么。
+   * 其它四个工具不交底什么，留空串。
+   */
+  function record(tool, { taskId = '', title = '', action = '', brief = '' } = {}) {
+    appendRecord(dispatchRecord({ tool, taskId, title, action, brief, at: now() }));
   }
 
   return [
@@ -90,7 +96,13 @@ export function createTaskTools({
         ];
         const task = tasks.submit({ prompt: brief, title, messages, config });
         if (!task?.ok) throw new Error('派不出去：运行时没有收下这个任务');
-        record('task.submit', { taskId: task.taskId, title, action: `派了个任务：${title}` });
+        record('task.submit', {
+          taskId: task.taskId,
+          title,
+          action: `派了个任务：${title}`,
+          // **交底原文**：模型写给执行层的那段说明，原样记下来。
+          brief,
+        });
         return {
           text: `已派出任务 ${task.taskId}（${title}）`,
           data: { taskId: task.taskId, queued: Boolean(task.queued) },

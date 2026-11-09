@@ -307,3 +307,67 @@ test('提示词：注册表里没有 fs.list 时就不报它', async () => {
   const system = calls[0].body.messages[0].content;
   assert.ok(!system.includes('fs.list'), `提示词里报了没注册的工具 fs.list：\n${system}`);
 });
+
+test('交互层把这一回合的过程写成记录', async () => {
+  const written = [];
+  const backend = createInteractionBackend({
+    fetchImpl: fakeFetch([
+      toolCall('clipboard.read', {}),
+      say('在你剪贴板里'),
+    ]).fetchImpl,
+    getRegistry: () =>
+      fakeRegistry([{ name: 'clipboard.read', risk: 'read', run: async () => ({ text: '内容' }) }]),
+    getTaskTools: () => [],
+    appendRecord: (entry) => written.push(entry),
+    getPersona: () => ({}),
+    getFacts: () => [],
+    getNow: () => new Date(),
+    getTaskCounts: () => ({ running: 0, queued: 0 }),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '剪贴板里是什么' }],
+    // 配置用整个 CONFIG：模型名就是 'stub-model'，别的字段（apiKey 等）也要有。
+    config: CONFIG,
+  });
+
+  const model = written.filter((e) => e.kind === 'model');
+  assert.equal(model.length, 1);
+  assert.equal(model[0].text, '在你剪贴板里');
+  assert.equal(model[0].meta.model, 'stub-model');
+
+  const call = written.filter((e) => e.kind === 'step');
+  assert.equal(call.length, 1);
+  assert.equal(call[0].meta.tool, 'clipboard.read');
+  assert.equal(call[0].meta.layer, 'interaction');
+});
+
+test('任务管理工具不记 step——它们已经是派单记录了', async () => {
+  // 记两遍的话，页面上会出现两行说同一件事的话。
+  const written = [];
+  const { fetchImpl } = fakeFetch([toolCall('task.submit', { title: '查视频' }), say('派出去了。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([]),
+    getTaskTools: () => [
+      {
+        name: 'task.submit',
+        label: '派单',
+        description: '派一个后台任务',
+        parameters: { type: 'object', properties: {} },
+        risk: TOOL_RISK.READ,
+        run: async () => ({ text: '已派出任务 t-1' }),
+      },
+    ],
+    appendRecord: (entry) => written.push(entry),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '帮我查下视频' }],
+    config: CONFIG,
+  });
+
+  assert.equal(
+    written.filter((e) => e.kind === 'step').length,
+    0,
+    'task.* 工具不该再记一条 step'
+  );
+});

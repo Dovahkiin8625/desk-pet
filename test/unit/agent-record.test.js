@@ -14,6 +14,7 @@ import {
 } from '../../src/main/assistant/chat/memory.js';
 import { buildChatMessages } from '../../src/main/assistant/chat/prompt.js';
 import { sanitizeAssistant } from '../../src/main/assistant/state.js';
+import { dispatchRecord, modelRecord, stepRecord } from '../../src/main/assistant/agent/record.js';
 
 /**
  * 聊天记录的分类（规格 §4）。
@@ -228,6 +229,25 @@ test('model 记录不进任何一层的模型上下文', () => {
     const messages = buildChatMessages({ history, layer });
     assert.equal(messages.some((m) => m.content === '我先看看剪贴板'), false);
   }
+});
+
+test('模型回合的记录', () => {
+  const entry = modelRecord({ index: 1, text: '我先看看剪贴板', model: 'MiniMax-M2' });
+  assert.equal(entry.kind, 'model');
+  assert.equal(entry.text, '我先看看剪贴板');
+  assert.equal(entry.meta.layer, 'interaction');
+  assert.equal(entry.meta.index, 1);
+  assert.equal(entry.meta.model, 'MiniMax-M2');
+});
+
+test('派单记录带着交底原文', () => {
+  const entry = dispatchRecord({ tool: 'task.submit', taskId: 't-1', title: '查视频', brief: '看看 F 盘 video 下有什么' });
+  assert.equal(entry.meta.brief, '看看 F 盘 video 下有什么');
+});
+
+test('步骤记录带着是哪一层的', () => {
+  assert.equal(stepRecord({ taskId: '', tool: 'fs.list' }).meta.layer, 'execution');
+  assert.equal(stepRecord({ taskId: '', tool: 'fs.list', layer: 'interaction' }).meta.layer, 'interaction');
 });
 
 test('磁盘：meta 太大了要截断，别让一条记录把文件撑爆', () => {

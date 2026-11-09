@@ -1,4 +1,5 @@
 import { createAgentLoop } from '../agent/loop.js';
+import { modelRecord, stepRecord } from '../agent/record.js';
 import { createModelCaller } from '../chat/caller.js';
 import { createStreamSplitter, parseReply } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
@@ -39,6 +40,7 @@ export const INTERACTION_MAX_STEPS = 3;
  * @param {Function} [options.getNow]
  * @param {Function} [options.getTaskCounts] () => {running, queued}
  * @param {Function} [options.getMaxSteps] () => 步数上限
+ * @param {Function} [options.appendRecord] 写一条分类记录（聊天历史页要显示这一回合的过程）
  */
 export function createInteractionBackend({
   fetchImpl = fetch,
@@ -50,6 +52,7 @@ export function createInteractionBackend({
   getNow = () => new Date(),
   getTaskCounts = () => ({ running: 0, queued: 0 }),
   getMaxSteps = () => INTERACTION_MAX_STEPS,
+  appendRecord = () => {},
   logger = null,
 } = {}) {
   return {
@@ -113,6 +116,33 @@ export function createInteractionBackend({
         maxSteps: getMaxSteps(),
         // 步数用尽时不做总结那一轮：交互层要的是秒级回应。
         summarize: false,
+        // **这一回合的过程要写下来**（聊天历史页要显示）：
+        // 模型说了什么（model 记录）、调了什么快工具（step 记录）。
+        onRound: (round) => {
+          // **只记有正文的轮**：工具调用轮模型通常不说话（它只给 tool_calls），
+          // 那种轮由 step / dispatch 记录表达——再记一条空记录，页面上就是一行空白。
+          const text = String(round?.text || '').trim();
+          if (!text) return;
+          appendRecord(modelRecord({ index: round?.index, text, model: String(config.model || '') }));
+        },
+        onEvent: (event) => {
+          if (event?.type !== 'step') return;
+          // **任务管理工具不记 step**：它们已经由 taskTools 记成派单记录了，
+          // 再记一份，页面上会出现两行说同一件事的话。
+          const tool = String(event.tool || '');
+          if (!tool || tool.startsWith('task.')) return;
+          appendRecord(
+            stepRecord({
+              taskId: '',
+              index: event.index,
+              tool,
+              args: event.args || null,
+              result: event.result || '',
+              error: event.error || '',
+              layer: 'interaction',
+            })
+          );
+        },
         logger,
       });
 

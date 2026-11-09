@@ -8,8 +8,8 @@ import {
 /**
  * agent 的分类记录（规格 §4.2）。
  *
- * 聊天记录现在有六种分类：user / reply / task / step / approval / dispatch。
- * user 与 reply 是**给模型看的**；task / step / approval 是**给人看的**——
+ * 聊天记录现在有七种分类：user / reply / task / step / approval / dispatch / model。
+ * user 与 reply 是**给模型看的**；task / step / approval / model 是**给人看的**——
  * 它们绝不能进模型上下文（见 chat/prompt.js 的过滤）。
  * dispatch 两头不一样：交互层看得见、执行层看不见（见 shared 的 `CHAT_KIND_FOR_LAYER`）。
  *
@@ -40,7 +40,15 @@ export function taskRecord({ taskId = '', status = '', title = '', at = Date.now
   };
 }
 
-/** 任务中的一次工具调用。 */
+/**
+ * 任务中的一次工具调用。
+ *
+ * **`layer` 说的是这一步是哪一层做的**：交互层的快工具也是 step，
+ * 不带这个字段的话，页面分不清「桌宠自己查了一下」与「后台任务里的步骤」。
+ *
+ * **默认 `execution`**：磁盘上的旧记录没有这个字段，
+ * 它们全是执行层的步骤——默认成 execution，旧记录读出来才不用改。
+ */
 export function stepRecord({
   taskId = '',
   index = 0,
@@ -48,6 +56,7 @@ export function stepRecord({
   args = null,
   result = '',
   error = '',
+  layer = 'execution',
   at = Date.now(),
 } = {}) {
   const name = String(tool || '工具');
@@ -56,7 +65,37 @@ export function stepRecord({
     role: 'assistant',
     text: error ? `${name} 出错：${error}` : name,
     at,
-    meta: { taskId, index, tool: name, args, result, error },
+    meta: { taskId, index, tool: name, args, result, error, layer: String(layer || 'execution') },
+  };
+}
+
+/**
+ * 模型的一轮往返（交互层跟模型之间说了什么）。
+ *
+ * **只给人看**：模型回合的原话绝不能回喂给模型——
+ * 那等于让模型读自己的草稿，会把它绕晕（见 shared 的 `CHAT_KIND_FOR_LAYER`，
+ * 它刻意没把 model 列进去）。
+ *
+ * **为什么单独记一种**：step 记录只说「调了什么工具」，说不出模型当时说了什么；
+ * 聊天历史页要还原「这一回合的过程」，缺了原话就只剩时间线。
+ *
+ * @param {object} options
+ * @param {number} [options.index] 第几轮（从 1 开始）
+ * @param {string} [options.text] 模型的原话（已去掉 <<META>> 段）
+ * @param {string} [options.model] 模型名
+ */
+export function modelRecord({
+  index = 0,
+  text = '',
+  model = '',
+  at = Date.now(),
+} = {}) {
+  return {
+    kind: CHAT_KIND.MODEL,
+    role: 'assistant',
+    text: String(text || ''),
+    at,
+    meta: { layer: 'interaction', index, model: String(model || '') },
   };
 }
 
@@ -127,12 +166,18 @@ export function interruptedTasks(messages) {
  *
  * **正文里必须带任务号**：交互层下一轮要靠它说「停掉刚才那个」——
  * 没有任务号，它只能瞎猜一个。
+ *
+ * **`brief` 是交底原文**：只有派单（task.submit）有——
+ * 它是模型写给执行层的那段说明，聊天历史页要把它原样显示出来，
+ * 用户才能知道「这活儿到底是让谁去干了什么」。
+ * 其它四个工具不交底什么，brief 留空串。
  */
 export function dispatchRecord({
   tool = '',
   taskId = '',
   title = '',
   action = '',
+  brief = '',
   at = Date.now(),
 } = {}) {
   const name = String(tool || '任务');
@@ -144,6 +189,12 @@ export function dispatchRecord({
     role: 'assistant',
     text: parts.filter(Boolean).join(' '),
     at,
-    meta: { tool: name, taskId: id, title: String(title || ''), action: String(action || '') },
+    meta: {
+      tool: name,
+      taskId: id,
+      title: String(title || ''),
+      action: String(action || ''),
+      brief: String(brief || ''),
+    },
   };
 }
