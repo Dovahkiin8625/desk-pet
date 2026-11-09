@@ -297,7 +297,7 @@ function groupByTime(blocks, now) {
     group.label = year === today.year ? `${month}月` : `${year}年${month}月`;
   }
   for (const group of list) {
-    group.turns.sort((a, b) => a.at - b.at);
+    group.turns.sort((a, b) => b.at - a.at);
   }
   return list;
 }

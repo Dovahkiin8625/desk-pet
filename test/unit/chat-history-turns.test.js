@@ -43,8 +43,8 @@ test('后台任务晚完成：结果回到发起它的那一轮', () => {
     entry('reply', '有 12 个视频', { at: AT('10:05'), meta: { taskId: 't-1' } }),
   ], { now: NOW });
   assert.equal(groups[0].turns.length, 2);
-  assert.equal(groups[0].turns[0].back[0].result.text, '有 12 个视频');
-  assert.equal(groups[0].turns[1].back.length, 0);
+  assert.equal(groups[0].turns[1].back[0].result.text, '有 12 个视频');
+  assert.equal(groups[0].turns[0].back.length, 0);
 });
 
 test('同一个任务号有多条派单：任务归最早那一轮，后来的动作留在自己那一轮', () => {
@@ -55,8 +55,8 @@ test('同一个任务号有多条派单：任务归最早那一轮，后来的�
     entry('dispatch', '停掉', { at: AT('10:03'), meta: { tool: 'task.cancel', taskId: 't-1' } }),
     entry('task', '已取消', { at: AT('10:04'), meta: { taskId: 't-1', status: 'cancelled' } }),
   ], { now: NOW });
-  assert.equal(groups[0].turns[0].back.length, 1);
-  assert.equal(groups[0].turns[1].front.filter((l) => l.type === 'dispatch').length, 1);
+  assert.equal(groups[0].turns[1].back.length, 1);
+  assert.equal(groups[0].turns[0].front.filter((l) => l.type === 'dispatch').length, 1);
 });
 
 test('找不到派单的任务：自己成一块', () => {
@@ -115,4 +115,35 @@ test('时间分组：今天 / 昨天 / 更早按月', () => {
     groups.map((g) => g.label),
     ['今天', '昨天', '10月', '2025年10月']
   );
+});
+
+test('同一组里：晚的块在前，组也按时间倒序', () => {
+  const groups = buildTurns([
+    entry('user', '早的', { at: AT('10:00') }),
+    entry('user', '晚的', { at: AT('11:00') }),
+  ], { now: NOW });
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].turns[0].title, '晚的');
+  assert.equal(groups[0].turns[1].title, '早的');
+});
+
+test('连续的无锚点记录：合成一块，并标出没有对应的那句话', () => {
+  const groups = buildTurns([
+    entry('model', '我先看看剪贴板', { at: AT('10:00'), meta: { layer: 'interaction', index: 1 } }),
+    entry('model', '再看看目录', { at: AT('10:01'), meta: { layer: 'interaction', index: 2 } }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 1);
+  assert.equal(groups[0].turns[0].orphan, true);
+  assert.equal(groups[0].turns[0].front.length, 2);
+  assert.equal(groups[0].turns[0].title, '我先看看剪贴板');
+});
+
+test('一块里的话按时间升序', () => {
+  const groups = buildTurns([
+    entry('user', '查视频', { at: AT('10:00') }),
+    entry('model', '我先看看', { at: AT('10:01'), meta: { layer: 'interaction', index: 1 } }),
+    entry('reply', '有 12 个视频', { at: AT('10:02') }),
+  ], { now: NOW });
+  const front = groups[0].turns[0].front;
+  assert.deepEqual(front.map((l) => l.type), ['model', 'reply']);
 });
