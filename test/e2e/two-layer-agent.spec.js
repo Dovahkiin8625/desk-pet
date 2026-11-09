@@ -249,6 +249,19 @@ test.describe('双层 agent', () => {
       expect(seen.some((t) => t.includes('我去看看')), `没看到派单时的答复：${JSON.stringify(seen)}`).toBe(true);
       // 做完之后是结果句。
       expect(seen.at(-1)).toContain('3 个视频');
+
+      // **这一轮是两轮**：派单占一轮、答复占一轮。
+      //
+      // **按分类挑记录，不按文案挑**：文案一改，断言就变成「找不到记录」，
+      // 报错指错方向。前台答复是唯一「kind 为 reply 且没有任务号」的那条。
+      const reply = await waitForState((s) => {
+        const list = (s?.chat?.messages || []).filter(
+          (m) => m.kind === 'reply' && !m.meta?.taskId
+        );
+        return list[list.length - 1] || null;
+      });
+      expect(reply, '状态文件里没有前台答复的记录').toBeTruthy();
+      expect(reply.meta.rounds, `轮数不对：${JSON.stringify(reply.meta)}`).toBe(2);
     } finally {
       await app.close();
       await stub.close();
@@ -431,15 +444,14 @@ test.describe('双层 agent', () => {
 
       // **只挑前台答复那一条**：状态文件里还有别的 assistant 记录
       // （派单、任务状态、完成通知、模型原话），它们不是这一轮。
-      // 前台答复的 `kind` 是 reply、没有任务号、正文是这一轮的答复。
-      const reply = await waitForState((s) =>
-        (s?.chat?.messages || []).find(
-          (m) =>
-            m.kind === 'reply' &&
-            !m.meta?.taskId &&
-            String(m.text || '').includes('这条答复带了轮数')
-        )
-      );
+      // 前台答复是唯一「kind 为 reply 且没有任务号」的那条——
+      // **不按文案挑**：桩文案一改，断言就变成「找不到记录」，报错指错方向。
+      const reply = await waitForState((s) => {
+        const list = (s?.chat?.messages || []).filter(
+          (m) => m.kind === 'reply' && !m.meta?.taskId
+        );
+        return list[list.length - 1] || null;
+      });
       expect(reply, '状态文件里没有前台答复的记录').toBeTruthy();
 
       expect(reply.meta.rounds, `轮数不对：${JSON.stringify(reply.meta)}`).toBe(1);

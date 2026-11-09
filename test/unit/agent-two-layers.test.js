@@ -237,6 +237,29 @@ test('前台这一轮的轮数：模型往返了几次', async () => {
   assert.equal(result.steps, 1, '模型回了一句话，就是一轮');
 });
 
+test('前台这一轮的轮数：派单也算一轮', async () => {
+  const interactionFetch = fakeFetch([
+    toolCall('task.submit', { title: '查视频', brief: '看看' }),
+    say('我去看看。'),
+  ]);
+  const { interaction } = wire({ interactionFetch, executionFetch: fakeFetch([say('查完了。')]) });
+  const plain = createPlainBackend({ fetchImpl: fakeFetch([say('x')]).fetchImpl });
+
+  const result = await runForeground({
+    interaction,
+    plain,
+    ctx: {
+      system: '你是小桌',
+      messages: buildChatMessages({ history: [], userText: 'F 盘 video 下有什么', layer: LAYER.INTERACTION }),
+      config: CONFIG,
+      turn: { history: [], userText: 'F 盘 video 下有什么', config: CONFIG },
+    },
+  });
+
+  assert.equal(result.text, '我去看看。');
+  assert.equal(result.steps, 2, '派单那一轮 + 答复那一轮 = 两轮');
+});
+
 test('退回普通对话：也算一轮——模型确实被调了一次', async () => {
   const plain = createPlainBackend({ fetchImpl: fakeFetch([say('你好呀。')]).fetchImpl });
   const interaction = {
