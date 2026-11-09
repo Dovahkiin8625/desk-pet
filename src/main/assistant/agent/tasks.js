@@ -127,7 +127,6 @@ export function createAgentTasks({
      * @param {Array} [job.messages] 对话上下文（不给就用 getMessages 造）
      * @param {object} [job.config] 大模型配置
      * @param {Function} [job.onDelta] 流式增量
-     * @param {boolean} [job.foreground] 前台任务（用户的对话）不弹完成通知
      * @returns {{ok: boolean, taskId: string, done: Promise<object>}}
      */
     submit({
@@ -136,7 +135,6 @@ export function createAgentTasks({
       messages = null,
       config = {},
       onDelta = null,
-      foreground = false,
     } = {}) {
       const text = String(prompt || '');
       const job = runtime.submit({
@@ -198,15 +196,17 @@ export function createAgentTasks({
       // 前台路径要把它当成一次对话的结果直接用。
       const done = job.done.then((outcome) => {
         if (outcome.ok) return outcome.result;
-        throw outcome.error || new Error('这件事没做成');
+        const error = outcome.error || new Error('这件事没做成');
+        // **取消不是失败**：单独标出来，通知时别当成「没做成」。
+        error.cancelled = outcome.status === TASK_STATUS.CANCELLED;
+        throw error;
       });
 
-      // 后台任务做完了要告诉用户；前台任务的回复气泡已经说过了。
+      // 后台任务做完了要告诉用户。
       //
       // **两边的处理器都挂上**：不然没人接的失败会变成「未处理的拒绝」。
       void done.then(
         (result) => {
-          if (foreground) return;
           notify({
             title: job.title,
             text: result?.text || '这件事做完了',
@@ -214,7 +214,8 @@ export function createAgentTasks({
           });
         },
         (err) => {
-          if (foreground) return;
+          // 取消是用户自己要求的：他知道结果，不用再补一句「没做成」。
+          if (err?.cancelled) return;
           notify({
             title: job.title,
             text: `这件事没做成：${err?.message || err}`,

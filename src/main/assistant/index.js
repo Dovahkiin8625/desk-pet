@@ -7,6 +7,7 @@ import {
   LLM_BASE_URLS,
   DEFAULT_AGENT,
   TASK_STATUS,
+  LAYER,
   chatKindOf,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
@@ -32,6 +33,9 @@ import { createAgentFacade } from './agent/facade.js';
 import { createAgentTasks } from './agent/tasks.js';
 import { describeToolCall } from './agent/approval.js';
 import { interruptedTasks, taskRecord } from './agent/record.js';
+import { createInteractionBackend, INTERACTION_MAX_STEPS } from './layer/interaction.js';
+import { createTaskTools } from './layer/taskTools.js';
+import { runForeground } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { mergeFacts } from './chat/memory.js';
 import { createRecordSink } from './chat/recordSink.js';
@@ -143,6 +147,9 @@ export function createAssistant({  userDataDir,
   let chatSeq = 0;
   // 有对话正在进行吗：主动搭话要避开。
   let chatBusy = false;
+  // **等着说的完成通知**：前台这一轮还没说完时，后台任务做完了，
+  // 通知先攒在这儿（见 notify 的注释）。
+  const pendingNotices = [];
   // 语音序号：发出去时带上 id，渲染层播完回报同一个 id。
   let speechSeq = 0;
   // 等着「播完了」回报的语音。
@@ -159,9 +166,9 @@ export function createAssistant({  userDataDir,
 
   // 对话后端注册表。
   //
-  // **这是给将来的 agent 形态留的接缝**：现在只注册了「普通对话」一个，
-  // 将来加 agent（会调工具、会多步思考）时，实现同一个接口再注册一行就行，
-  // 气泡、历史、情绪联动、插件面板都不用改。
+  // **前台恒定走交互层**（'interaction'，下面注册）：
+  // 普通对话（'chat'）不再是一个「前台后端」，它只是
+  // 「模型不支持工具调用」时的退路（见 layer/foreground.js）。
   const backends = createBackendRegistry();
   backends.register('chat', createPlainBackend({ fetchImpl }));
 
@@ -229,7 +236,6 @@ export function createAssistant({  userDataDir,
         const task = agentTasks.submit({
           prompt,
           title: opts?.title || '',
-          foreground: false,
         });
         return { ok: true, taskId: task.taskId };
       },
@@ -284,10 +290,37 @@ export function createAssistant({  userDataDir,
         risk,
       }),
     getMessages: (prompt) =>
-      buildChatMessages({ history: state?.chat?.messages || [], userText: prompt, trigger: 'user' }),
+      buildChatMessages({
+        history: state?.chat?.messages || [],
+        userText: prompt,
+        trigger: 'user',
+        // **执行层看不见派单记录**：它只管自己那件事，
+        // 知道用户还派了别的任务反而分心（规格 §6）。
+        layer: LAYER.EXECUTION,
+      }),
     appendRecord: appendChatRecord,
     notify: ({ text, ok }) => {
-      say(text, { emotion: ok ? 'happy' : 'sad', sound: ok ? 'success' : '' });
+      // 完成通知也是**桌宠说的话**：记成 reply，
+      // 交互层下一轮要记得「刚才那件事做完了」（规格 §7.3）。
+      appendChatRecord({
+        role: 'assistant',
+        text: String(text || ''),
+        at: Date.now(),
+        proactive: false,
+      });
+      // **不带 interrupt**：用户正在说话或正在做决定时，完成通知要排队，
+      // 不能把气泡顶掉（规格 §5.3）。
+      //
+      // **前台还在说话时更要等一等**：此刻答复气泡还没开（它在这一轮
+      // 说完时才开），通知要是现在就冒出来，答复气泡一开就把正文清空，
+      // 用户只看到「我去看看」，结果那句没了——白跑一趟。
+      // 所以前台正在说话时先攒着，等这一轮说完了再交出去。
+      const options = { emotion: ok ? 'happy' : 'sad', sound: ok ? 'success' : '' };
+      if (chatBusy) {
+        pendingNotices.push({ text, options });
+        return;
+      }
+      say(text, options);
     },
     getMaxConcurrent: () => state?.agent?.maxConcurrent || DEFAULT_AGENT.maxConcurrent,
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
@@ -295,32 +328,48 @@ export function createAssistant({  userDataDir,
     logger: console,
   });
 
-  // agent 后端：**每句话都是一个后台任务**（规格 §7）。
+  // ------------------------------------------------------------------
+  // 交互层：前台唯一跟用户说话的那一层（规格 §3）。
   //
-  // 包一层的理由：普通对话是一次调用就结束，
-  // agent 是排队 + 并发 + 取消——那些都在运行时里。
-  backends.register('agent', {
-    id: 'agent',
-    label: 'agent 模式',
-    async chat(ctx) {
-      const task = agentTasks.submit({
-        prompt: ctx.prompt || '',
-        messages: ctx.messages,
-        config: ctx.config,
-        onDelta: ctx.onDelta,
-        foreground: true,
-      });
-      // 排队了要说一声（规格 §7.2）：不然用户只看到桌宠不动，
-      // 不知道自己的话是在排队还是丢了。
-      if (task.queued) {
-        say(`前面还有 ${task.position - 1} 件事，这个排第 ${task.position} 位`, {
-          emotion: 'neutral',
-          speak: false,
-        });
-      }
-      return task.done;
-    },
+  // **它不经过任务运行时**：交互层要秒级回应，
+  // 排队等槽位会把「你好」变成「你好（排第 3 位）」。
+  //
+  // 耗时的事由它 `task.submit` 派成后台任务，
+  // 由上面的 agentTasks 在后台跑（那是执行层）。
+  // ------------------------------------------------------------------
+  const interactionBackend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => toolRegistry,
+    // 任务管理工具**每轮新建**：它们绑着这一轮的历史与配置。
+    getTaskTools: (turn) =>
+      createTaskTools({
+        tasks: agentTasks,
+        turn,
+        dispatchEnabled: dispatchEnabled(),
+        appendRecord: appendChatRecord,
+        now: () => Date.now(),
+      }),
+    getDispatchEnabled: () => dispatchEnabled(),
+    getPersona: () => state?.llm?.persona || {},
+    getFacts: () => state?.chat?.facts || [],
+    getNow: () => new Date(),
+    getTaskCounts: () => agentTasks.counts(),
+    getMaxSteps: () => INTERACTION_MAX_STEPS,
+    logger: console,
   });
+  backends.register('interaction', interactionBackend);
+
+  /**
+   * 能不能派单。
+   *
+   * **这里先一律返回 true**：设置里的「桌宠能做什么」是 Task 6 才接上的，
+   * 那时再改成读 `state.agent.dispatch`。
+   * （`state.agent.dispatch` 这个键在 Task 6 之前根本存不住——
+   * 状态的清洗会把 `agent` 整块换掉，所以这时候读它只会读到 undefined。）
+   */
+  function dispatchEnabled() {
+    return true;
+  }
 
   // ------------------------------------------------------------------
   // 持久化
@@ -447,6 +496,19 @@ export function createAssistant({  userDataDir,
     while (pendingMessages.length > 0) {
       const message = pendingMessages.shift();
       say(message.text, message);
+    }
+  }
+
+  /**
+   * 前台这一轮说完了：把攒着的完成通知交出去。
+   *
+   * **交出去的时机**：答复气泡已经开着了，所以气泡会自己把通知排上队
+   * （用户先读完「我去看看」，再看到结果）——不用我们自己排。
+   */
+  function flushPendingNotices() {
+    while (pendingNotices.length > 0) {
+      const notice = pendingNotices.shift();
+      say(notice.text, notice.options);
     }
   }
 
@@ -978,7 +1040,9 @@ export function createAssistant({  userDataDir,
     if (trigger === 'user' && !content) return { ok: false, message: '没说要什么' };
     if (!state.llm.enabled) return { ok: false, message: '对话还没打开（去设置里启用）' };
 
-    const backend = backends.get(state.llm.backend) || backends.get('chat');
+    // 前台**恒定**走交互层（规格 §3）：
+    // 它能调工具、能派单，而且模型不支持工具调用时会自动退回普通对话。
+    const backend = backends.get('interaction');
     if (!backend) return { ok: false, message: '没有可用的对话后端' };
 
     const token = ++chatSeq;
@@ -992,7 +1056,14 @@ export function createAssistant({  userDataDir,
       persona: state.llm.persona,
       facts: state.chat.facts,
     });
-    const messages = buildChatMessages({ history, userText: content, trigger });
+    const messages = buildChatMessages({
+      history,
+      userText: content,
+      trigger,
+      // 上下文按**交互层**过滤：它看得见自己派过什么（dispatch），
+      // 看不见任务与步骤那些「给人看的」记录（规格 §6）。
+      layer: LAYER.INTERACTION,
+    });
 
     // 把用户说的话记下来：说过就是说过，
     // 哪怕模型没回（没配 key、断网），这句话也不该丢。
@@ -1042,19 +1113,32 @@ export function createAssistant({  userDataDir,
 
     let result;
     try {
-      result = await backend.chat({
-        system,
-        messages,
-        // 这一句的原话：agent 后端要拿它当任务的内容
-        //（上下文里的那句是拼好的，原话更完整）。
-        prompt: content,
-        trigger,
-        config,
-        onDelta: (delta) => {
-          if (!delta) return;
-          // 有可见正文了：不必再应一声。
-          ack.noteText();
-          reply?.push(delta);
+      result = await runForeground({
+        interaction: backend,
+        plain: backends.get('chat'),
+        ctx: {
+          system,
+          messages,
+          // 这一句的原话：派单时执行层要拿到「派单那一刻的对话」。
+          prompt: content,
+          trigger,
+          config,
+          // **这一轮的历史快照**（还没追加当前这句话的那份）：
+          // 派单时执行层要读最近几条 user/reply。
+          turn: { history, userText: content, config },
+          onDelta: (delta) => {
+            if (!delta) return;
+            // 有可见正文了：不必再应一声。
+            ack.noteText();
+            reply?.push(delta);
+          },
+          // 交互层的工具调用**不转发**给插件：
+          // 它们不是执行层的步骤，转过去会污染插件看到的事件流。
+          onEvent: () => {},
+        },
+        onFallback: () => {
+          // 这个模型不支持工具调用：明说，别让用户对着英文报错发呆。
+          say('这个模型不支持工具调用，先按普通对话来。', { speak: false, interrupt: true });
         },
       });
     } catch (err) {
@@ -1062,7 +1146,11 @@ export function createAssistant({  userDataDir,
       reply?.cancel();
       // 只有**这一轮**还在跑的时候才清标记：
       // 被后一轮取代时提前清掉，主动搭话会以为「没人说话」而插进来。
-      if (token === chatSeq) chatBusy = false;
+      if (token === chatSeq) {
+        chatBusy = false;
+        // 这一轮没答上来，但后台任务做完了还是要说——不然结果就丢了。
+        flushPendingNotices();
+      }
       throw err;
     }
     // 被后一轮对话取代了：这一轮不写进历史，也不动气泡。
@@ -1071,7 +1159,6 @@ export function createAssistant({  userDataDir,
       reply?.cancel();
       return { ok: false, message: '这一轮被新的对话取代了' };
     }
-    chatBusy = false;
 
     // 答案好了：应答要么还没轮到（那就不必应了），要么正在念（那就等它念完）。
     ack.release();
@@ -1079,6 +1166,12 @@ export function createAssistant({  userDataDir,
     if (token !== chatSeq) return { ok: false, message: '这一轮被新的对话取代了' };
     reply?.open();
     reply?.finish({ text: result.text, emotion: result.emotion });
+
+    // 这一轮说完了：**这时才把攒着的完成通知交出去**。
+    // （答复气泡开着，气泡自己会把通知排上队——用户先读答复，再看结果。）
+    // 清标记也挪到这里：答复还没上屏的时候，主动搭话别插进来。
+    chatBusy = false;
+    flushPendingNotices();
 
     // 记下这一轮。
     appendChatRecord({

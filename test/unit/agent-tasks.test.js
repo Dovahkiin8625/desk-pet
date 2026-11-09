@@ -146,23 +146,11 @@ test('中枢：后台任务做完了要通知用户', async () => {
     backend: fakeBackend(),
     notify: (n) => notices.push(n),
   });
-  const t = tasks.submit({ prompt: '查天气', messages: [], foreground: false });
+  const t = tasks.submit({ prompt: '查天气', messages: [] });
   await t.done;
   await tick();
   assert.equal(notices.length, 1);
   assert.match(notices[0].text, /做完了/);
-});
-
-test('中枢：前台任务不通知——回复气泡就是它', async () => {
-  const notices = [];
-  const tasks = createAgentTasks({
-    backend: fakeBackend(),
-    notify: (n) => notices.push(n),
-  });
-  const t = tasks.submit({ prompt: '查天气', messages: [], foreground: true });
-  await t.done;
-  await tick();
-  assert.equal(notices.length, 0);
 });
 
 test('中枢：事件带着任务号转发出去', async () => {
