@@ -73,6 +73,9 @@ const SKIPPED_TEXT = '（已跳过：这个工具连着出错，任务已经停�
  * @param {number} [options.maxSteps]
  * @param {number} [options.maxSameErrors]
  * @param {Function} [options.onEvent] 步骤事件
+ * @param {Function} [options.onRound] 每一轮模型调用的正文
+ *   ({index, text, toolCalls}) —— index 从 1 开始；text 是去掉 `<<META>>` 后的正文
+ *   （只调工具的轮次是空串）；toolCalls 是该轮请求的工具名数组
  * @param {boolean} [options.summarize] 步数用尽时要不要再让模型总结一次
  * @param {object} [options.logger] 日志器 {warn?, error?}——工具出错时留一行，
  *   免得用户只看到「agent 停下了」却不知道卡在哪一步
@@ -84,6 +87,13 @@ export function createAgentLoop({
   maxSteps = 20,
   maxSameErrors = MAX_SAME_ERRORS,
   onEvent = null,
+  /**
+   * 每轮模型调用之后，把这一轮的正文交出来。
+   *
+   * 交互层要靠它记「模型这一轮说了什么」——
+   * step 事件只说做了什么工具，说不出模型的原话。
+   */
+  onRound = null,
   logger = null,
   /**
    * 步数用尽时要不要再让模型总结一次。
@@ -147,6 +157,15 @@ export function createAgentLoop({
       const text = String(call?.text || '');
       if (call?.baseUrl) baseUrl = call.baseUrl;
       const calls = Array.isArray(call?.toolCalls) ? call.toolCalls : [];
+
+      // **每轮都交出去**：模型这一轮说了什么，是交互层那部分记录的全部内容。
+      // 工具调用轮通常没有正文（text 是空串）——那种轮由 step/dispatch 记录表达，
+      // 这里照样交出去，轮数才对得上。
+      onRound?.({
+        index: steps,
+        text: stripMeta(text),
+        toolCalls: calls.map((c) => String(c?.function?.name || '')),
+      });
 
       // 没有工具调用 → 这就是最终答复。
       if (!calls.length) {

@@ -446,3 +446,23 @@ test('步数用尽：让模型用现在的上下文给个总结', async () => {
   // 总结时不能再调工具，否则就是又一轮循环。
   assert.deepEqual(model.toolLists[1], []);
 });
+
+test('每轮模型调用都交出正文', async () => {
+  const rounds = [];
+  const loop = createAgentLoop({
+    callModel: async ({ messages }) => {
+      const n = rounds.length + 1;
+      return n === 1
+        ? { text: '我先看看剪贴板', toolCalls: [{ id: 'c1', function: { name: 'clipboard.read', arguments: '{}' } }] }
+        : { text: '在你剪贴板里', toolCalls: [] };
+    },
+    resolveTool: () => ({ name: 'clipboard.read', risk: 'read', run: async () => ({ text: '内容' }) }),
+    maxSteps: 3,
+    onRound: (r) => rounds.push(r),
+  });
+  await loop.run({ system: '', messages: [{ role: 'user', content: '在吗' }] });
+  assert.equal(rounds.length, 2);
+  assert.equal(rounds[0].text, '我先看看剪贴板');
+  assert.deepEqual(rounds[0].toolCalls, ['clipboard.read']);
+  assert.equal(rounds[1].text, '在你剪贴板里');
+});
