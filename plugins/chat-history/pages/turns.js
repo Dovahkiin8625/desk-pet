@@ -47,11 +47,8 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const dispatchedIn = new Map();
   const firstDispatch = new Map();
   const entryBlocks = new Map();
-  const replyBlocks = new Map();
-  const processRecords = [];
+  const petTurns = [];
   let current = null;
-  // 上一轮有没有收尾：用户发过话还没答复，就是没收尾。
-  let closed = false;
 
   for (let i = 0; i < list.length; i += 1) {
     const entry = list[i];
@@ -67,15 +64,13 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       current = newBlock(entry, 'user');
       blocks.push(current);
       entryBlocks.set(entry, current);
-      closed = false;
       continue;
     }
     if (kind === CHAT_KIND.REPLY && entry?.proactive) {
       current = newBlock(entry, 'pet');
       blocks.push(current);
       entryBlocks.set(entry, current);
-      replyBlocks.set(entry, current);
-      closed = true;
+      petTurns.push({ entry, index: i, block: current });
       continue;
     }
     if (!current) {
@@ -86,29 +81,20 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       current.entries.push(entry);
     }
     entryBlocks.set(entry, current);
-    if (kind === CHAT_KIND.REPLY) {
-      replyBlocks.set(entry, current);
-      closed = true;
-    }
-    // 上一轮还没收尾（用户发过话还没答复），这些过程记录就还属于那一轮。
-    if (closed && (kind === CHAT_KIND.MODEL
-      || (kind === CHAT_KIND.STEP && !taskId)
-      || kind === CHAT_KIND.DISPATCH)) {
-      processRecords.push({ entry, index: i });
-    }
     if (kind === CHAT_KIND.DISPATCH && taskId && !firstDispatch.has(taskId)) {
       firstDispatch.set(taskId, entry);
     }
   }
 
-  for (const item of processRecords) {
-    const from = entryBlocks.get(item.entry);
-    if (!from || from.orphan) continue;
-    const target = followingReplyBlock(list, item.index, replyBlocks);
-    if (!target || target === from) continue;
-    from.entries = from.entries.filter((e) => e !== item.entry);
-    target.entries.push(item.entry);
-    entryBlocks.set(item.entry, target);
+  // 主动搭话自己那一轮的过程记录挪到它那块；它之前那一轮没答上来的记录留着不动。
+  for (const pet of petTurns) {
+    for (const entry of petRoundEntries(list, pet.index, pet.entry)) {
+      const from = entryBlocks.get(entry);
+      if (!from || from.orphan || from === pet.block) continue;
+      from.entries = from.entries.filter((e) => e !== entry);
+      pet.block.entries.push(entry);
+      entryBlocks.set(entry, pet.block);
+    }
   }
 
   for (const [taskId, entry] of firstDispatch) {
@@ -143,19 +129,33 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
 }
 
 /**
- * 一条过程记录配到哪条前台答复上。
+ * 主动搭话那一轮的过程记录。
  *
- * 往后找**最近的一条前台答复**；中途用户又发话了，就停在那儿——
- * 那是新的一轮，前面那轮的过程记录不挪走。
+ * 从主动答复往前找那串连续的过程记录（遇到用户发话或另一条答复就停），
+ * 再按答复带的轮数切出最后几轮——那是主动搭话自己跑的；
+ * 更早的那些属于上一轮（那一轮可能还没答上来），留在原地。
  */
-function followingReplyBlock(list, index, replyBlocks) {
-  for (let i = index + 1; i < list.length; i += 1) {
+function petRoundEntries(list, index, reply) {
+  const chain = [];
+  for (let i = index - 1; i >= 0; i -= 1) {
     const entry = list[i];
-    if (chatKindOf(entry) === CHAT_KIND.USER) return null;
-    const block = replyBlocks.get(entry);
-    if (block) return block;
+    const kind = chatKindOf(entry);
+    if (kind === CHAT_KIND.USER || kind === CHAT_KIND.REPLY) break;
+    // 后台任务的记录不归前台；派单记录（dispatch）算前台的。
+    if (taskIdOf(entry) && BACK_KINDS.has(kind)) continue;
+    chain.push(entry);
   }
-  return null;
+  const rounds = Number(reply?.meta?.rounds);
+  if (!Number.isFinite(rounds) || rounds <= 0) return chain;
+  let seen = 0;
+  const out = [];
+  for (const entry of chain) {
+    out.push(entry);
+    if (chatKindOf(entry) !== CHAT_KIND.MODEL) continue;
+    seen += 1;
+    if (seen >= rounds) break;
+  }
+  return out;
 }
 
 /** 记录带的任务号。 */
