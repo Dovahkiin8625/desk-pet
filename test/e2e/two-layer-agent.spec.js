@@ -290,7 +290,9 @@ test.describe('双层 agent', () => {
 
       // 落盘有 300ms 防抖，得等。
       const model = await waitForState((s) =>
-        (s?.chat?.messages || []).find((m) => m.kind === 'model')
+        (s?.chat?.messages || []).find(
+          (m) => m.kind === 'model' && m.meta?.layer === 'interaction'
+        )
       );
       expect(
         model,

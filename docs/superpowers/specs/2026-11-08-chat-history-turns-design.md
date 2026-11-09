@@ -44,7 +44,7 @@
 | 只有 user 与 reply 进模型上下文；dispatch 只进交互层 | 同上，`CHAT_KIND_FOR_LAYER` |
 | 新分类**必须**加进 `CHAT_KIND`：不认识的 kind 会被 `chatKindOf` **降级成 `reply`**——不是被丢掉，而是混进两层模型上下文（比丢掉更糟） | `src/main/assistant/chat/memory.js` 的 `normalizeChatEntry`；`src/main/assistant/state.js` 的 `sanitizeAssistant` |
 | `meta` 单串 ≤1000 字、单条 ≤4000 字、数组 ≤20 项、深度 ≤4 | `src/main/assistant/chat/memory.js` 的 `capMeta` |
-| 派单记录只有 tool / taskId / title / action，**没有 brief** | `src/main/assistant/agent/record.js` 的 `dispatchRecord` |
+| 派单记录原来只有 tool / taskId / title / action，**没有 brief**（本轮补上了 brief） | `src/main/assistant/agent/record.js` 的 `dispatchRecord` |
 | 执行层的工具调用记成 `step`（带 taskId / args / result / error） | 同上，`stepRecord` |
 | 交互层**没有注册进后端表**——`backends.register` 只有 `chat` 与 `agent` | `src/main/assistant/index.js` |
 | 后台任务完成的答复只弹气泡，不落记录 | `src/main/assistant/agent/tasks.js` 的 `notify` → `say` |
