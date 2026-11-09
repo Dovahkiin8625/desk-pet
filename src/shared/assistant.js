@@ -63,8 +63,11 @@ export const LLM_BASE_URLS = Object.freeze([
  * 'chat' 是普通对话（一次调用、一段回复，见 src/main/assistant/chat/plain.js）；
  * 'agent' 是多步循环（会调工具，见 src/main/assistant/chat/agent.js）。
  *
- * **定义只有一份**：状态清洗、后端注册、设置界面都从这儿取——
+ * **定义只有一份**：状态清洗、后端注册都从这儿取——
  * 两边各认一套的话，用户改了设置却没生效，是最难查的那种 bug。
+ *
+ * （设置界面已经不再从这里取了：前台恒定走交互层，那个下拉撤掉了。
+ * 这份清单留着，是给磁盘上旧数据用的——迁移那一步会把它换成派单方式。）
  */
 export const LLM_BACKENDS = Object.freeze(['chat', 'agent']);
 

@@ -183,6 +183,9 @@ test.describe('设置页分区与记忆', () => {
       const settings = await openSettings(app);
       // 前台恒定走交互层，没得选了——留着就是个骗人的控件。
       await expect(settings.locator('#llmBackend')).toHaveCount(0);
+      // **别把整块面板删了**：这一节里该有的还在。
+      await expect(settings.locator('#llmBaseUrl')).toHaveCount(1);
+      await expect(settings.locator('#llmModel')).toHaveCount(1);
     } finally {
       await app.close();
     }
