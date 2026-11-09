@@ -336,6 +336,8 @@ export const CHAT_KIND = Object.freeze({
   APPROVAL: 'approval',
   /** 交互层的一次任务管理调用（派单 / 查看 / 停止 / 归档 / 追加指令）。 */
   DISPATCH: 'dispatch',
+  /** 模型的一轮往返（交互层跟模型之间说了什么）。只给人看。 */
+  MODEL: 'model',
 });
 
 /**
@@ -354,6 +356,9 @@ export const CHAT_KIND_LIMITS = Object.freeze({
   // 派单记录留 100 条：一条交互层对话最多派几个单，
   // 留少了模型会忘掉自己派过什么，重复派单。
   dispatch: 100,
+  // 模型回合：交互层一轮最多 3 次模型调用，一次发话最多几句——
+  // 200 条够记很多轮对话了。
+  model: 200,
 });
 
 /**

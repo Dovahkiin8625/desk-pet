@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   CHAT_KIND,
   CHAT_KIND_LIMITS,
+  LAYER,
   chatKindOf,
 } from '../../src/shared/assistant.js';
 import {
@@ -207,6 +208,22 @@ test('磁盘：只写 kind 的新记录不会被静默丢掉', () => {
   assert.equal(clean.chat.messages[0].role, 'assistant');
   assert.equal(clean.chat.messages[1].kind, 'approval', '正文为空但 meta 有内容的记录要留下');
   assert.equal(clean.chat.messages[2].kind, 'task');
+});
+
+test('model 记录不会被降级成 reply', () => {
+  // 不认识的 kind 会被 `chatKindOf` 降级成 reply——
+  // 那是最糟的失败形态：记录没丢，却混进了两层的模型上下文。
+  const entry = normalizeChatEntry({ kind: 'model', role: 'assistant', text: '我先看看剪贴板', at: 1 });
+  assert.equal(entry.kind, 'model');
+});
+
+test('model 记录不进任何一层的模型上下文', () => {
+  // 「模型回合」只给人看：交互层与执行层都看不见它。
+  const history = [{ kind: 'model', role: 'assistant', text: '我先看看剪贴板', at: 1 }];
+  for (const layer of [LAYER.INTERACTION, LAYER.EXECUTION]) {
+    const messages = buildChatMessages({ history, layer });
+    assert.equal(messages.some((m) => m.content === '我先看看剪贴板'), false);
+  }
 });
 
 test('磁盘：meta 太大了要截断，别让一条记录把文件撑爆', () => {
