@@ -192,13 +192,23 @@ export function createAgentTasks({
         },
       });
 
-      // `done` 兑现的是**后端的返回**（与 backend.chat 一样）：
-      // 前台路径要把它当成一次对话的结果直接用。
+      // `done` 兑现的是**后端的返回**（与 backend.chat 一样）。
+      //
+      // **谁在读它**：下面那个失败处理分支（`void done.then(…)`）——
+      // 它靠 `done` 抛出的东西分辨「失败」与「被取消」。
+      // 前台不再消费它（前台走的是交互层，不走 `tasks.submit`）。
       const done = job.done.then((outcome) => {
         if (outcome.ok) return outcome.result;
-        const error = outcome.error || new Error('这件事没做成');
+        const cancelled = outcome.status === TASK_STATUS.CANCELLED;
         // **取消不是失败**：单独标出来，通知时别当成「没做成」。
-        error.cancelled = outcome.status === TASK_STATUS.CANCELLED;
+        //
+        // **不写进原错误对象**：后端抛出来的可能是字符串或数字（不是对象），
+        // 给原始值挂属性在严格模式下会抛 TypeError，把真实原因弄丢；
+        // 而且那是 runtime 还持有的同一个对象，标记会漏进记录里。
+        const raw = outcome.error;
+        const error = new Error(raw?.message || String(raw || '这件事没做成'));
+        if (raw) error.cause = raw;
+        error.cancelled = cancelled;
         throw error;
       });
 

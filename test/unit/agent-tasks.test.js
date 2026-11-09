@@ -170,6 +170,59 @@ test('任务做完了：通知里带着任务号', async () => {
   assert.equal(seen[0].taskId, res.taskId);
 });
 
+test('任务做砸了：也要通知用户', async () => {
+  // **失败与成功一样要通知**：不然用户等半天，
+  // 什么也没等到，还以为任务还在跑。
+  const seen = [];
+  const tasks = createAgentTasks({
+    backend: {
+      chat: async () => {
+        throw new Error('后端炸了');
+      },
+    },
+    getMessages: () => [],
+    appendRecord: () => {},
+    notify: (payload) => seen.push(payload),
+  });
+  const res = await tasks.submit({ prompt: '查视频', title: '查视频' });
+  await assert.rejects(() => res.done, /后端炸了/);
+  await tick();
+  assert.equal(seen.length, 1, '失败也要发一条通知');
+  assert.equal(seen[0].ok, false);
+  assert.match(seen[0].text, /没做成/);
+});
+
+test('任务做砸了：错误是后端抛的原样那个', async () => {
+  // 后端抛的可能不是 Error（字符串、数字都有）。
+  // 取消标记不能挂在原值上——严格模式下挂属性会抛 TypeError，
+  // 把真实原因换成一句看不懂的报错。原错误要用 `cause` 保住。
+  const seen = [];
+  const tasks = createAgentTasks({
+    backend: {
+      chat: async () => {
+        throw '后端炸了';
+      },
+    },
+    getMessages: () => [],
+    appendRecord: () => {},
+    notify: (payload) => seen.push(payload),
+  });
+  const res = await tasks.submit({ prompt: '查视频', title: '查视频' });
+  // **原样**：消息就是后端抛的那句，不多不少。
+  await assert.rejects(
+    () => res.done,
+    (err) => {
+      assert.equal(err.message, '后端炸了');
+      assert.equal(err.cause, '后端炸了', '原错误要留在 cause 里');
+      return true;
+    }
+  );
+  await tick();
+  assert.equal(seen.length, 1, '字符串错误也要通知');
+  assert.equal(seen[0].ok, false);
+  assert.equal(seen[0].text, '这件事没做成：后端炸了');
+});
+
 test('中枢：事件带着任务号转发出去', async () => {
   const events = [];
   const tasks = createAgentTasks({

@@ -35,7 +35,7 @@ import { describeToolCall } from './agent/approval.js';
 import { interruptedTasks, taskRecord } from './agent/record.js';
 import { createInteractionBackend, INTERACTION_MAX_STEPS } from './layer/interaction.js';
 import { createTaskTools } from './layer/taskTools.js';
-import { runForeground } from './layer/foreground.js';
+import { runForeground, FALLBACK_NOTICE } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { mergeFacts } from './chat/memory.js';
 import { createRecordSink } from './chat/recordSink.js';
@@ -1139,13 +1139,10 @@ export function createAssistant({  userDataDir,
             ack.noteText();
             reply?.push(delta);
           },
-          // 交互层的工具调用**不转发**给插件：
-          // 它们不是执行层的步骤，转过去会污染插件看到的事件流。
-          onEvent: () => {},
         },
         onFallback: () => {
           // 这个模型不支持工具调用：明说，别让用户对着英文报错发呆。
-          say('这个模型不支持工具调用，先按普通对话来。', { speak: false, interrupt: true });
+          say(FALLBACK_NOTICE, { speak: false, interrupt: true });
         },
       });
     } catch (err) {

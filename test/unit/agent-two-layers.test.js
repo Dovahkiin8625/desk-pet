@@ -8,7 +8,7 @@ import { createAgentBackend } from '../../src/main/assistant/chat/agent.js';
 import { createAgentTasks } from '../../src/main/assistant/agent/tasks.js';
 import { createInteractionBackend } from '../../src/main/assistant/layer/interaction.js';
 import { createTaskTools } from '../../src/main/assistant/layer/taskTools.js';
-import { runForeground } from '../../src/main/assistant/layer/foreground.js';
+import { runForeground, FALLBACK_NOTICE } from '../../src/main/assistant/layer/foreground.js';
 import { LlmError, LLM_ERRORS } from '../../src/main/assistant/llm/openai.js';
 
 /**
@@ -192,7 +192,7 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
   // 且原文里提到工具，普通 Error 它不认（那样就不该退回）。
   const interaction = {
     async chat() {
-      throw new LlmError('这个模型不支持工具调用，先按普通对话来。', {
+      throw new LlmError(FALLBACK_NOTICE, {
         code: LLM_ERRORS.BAD_REQUEST,
         status: 400,
         body: 'tools is not supported',
@@ -216,6 +216,13 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
 
   assert.equal(result.text, '你好呀。');
   assert.ok(fallback, '要告诉用户这个模型不支持工具调用');
+});
+
+test('退回普通对话时说的那句话：不是空的，而且提到「工具」', () => {
+  // 这句话是规格 §10.4 的落点（「用户被告知」）。
+  // 它被改坏（变空串 / 不再提工具）时，这条用例要红。
+  assert.ok(FALLBACK_NOTICE, '退回时要有一句话告诉用户');
+  assert.match(FALLBACK_NOTICE, /工具/, '这句话要说明是工具调用不被支持');
 });
 
 test('别的错误不退回：还是把错误抛出去', async () => {
