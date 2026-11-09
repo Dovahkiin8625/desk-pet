@@ -218,6 +218,47 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
   assert.ok(fallback, '要告诉用户这个模型不支持工具调用');
 });
 
+test('前台这一轮的轮数：模型往返了几次', async () => {
+  const interactionFetch = fakeFetch([say('你好。')]);
+  const { interaction } = wire({ interactionFetch, executionFetch: fakeFetch([say('x')]) });
+  const plain = createPlainBackend({ fetchImpl: fakeFetch([say('x')]).fetchImpl });
+
+  const result = await runForeground({
+    interaction,
+    plain,
+    ctx: {
+      system: '你是小桌',
+      messages: buildChatMessages({ history: [], userText: '你好', layer: LAYER.INTERACTION }),
+      config: CONFIG,
+      turn: { history: [], userText: '你好', config: CONFIG },
+    },
+  });
+
+  assert.equal(result.steps, 1, '模型回了一句话，就是一轮');
+});
+
+test('退回普通对话：也算一轮——模型确实被调了一次', async () => {
+  const plain = createPlainBackend({ fetchImpl: fakeFetch([say('你好呀。')]).fetchImpl });
+  const interaction = {
+    async chat() {
+      throw new LlmError(FALLBACK_NOTICE, {
+        code: LLM_ERRORS.BAD_REQUEST,
+        status: 400,
+        body: 'tools is not supported',
+      });
+    },
+  };
+
+  const result = await runForeground({
+    interaction,
+    plain,
+    ctx: { system: '你是小桌', messages: [{ role: 'user', content: '你好' }], config: CONFIG },
+  });
+
+  // 这一轮模型没有正文，不会产生 model 记录——数条数会算成 0。
+  assert.equal(result.steps, 1, '退回普通对话也算一轮');
+});
+
 test('退回普通对话时说的那句话：不是空的，而且提到「工具」', () => {
   // 这句话是规格 §10.4 的落点（「用户被告知」）。
   // 它被改坏（变空串 / 不再提工具）时，这条用例要红。

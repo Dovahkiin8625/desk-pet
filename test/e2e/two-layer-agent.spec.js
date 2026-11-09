@@ -414,6 +414,42 @@ test.describe('双层 agent', () => {
     }
   });
 
+  test('前台答复的记录：带轮数与模型名', async () => {
+    const stub = await startStubLlm({
+      interaction: () => say('这条答复带了轮数。'),
+      execution: () => say('不该走到的执行层。'),
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      await panel.fill('#query', '记录一下');
+      await panel.press('#query', 'Control+Enter');
+
+      // **只挑前台答复那一条**：状态文件里还有别的 assistant 记录
+      // （派单、任务状态、完成通知、模型原话），它们不是这一轮。
+      // 前台答复的 `kind` 是 reply、没有任务号、正文是这一轮的答复。
+      const reply = await waitForState((s) =>
+        (s?.chat?.messages || []).find(
+          (m) =>
+            m.kind === 'reply' &&
+            !m.meta?.taskId &&
+            String(m.text || '').includes('这条答复带了轮数')
+        )
+      );
+      expect(reply, '状态文件里没有前台答复的记录').toBeTruthy();
+
+      expect(reply.meta.rounds, `轮数不对：${JSON.stringify(reply.meta)}`).toBe(1);
+      expect(reply.meta.model, `模型名不对：${JSON.stringify(reply.meta)}`).toBe('stub-model');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
   test('模型不认工具：退回普通对话，而且告诉用户', async () => {
     const stub = await startStubLlm({
       interaction: (body) => {

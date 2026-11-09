@@ -31,6 +31,10 @@ export async function runForeground({ interaction, plain, ctx, onFallback = null
   } catch (err) {
     if (!isToolsUnsupportedError(err)) throw err;
     onFallback?.(err);
-    return plain.chat(ctx);
+    // **退回普通对话也算一轮**：模型确实被调了一次。
+    // 页面上那行「问模型 X · N 轮」读的就是这个数——
+    // 记 0 的话，用户看到「0 轮」，像是什么都没发生。
+    const result = await plain.chat(ctx);
+    return { ...result, steps: 1 };
   }
 }

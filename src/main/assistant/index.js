@@ -1183,6 +1183,12 @@ export function createAssistant({  userDataDir,
       text: result.text,
       at: Date.now(),
       proactive: trigger === 'proactive',
+      // **轮数与模型名**：页面上那行「问模型 X · N 轮」读的是它。
+      // 轮数取后端返回的步数——数 model 记录条数会把「退回普通对话」那种轮算漏。
+      meta: {
+        rounds: Number(result.steps) || 0,
+        model: String(config.model || ''),
+      },
     });
     if (result.memories?.length) {
       state.chat.facts = mergeFacts(state.chat.facts, result.memories);
