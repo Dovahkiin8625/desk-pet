@@ -149,7 +149,7 @@ export function truncateByKind(messages, limits = CHAT_KIND_LIMITS) {
  *
  * 第三个参数从「总条数上限」变成了「分路上限表」；
  * 不传时用 `CHAT_KIND_LIMITS`——**注意总条数上限因此从 40 变成了分路各算**
- * （user/reply 各 40，step 200，task/approval 各 100）。
+ * （user/reply 各 40，step 与 model 各 200，task/approval/dispatch 各 100）。
  */
 export function appendMessage(messages, message, limits = CHAT_KIND_LIMITS) {
   const list = Array.isArray(messages) ? messages : [];

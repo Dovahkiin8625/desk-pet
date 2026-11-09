@@ -298,7 +298,7 @@ export const EMOTIONS = Object.freeze([
  * 磁盘上 user / reply **每一路**最多留多少条。
  *
  * 不是「总共留多少条」——磁盘上的总条数是分路各算的
- * （见 `CHAT_KIND_LIMITS`：user/reply 各 40，step 200，task/approval/dispatch 各 100）。
+ * （见 `CHAT_KIND_LIMITS`：user/reply 各 40，step 与 model 各 200，task/approval/dispatch 各 100）。
  */
 export const MAX_CHAT_MESSAGES = 40;
 

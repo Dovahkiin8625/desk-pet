@@ -37,6 +37,7 @@ test('分类：kind 的取值与规格一致', () => {
   assert.equal(CHAT_KIND.TASK, 'task');
   assert.equal(CHAT_KIND.STEP, 'step');
   assert.equal(CHAT_KIND.APPROVAL, 'approval');
+  assert.equal(CHAT_KIND.MODEL, 'model');
 });
 
 test('分类：旧记录没有 kind 时按 role 兜底', () => {
@@ -52,6 +53,9 @@ test('分类：每类记录有自己的上限', () => {
   assert.equal(CHAT_KIND_LIMITS.step, 200);
   assert.equal(CHAT_KIND_LIMITS.task, 100);
   assert.equal(CHAT_KIND_LIMITS.approval, 100);
+  // 模型回合：上限不能少写——上限表里某个分类写成 0 意思是「这一路不限」，
+  // 删掉这一行就悄悄变成不限了，测试还照样过。
+  assert.equal(CHAT_KIND_LIMITS.model, 200);
 });
 
 test('记录：写入时补齐 id / kind / at', () => {
