@@ -100,10 +100,11 @@ export const PET_LABEL = '桌宠自己起的头';
  *
  * 工具名是给程序看的，页面上要说人话。
  * 参数只取第一个、截到 40 字——一眼看出它动了什么就够了。
+ * 不认识的工具也**不把工具名印出来**——那串名字对用户没有意义。
  */
 export function fastToolLabel(tool, args) {
   const name = String(tool || '');
-  const base = FAST_TOOL_TEXT[name] || name;
+  const base = FAST_TOOL_TEXT[name] || '做了个操作';
   const arg = firstArg(args);
   return arg ? `${base} ${arg}` : base;
 }
@@ -124,23 +125,23 @@ export function firstArg(args) {
  * 派单的人话。
  *
  * 五个任务管理工具各有一句；不认识的工具显示它自己的动作原文。
+ * **不显示任务号**——那是内部标识，用户看不懂。
  */
 export function dispatchLabel(line) {
   const title = String(line?.title || '');
-  const taskId = String(line?.taskId || '');
   switch (String(line?.tool || '')) {
     case 'task.submit':
       return title ? `派了个后台任务：${title}` : '派了个后台任务';
     case 'task.list':
       return '看了看后台任务';
     case 'task.cancel':
-      return `停掉了任务 ${taskId}`;
+      return title ? `停掉了任务：${title}` : '停掉了那个后台任务';
     case 'task.delete':
-      return `归档了任务 ${taskId}`;
+      return title ? `归档了任务：${title}` : '归档了那个后台任务';
     case 'task.steer':
       return '给任务追加了一句要求';
     default:
-      return String(line?.action || '');
+      return String(line?.action || '') || '做了个后台操作';
   }
 }
 
@@ -152,7 +153,14 @@ export function statusLabel(status) {
 /** 一个任务的状态流水（排队中 → 进行中）。 */
 export function statusTrail(statuses) {
   const list = Array.isArray(statuses) ? statuses : [];
-  return list.map((status) => statusLabel(status)).filter(Boolean).join(' → ');
+  const words = [];
+  for (const status of list) {
+    const word = statusLabel(status);
+    if (!word) continue;
+    if (words[words.length - 1] === word) continue;
+    words.push(word);
+  }
+  return words.join(' → ');
 }
 
 /** 块右上角的徽标。 */
@@ -179,9 +187,12 @@ export function stepsLabel(count) {
   return `步骤（${Number(count) || 0}）`;
 }
 
-/** 「结果：有 12 个视频」。 */
-export function resultLabel(text) {
-  return `结果：${String(text || '')}`;
+/** 执行层答复那一条明细的标题。 */
+export const RESULT_LABEL = '结果';
+
+/** 执行层答复的正文。 */
+export function resultText(text) {
+  return String(text || '');
 }
 
 /** 「查 F 盘 video · 进行中」。 */

@@ -12,7 +12,8 @@ import {
   modelRoundLabel,
   ORPHAN_LABEL,
   PET_LABEL,
-  resultLabel,
+  RESULT_LABEL,
+  resultText,
   statusLabel,
   statusTrail,
   stepLabel,
@@ -72,8 +73,8 @@ test('快工具：说人话，带上第一个参数', () => {
   assert.equal(fastToolLabel('clock.now', null), '问了时间');
 });
 
-test('快工具：不认识的工具就照原样说', () => {
-  assert.equal(fastToolLabel('weird.tool', null), 'weird.tool');
+test('快工具：不认识的工具也不把工具名甩给用户看', () => {
+  assert.equal(fastToolLabel('weird.tool', null), '做了个操作');
 });
 
 test('快工具：参数太长截到 40 字', () => {
@@ -86,13 +87,29 @@ test('快工具：参数太长截到 40 字', () => {
 test('派单：五个任务管理工具各有一句', () => {
   assert.equal(dispatchLabel({ tool: 'task.submit', title: '查视频' }), '派了个后台任务：查视频');
   assert.equal(dispatchLabel({ tool: 'task.list' }), '看了看后台任务');
-  assert.equal(dispatchLabel({ tool: 'task.cancel', taskId: 't-1' }), '停掉了任务 t-1');
-  assert.equal(dispatchLabel({ tool: 'task.delete', taskId: 't-1' }), '归档了任务 t-1');
+  assert.equal(dispatchLabel({ tool: 'task.cancel', title: '查视频' }), '停掉了任务：查视频');
+  assert.equal(dispatchLabel({ tool: 'task.delete', title: '查视频' }), '归档了任务：查视频');
   assert.equal(dispatchLabel({ tool: 'task.steer' }), '给任务追加了一句要求');
+});
+
+test('派单：不显示任务号', () => {
+  const label = dispatchLabel({ tool: 'task.cancel', taskId: 't-1', title: '查视频' });
+  assert.ok(!label.includes('t-1'));
+  assert.ok(!label.includes('t-1'));
+});
+
+test('派单：取不到标题就退成一句人话，也不显示任务号', () => {
+  assert.equal(dispatchLabel({ tool: 'task.cancel', taskId: 't-1' }), '停掉了那个后台任务');
+  assert.equal(dispatchLabel({ tool: 'task.delete', taskId: 't-9' }), '归档了那个后台任务');
 });
 
 test('派单：不认识的工具就显示它自己的动作原文', () => {
   assert.equal(dispatchLabel({ tool: 'other', action: '干点别的' }), '干点别的');
+});
+
+test('派单：不认识的工具又没有动作原文，也得有一句人话', () => {
+  assert.equal(dispatchLabel({ tool: 'other' }), '做了个后台操作');
+  assert.equal(dispatchLabel({ tool: 'other', action: '' }), '做了个后台操作');
 });
 
 test('任务状态：说人话', () => {
@@ -107,6 +124,11 @@ test('任务状态：流水写成「排队中 → 进行中」', () => {
   assert.equal(statusTrail(['queued', 'running']), '排队中 → 进行中');
   assert.equal(statusTrail([]), '');
   assert.equal(statusTrail(null), '');
+});
+
+test('任务状态：流水里连续重复的状态只留一个', () => {
+  assert.equal(statusTrail(['queued', 'running', 'running']), '排队中 → 进行中');
+  assert.equal(statusTrail(['running', 'running', 'running']), '进行中');
 });
 
 test('徽标：四种', () => {
@@ -127,7 +149,8 @@ test('模型：每一轮写自己的号', () => {
 
 test('后台那边：步骤、结果、任务标题', () => {
   assert.equal(stepsLabel(3), '步骤（3）');
-  assert.equal(resultLabel('有 12 个视频'), '结果：有 12 个视频');
+  assert.equal(RESULT_LABEL, '结果');
+  assert.equal(resultText('有 12 个视频'), '有 12 个视频');
   assert.equal(taskLabel('查视频', 'running'), '查视频 · 进行中');
 });
 

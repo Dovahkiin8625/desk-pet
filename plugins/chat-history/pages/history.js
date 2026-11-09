@@ -12,7 +12,8 @@ import {
   modelRoundLabel,
   ORPHAN_LABEL,
   PET_LABEL,
-  resultLabel,
+  RESULT_LABEL,
+  resultText,
   statusTrail,
   stepLabel,
   stepsLabel,
@@ -270,7 +271,13 @@ function renderTask(card) {
     task.appendChild(el('p', 'line-approval', approvalLabel(approval?.meta?.decision)));
   }
   if (card.result) {
-    task.appendChild(el('div', 'task-result', resultLabel(card.result.text)));
+    const detail = el('details', 'detail');
+    detail.dataset.detail = 'result';
+    detail.appendChild(el('summary', 'detail-head', RESULT_LABEL));
+    const body = el('div', 'detail-body');
+    body.appendChild(el('p', 'task-result', resultText(card.result.text)));
+    detail.appendChild(body);
+    task.appendChild(detail);
   }
   return task;
 }
@@ -292,7 +299,7 @@ function renderTurn(turn) {
 
   const body = el('div', 'turn-body');
   const front = renderFront(turn);
-  if (front.childNodes.length) body.appendChild(front);
+  if (turn.front.length) body.appendChild(front);
   if (turn.back.length) {
     const lane = el('section', 'lane lane-back');
     lane.appendChild(el('h3', 'lane-title', '后台那边'));
