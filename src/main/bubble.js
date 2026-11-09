@@ -284,10 +284,11 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       ttlMs: Number.isFinite(message?.ttlMs) ? message.ttlMs : undefined,
       // 摆位偏好（'top'/'bottom'/'left'/'right'）：不给就按默认顺序摆。
       side: message?.side || '',
+      // **「打断」的意图要一起带进队列**：页面还没就绪时消息是排队的，
+      // 等页面就绪了才按同一套规矩来判断——不带这个标记，
+      // 「提醒、闹钟可以插队」的规矩就丢了。
+      interrupt: Boolean(message?.interrupt),
     };
-    // **先**记住气泡现在显示的是什么：下面要用它判断
-    // 「聊天回复是不是正占着气泡」——currentMessage 马上就要被覆盖了。
-    const showingChat = currentMessage?.kind === MESSAGE_KIND.CHAT;
 
     if (!win || win.isDestroyed()) {
       createWindow();
@@ -299,11 +300,6 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       pending.push({ type: 'message', payload });
       return;
     }
-    if (streamId && !message?.interrupt) {
-      // 流式期间：排队，不要打断半句话。
-      deferred.push(payload);
-      return;
-    }
     if (streamId && message?.interrupt) cancelStream();
     // 审批气泡挂着的时候，普通消息**排队**：
     // 审批是阻塞的，用户正在做决定——
@@ -312,17 +308,30 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       deferred.push(payload);
       return;
     }
-    // 聊天回复正在显示时，别的消息排队等它读完。
-    //
-    // 否则一句问候就能把刚说完的回复顶掉——用户读到一半，
-    // 自己刚收到的话就没了（虽然聊天记录里还在）。
-    // 提醒、闹钟这类要紧的消息带 `interrupt`，可以直接插队。
-    if (showingChat && !message?.interrupt) {
+    // 该让着就让着（流还在写、或者聊天回复正占着气泡）。
+    if (shouldWaitBehind(payload)) {
       deferred.push(payload);
       return;
     }
     currentMessage = payload;
     deliver(payload);
+  }
+
+  /**
+   * 这条消息现在该不该排队。
+   *
+   * **页面没就绪时也要用同一套规矩**：页面就绪后补发的消息，
+   * 如果直接盖上去，刚说完的回复正文就没了——
+   * 用户只看到后来说的那句，前一句像是从来没出现过。
+   * （回复的定稿是补发的最后一步，被盖掉就再也补不回来。）
+   */
+  function shouldWaitBehind(payload) {
+    // 带 interrupt 的（提醒、闹钟）可以插队。
+    if (payload?.interrupt) return false;
+    // 流还在写：不要打断半句话。
+    if (streamId) return true;
+    // 聊天回复正占着气泡：等用户读完。
+    return currentMessage?.kind === MESSAGE_KIND.CHAT;
   }
 
   function deliver(payload) {
@@ -497,6 +506,11 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
         // 审批气泡：**不装计时器**（它要一直挂着等用户点）。
         setInteractive(true);
         send('pet:bubbleApproval', item.payload);
+      } else if (shouldWaitBehind(item.payload)) {
+        // 跟 show() 一个规矩：聊天回复正占着气泡时，这条消息排队。
+        // 不排队的话，它会盖掉刚说完的回复——
+        // 而回复的定稿是**补发的最后一步**，被盖掉就再也补不回来。
+        deferred.push(item.payload);
       } else deliver(item.payload);
     }
     // 模型比气泡页加载还快的时候，开头那几句会先到：补上。
