@@ -3,6 +3,7 @@ import { buildTurns } from './turns.js';
 import { createEntryStore } from './entries.js';
 import {
   approvalLabel,
+  approvalLineLabel,
   argsPreview,
   badgeLabel,
   BRIEF_LABEL,
@@ -18,7 +19,7 @@ import {
   stepLabel,
   stepsLabel,
   TOOL_ERROR_LABEL,
-  taskLabel,
+  taskLineLabel,
 } from './format.js';
 
 /**
@@ -183,11 +184,11 @@ function renderFront(turn) {
       continue;
     }
     if (line.type === 'task') {
-      lane.appendChild(el('p', 'line-task', taskLabel(line.title, line.status)));
+      lane.appendChild(el('p', 'line-task', taskLineLabel(line)));
       continue;
     }
     if (line.type === 'approval') {
-      lane.appendChild(el('p', 'line-approval', approvalLabel(line.decision)));
+      lane.appendChild(el('p', 'line-approval', approvalLineLabel(line)));
     }
   }
   return lane;
@@ -282,13 +283,42 @@ function renderTask(card) {
   return task;
 }
 
+/**
+ * 一块的标题。
+ *
+ * 孤儿块（没有对应的那句话）不能直接用记录原文当标题——
+ * 原文里带着工具名与内部编号（「task.submit 派了个任务：查视频 （任务 t-1）」）。
+ * 那种块的第一行是**桌宠那边**的记录，改用它的**人话**当标题：
+ * 说的是那件事，不是记录的样子。
+ */
+function turnTitle(turn) {
+  if (!turn.orphan) return turn.title;
+  const line = turn.front[0];
+  if (!line) return turn.title;
+  switch (line.type) {
+    case 'dispatch':
+      return dispatchLabel(line);
+    case 'call':
+      return fastToolLabel(line.tool, line.args);
+    case 'model':
+    case 'reply':
+      return String(line.text || '');
+    case 'task':
+      return taskLineLabel(line);
+    case 'approval':
+      return approvalLineLabel(line);
+    default:
+      return turn.title;
+  }
+}
+
 /** 一块（一次发话）。 */
 function renderTurn(turn) {
   const detail = el('details', 'turn');
   detail.dataset.turn = turn.id;
   const head = el('summary', 'turn-head');
   head.appendChild(el('span', 'turn-time', timeLabel(turn.at)));
-  head.appendChild(el('span', 'turn-title', turn.title));
+  head.appendChild(el('span', 'turn-title', turnTitle(turn)));
   if (turn.orphan) {
     head.appendChild(el('span', 'turn-flag', ORPHAN_LABEL));
   } else if (turn.opener === 'pet') {

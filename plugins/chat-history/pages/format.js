@@ -208,3 +208,21 @@ export function approvalLabel(decision) {
   const text = DECISION_TEXT[String(decision || '')] || '';
   return text ? `有个操作${text}` : '有个操作等你点头';
 }
+
+/**
+ * 旧数据兜底：一条没有任务号的任务记录。
+ *
+ * 正常流程里带任务号的记录都归到「后台那边」了，走不到这里。
+ * 但万一走到了，页面上不能留一句空白。
+ */
+export function taskLineLabel(line) {
+  const title = String(line?.title ?? line?.meta?.title ?? '');
+  const status = String(line?.status ?? line?.meta?.status ?? '');
+  return taskLabel(title, status) || '有个后台任务';
+}
+
+/** 旧数据兜底：一条没有任务号的审批记录。 */
+export function approvalLineLabel(line) {
+  const decision = String(line?.decision ?? line?.meta?.decision ?? '') || '';
+  return approvalLabel(decision);
+}

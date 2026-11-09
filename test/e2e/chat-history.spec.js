@@ -160,6 +160,45 @@ async function seedChatBackOnly() {
 }
 
 /**
+ * 摆一份「无锚点的派单」。
+ *
+ * 派单记录没有配对的用户那句话 → 一块「没有对应的那句话」。
+ * 它的标题要说的是那件事（派了个后台任务：查视频），
+ * 不是记录原文（「task.submit 派了个任务：查视频 （任务 t-1）」）。
+ */
+async function seedChatOrphanDispatch() {
+  const base = todayBase();
+  await mkdir(USER_DATA, { recursive: true });
+  await writeFile(
+    join(USER_DATA, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      llm: { enabled: true, ackEnabled: false },
+      chat: {
+        messages: [
+          {
+            kind: 'dispatch',
+            role: 'assistant',
+            text: 'task.submit 派了个任务：查视频 （任务 t-1）',
+            at: base,
+            meta: {
+              tool: 'task.submit',
+              taskId: 't-1',
+              title: '查视频',
+              action: '派了个任务：查视频',
+              brief: '看看 F 盘 video 下有什么',
+              layer: 'interaction',
+            },
+          },
+        ],
+        facts: [],
+      },
+    }),
+    'utf8'
+  );
+}
+
+/**
  * 摆一份带「没有对应的那句话」的块与桌宠自己起头的块。
  *
  * - 开头那条模型记录没有用户的话接着它 → 一块「没有对应的那句话」；
@@ -378,6 +417,33 @@ test.describe('聊天记录插件', () => {
       const frame = panel.frameLocator('#plugin-frame');
       await expect(frame.locator('.lane-front')).toHaveCount(0);
       await expect(frame.locator('.lane-back .lane-title')).toHaveText('后台那边');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('没有对应的那句话的块：标题说人话，不露工具名与内部编号', async () => {
+    await seedChatOrphanDispatch();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      const frame = panel.frameLocator('#plugin-frame');
+      const title = frame.locator('.turn-title');
+      await expect(title).toHaveCount(1);
+      await expect(title).not.toContainText('task.submit');
+      await expect(title).not.toContainText('t-1');
+      await expect(title).toContainText('查视频');
     } finally {
       await app.close();
     }

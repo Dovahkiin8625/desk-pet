@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   approvalLabel,
+  approvalLineLabel,
   argsPreview,
   badgeLabel,
   BRIEF_LABEL,
@@ -20,6 +21,7 @@ import {
   stepsLabel,
   TOOL_ERROR_LABEL,
   taskLabel,
+  taskLineLabel,
 } from '../../plugins/chat-history/pages/format.js';
 
 /**
@@ -95,7 +97,6 @@ test('派单：五个任务管理工具各有一句', () => {
 test('派单：不显示任务号', () => {
   const label = dispatchLabel({ tool: 'task.cancel', taskId: 't-1', title: '查视频' });
   assert.ok(!label.includes('t-1'));
-  assert.ok(!label.includes('t-1'));
 });
 
 test('派单：取不到标题就退成一句人话，也不显示任务号', () => {
@@ -158,6 +159,18 @@ test('审批：说人话', () => {
   assert.equal(approvalLabel('allow'), '有个操作已允许');
   assert.equal(approvalLabel('deny'), '有个操作已拒绝');
   assert.equal(approvalLabel(''), '有个操作等你点头');
+});
+
+test('旧数据兜底：没有任务号的任务记录也要有一句人话', () => {
+  assert.equal(taskLineLabel({ title: '查视频', status: 'done' }), '查视频 · 完成');
+  assert.equal(taskLineLabel({ meta: { title: '查视频', status: 'done' } }), '查视频 · 完成');
+  assert.equal(taskLineLabel({}), '有个后台任务');
+});
+
+test('旧数据兜底：没有任务号的审批记录也要有一句人话', () => {
+  assert.equal(approvalLineLabel({ decision: 'allow' }), '有个操作已允许');
+  assert.equal(approvalLineLabel({ meta: { decision: 'deny' } }), '有个操作已拒绝');
+  assert.equal(approvalLineLabel({}), '有个操作等你点头');
 });
 
 test('页面上的固定说法', () => {
