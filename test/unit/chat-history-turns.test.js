@@ -5,8 +5,8 @@ import { buildTurns } from '../../plugins/chat-history/pages/turns.js';
 const NOW = Date.parse('2026-11-08T12:00:00+08:00');
 const AT = (text) => Date.parse(`2026-11-08T${text}:00+08:00`);
 
-function entry(kind, text, { id = '', at = AT('10:00'), meta = {} } = {}) {
-  return { id: id || `${kind}:${text}`, kind, role: 'assistant', text, at, meta };
+function entry(kind, text, { id = '', at = AT('10:00'), meta = {}, proactive = false } = {}) {
+  return { id: id || `${kind}:${text}`, kind, role: 'assistant', text, at, meta, proactive };
 }
 
 test('一次发话收成一块', () => {
@@ -17,6 +17,7 @@ test('一次发话收成一块', () => {
   assert.equal(groups.length, 1);
   assert.equal(groups[0].turns.length, 1);
   assert.equal(groups[0].turns[0].title, '在吗');
+  assert.equal(groups[0].turns[0].id, 'turn:user:在吗');
 });
 
 test('桌宠这边与后台那边分开', () => {
@@ -146,4 +147,75 @@ test('一块里的话按时间升序', () => {
   ], { now: NOW });
   const front = groups[0].turns[0].front;
   assert.deepEqual(front.map((l) => l.type), ['model', 'reply']);
+});
+
+test('桌宠主动搭话：自己开一块', () => {
+  const groups = buildTurns([
+    entry('reply', '早上好', { at: AT('10:00'), proactive: true }),
+    entry('reply', '要出门吗', { at: AT('10:01'), proactive: true }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 1);
+  assert.equal(groups[0].turns[0].opener, 'pet');
+  assert.equal(groups[0].turns[0].title, '早上好');
+});
+
+test('徽标：任务失败了也是失败', () => {
+  const groups = buildTurns([
+    entry('user', '查视频', { at: AT('10:00') }),
+    entry('dispatch', '派单', { at: AT('10:01'), meta: { tool: 'task.submit', taskId: 't-1' } }),
+    entry('task', '失败', { at: AT('10:02'), meta: { taskId: 't-1', status: 'failed' } }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns[0].badge, 'failed');
+});
+
+test('交互层的快工具：桌宠这边多一行', () => {
+  const groups = buildTurns([
+    entry('user', '几点了', { at: AT('10:00') }),
+    entry('step', 'clock.now', { at: AT('10:01'), meta: { layer: 'interaction', tool: 'clock.now' } }),
+    entry('reply', '三点了', { at: AT('10:02') }),
+  ], { now: NOW });
+  const call = groups[0].turns[0].front.find((l) => l.type === 'call');
+  assert.ok(call, '应该有一行调工具');
+  assert.equal(call.tool, 'clock.now');
+});
+
+test('答复拿不到轮数：退回数 model 记录的条数', () => {
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('model', '在', { at: AT('10:01'), meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' } }),
+    entry('reply', '在呢', { at: AT('10:02') }),
+  ], { now: NOW });
+  const reply = groups[0].turns[0].front.find((l) => l.type === 'reply');
+  assert.equal(reply.rounds, 1);
+  assert.equal(reply.model, 'MiniMax-M2');
+});
+
+test('答复带了轮数与模型名：用它，不数 model 记录', () => {
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('model', '在', { at: AT('10:01'), meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' } }),
+    entry('reply', '在呢', { at: AT('10:02'), meta: { rounds: 3, model: 'stub-model' } }),
+  ], { now: NOW });
+  const reply = groups[0].turns[0].front.find((l) => l.type === 'reply');
+  assert.equal(reply.rounds, 3);
+  assert.equal(reply.model, 'stub-model');
+});
+
+test('没有 kind 的旧记录：按 role 兜底，不丢', () => {
+  const groups = buildTurns([
+    { id: 'old-1', role: 'assistant', text: '旧记录', at: AT('10:00') },
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 1);
+  assert.equal(groups[0].turns[0].front.length, 1);
+});
+
+test('没有 taskId 的 task / approval：留在桌宠这边，不丢', () => {
+  const groups = buildTurns([
+    entry('user', '查视频', { at: AT('10:00') }),
+    entry('task', '完成 · 查视频', { at: AT('10:01'), meta: { status: 'done', title: '查视频' } }),
+    entry('approval', '要批一下', { at: AT('10:02'), meta: { tool: 'fs.write', decision: 'allow' } }),
+  ], { now: NOW });
+  const front = groups[0].turns[0].front;
+  assert.equal(front.filter((l) => l.type === 'task').length, 1);
+  assert.equal(front.filter((l) => l.type === 'approval').length, 1);
 });

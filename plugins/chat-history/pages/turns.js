@@ -17,13 +17,18 @@
  * 归属的规矩能直接被测。
  */
 
-import { TASK_FINAL_STATUS, TASK_STATUS } from '../../../src/shared/assistant.js';
+import {
+  CHAT_KIND,
+  chatKindOf,
+  TASK_FINAL_STATUS,
+  TASK_STATUS,
+} from '../../../src/shared/assistant.js';
 
 /** 到终态就算跑完了。 */
 const FINAL_STATUS = new Set(TASK_FINAL_STATUS);
 
 /** 这三种记录带着任务号，归后台那边。 */
-const BACK_KINDS = new Set(['task', 'step', 'approval']);
+const BACK_KINDS = new Set([CHAT_KIND.TASK, CHAT_KIND.STEP, CHAT_KIND.APPROVAL]);
 
 /**
  * 把记录归成块，再按时间分组。
@@ -41,24 +46,30 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const cards = new Map();
   const dispatchedIn = new Map();
   let current = null;
+  let petBlock = null;
 
   for (const entry of list) {
-    const kind = kindOf(entry);
+    const kind = chatKindOf(entry);
     const taskId = taskIdOf(entry);
 
-    if (taskId && (BACK_KINDS.has(kind) || kind === 'reply')) {
+    if (taskId && (BACK_KINDS.has(kind) || kind === CHAT_KIND.REPLY)) {
       cardOf(cards, entry, kind);
       continue;
     }
 
-    if (kind === 'user') {
+    if (kind === CHAT_KIND.USER) {
       current = newBlock(entry, 'user');
       blocks.push(current);
       continue;
     }
-    if (kind === 'reply' && entry?.proactive) {
-      current = newBlock(entry, 'pet');
-      blocks.push(current);
+    if (kind === CHAT_KIND.REPLY && entry?.proactive) {
+      if (current && current === petBlock) {
+        current.entries.push(entry);
+      } else {
+        current = newBlock(entry, 'pet');
+        petBlock = current;
+        blocks.push(current);
+      }
       continue;
     }
     if (!current) {
@@ -68,7 +79,7 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     } else {
       current.entries.push(entry);
     }
-    if (kind === 'dispatch' && taskId && !dispatchedIn.has(taskId)) {
+    if (kind === CHAT_KIND.DISPATCH && taskId && !dispatchedIn.has(taskId)) {
       dispatchedIn.set(taskId, current);
     }
   }
@@ -93,11 +104,6 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   }
 
   return groupByTime(blocks, now);
-}
-
-/** 记录的分类。 */
-function kindOf(entry) {
-  return String(entry?.kind || '');
 }
 
 /** 记录带的任务号。 */
@@ -147,12 +153,12 @@ function cardOf(cards, entry, kind) {
     };
     cards.set(taskId, card);
   }
-  if (kind === 'task') {
+  if (kind === CHAT_KIND.TASK) {
     card.statuses.push(entry);
     if (!card.title) card.title = String(entry?.meta?.title || '');
-  } else if (kind === 'step') {
+  } else if (kind === CHAT_KIND.STEP) {
     card.steps.push(entry);
-  } else if (kind === 'approval') {
+  } else if (kind === CHAT_KIND.APPROVAL) {
     card.approvals.push(entry);
   } else {
     card.result = entry;
@@ -162,12 +168,12 @@ function cardOf(cards, entry, kind) {
 
 /** 「桌宠这边」的一行行。 */
 function frontLines(block) {
-  const models = block.entries.filter((entry) => kindOf(entry) === 'model');
+  const models = block.entries.filter((entry) => chatKindOf(entry) === CHAT_KIND.MODEL);
   const lines = [];
   for (const entry of block.entries) {
-    const kind = kindOf(entry);
-    if (kind === 'user') continue;
-    if (kind === 'model') {
+    const kind = chatKindOf(entry);
+    if (kind === CHAT_KIND.USER) continue;
+    if (kind === CHAT_KIND.MODEL) {
       lines.push({
         type: 'model',
         text: textOf(entry),
@@ -176,17 +182,39 @@ function frontLines(block) {
       });
       continue;
     }
-    if (kind === 'step') {
+    if (kind === CHAT_KIND.STEP) {
       lines.push({
         type: 'call',
         tool: String(entry?.meta?.tool || ''),
         args: entry?.meta?.args ?? null,
         result: entry?.meta?.result ?? '',
-        error: entry?.meta?.error ?? '',
+        error: String(entry?.meta?.error || ''),
       });
       continue;
     }
-    if (kind === 'dispatch') {
+    if (kind === CHAT_KIND.TASK) {
+      lines.push({
+        type: 'task',
+        taskId: taskIdOf(entry),
+        status: String(entry?.meta?.status || ''),
+        title: String(entry?.meta?.title || ''),
+        text: textOf(entry),
+      });
+      continue;
+    }
+    if (kind === CHAT_KIND.APPROVAL) {
+      lines.push({
+        type: 'approval',
+        taskId: taskIdOf(entry),
+        tool: String(entry?.meta?.tool || ''),
+        args: entry?.meta?.args ?? null,
+        risk: String(entry?.meta?.risk || ''),
+        decision: String(entry?.meta?.decision || ''),
+        text: textOf(entry),
+      });
+      continue;
+    }
+    if (kind === CHAT_KIND.DISPATCH) {
       lines.push({
         type: 'dispatch',
         tool: String(entry?.meta?.tool || ''),
@@ -197,7 +225,7 @@ function frontLines(block) {
       });
       continue;
     }
-    if (kind === 'reply') {
+    if (kind === CHAT_KIND.REPLY) {
       lines.push({
         type: 'reply',
         text: textOf(entry),
@@ -231,7 +259,7 @@ function modelNameOf(entry, models) {
 function titleOf(block) {
   if (block.title) return block.title;
   if (block.opener === 'user') {
-    const user = block.entries.find((entry) => kindOf(entry) === 'user');
+    const user = block.entries.find((entry) => chatKindOf(entry) === CHAT_KIND.USER);
     if (user) return textOf(user);
   }
   for (const entry of block.entries) {
@@ -265,7 +293,7 @@ function groupByTime(blocks, now) {
   const base = Number(now);
   const moment = Number.isFinite(base) ? base : Date.now();
   const today = dayOf(moment);
-  const yesterday = dayOf(moment - 86400000);
+  const yesterday = previousDay(moment);
   const groups = new Map();
 
   for (const block of blocks) {
@@ -317,6 +345,12 @@ function dayOf(at) {
     month: date.getMonth() + 1,
     day: date.getDate(),
   };
+}
+
+/** 按日历日回退一天（不减 24 小时——夏令时那天会分错）。 */
+function previousDay(at) {
+  const date = new Date(at);
+  return dayOf(new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1).getTime());
 }
 
 function sameDay(a, b) {
