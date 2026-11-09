@@ -153,6 +153,23 @@ test('中枢：后台任务做完了要通知用户', async () => {
   assert.match(notices[0].text, /做完了/);
 });
 
+test('任务做完了：通知里带着任务号', async () => {
+  // 页面要靠任务号把后台的结果归回发起它的那一块，
+  // 所以完成通知里必须带着它（规格 §7.3）。
+  const seen = [];
+  const tasks = createAgentTasks({
+    backend: { chat: async () => ({ text: '干完了' }) },
+    getMessages: () => [],
+    appendRecord: () => {},
+    notify: (payload) => seen.push(payload),
+    now: () => 1,
+  });
+  const res = await tasks.submit({ prompt: '查视频', title: '查视频', config: {} });
+  await res.done;
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].taskId, res.taskId);
+});
+
 test('中枢：事件带着任务号转发出去', async () => {
   const events = [];
   const tasks = createAgentTasks({

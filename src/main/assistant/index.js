@@ -299,14 +299,18 @@ export function createAssistant({  userDataDir,
         layer: LAYER.EXECUTION,
       }),
     appendRecord: appendChatRecord,
-    notify: ({ text, ok }) => {
+    notify: ({ text, ok, taskId }) => {
       // 完成通知也是**桌宠说的话**：记成 reply，
       // 交互层下一轮要记得「刚才那件事做完了」（规格 §7.3）。
+      //
+      // **带上任务号**：页面要靠它把结果归回发起它的那一块——
+      // 没有它，完成的答复就成了没来由的一句话。
       appendChatRecord({
         role: 'assistant',
         text: String(text || ''),
         at: Date.now(),
         proactive: false,
+        meta: { taskId: String(taskId || ''), layer: LAYER.EXECUTION },
       });
       // **不带 interrupt**：用户正在说话或正在做决定时，完成通知要排队，
       // 不能把气泡顶掉（规格 §5.3）。

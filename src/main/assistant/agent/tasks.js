@@ -28,7 +28,7 @@ import { AGENT_EVENT, APPROVAL_DECISION, TASK_STATUS } from '../../../shared/ass
  * @param {Function} [options.ask] 问用户：({taskId, tool, args, risk}) → Promise<'allow'|'deny'|'always'|'cancel'>
  * @param {Function} [options.getMessages] 后台任务的对话上下文
  * @param {Function} [options.appendRecord] 写一条分类记录
- * @param {Function} [options.notify] 通知用户：({ title, text, ok })
+ * @param {Function} [options.notify] 通知用户：({ title, text, ok, taskId })
  * @param {Function} [options.onEvent] 事件转发（给插件）
  * @param {Function} [options.getMaxConcurrent] 同时跑几个任务
  * @param {Function} [options.getPolicy] 审批策略
@@ -211,6 +211,8 @@ export function createAgentTasks({
             title: job.title,
             text: result?.text || '这件事做完了',
             ok: true,
+            // **带上任务号**：页面要靠它把结果归回发起它的那一块。
+            taskId: job.taskId,
           });
         },
         (err) => {
@@ -220,6 +222,8 @@ export function createAgentTasks({
             title: job.title,
             text: `这件事没做成：${err?.message || err}`,
             ok: false,
+            // 失败同样要带任务号：失败的块也得归回原来那一块。
+            taskId: job.taskId,
           });
         }
       );
