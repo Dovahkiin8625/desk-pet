@@ -152,11 +152,20 @@ test('一块里的话按时间升序', () => {
 test('桌宠主动搭话：自己开一块', () => {
   const groups = buildTurns([
     entry('reply', '早上好', { at: AT('10:00'), proactive: true }),
-    entry('reply', '要出门吗', { at: AT('10:01'), proactive: true }),
   ], { now: NOW });
   assert.equal(groups[0].turns.length, 1);
   assert.equal(groups[0].turns[0].opener, 'pet');
   assert.equal(groups[0].turns[0].title, '早上好');
+});
+
+test('桌宠说了两次话：两块', () => {
+  const groups = buildTurns([
+    entry('reply', '早上好', { at: AT('10:00'), proactive: true }),
+    entry('reply', '要出门吗', { at: AT('10:05'), proactive: true }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+  assert.equal(groups[0].turns[0].title, '要出门吗');   // 组内倒序，晚的在前
+  assert.equal(groups[0].turns[1].title, '早上好');
 });
 
 test('徽标：任务失败了也是失败', () => {

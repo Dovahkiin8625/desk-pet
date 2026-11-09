@@ -46,7 +46,6 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const cards = new Map();
   const dispatchedIn = new Map();
   let current = null;
-  let petBlock = null;
 
   for (const entry of list) {
     const kind = chatKindOf(entry);
@@ -63,13 +62,8 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       continue;
     }
     if (kind === CHAT_KIND.REPLY && entry?.proactive) {
-      if (current && current === petBlock) {
-        current.entries.push(entry);
-      } else {
-        current = newBlock(entry, 'pet');
-        petBlock = current;
-        blocks.push(current);
-      }
+      current = newBlock(entry, 'pet');
+      blocks.push(current);
       continue;
     }
     if (!current) {
