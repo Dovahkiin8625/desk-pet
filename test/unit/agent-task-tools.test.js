@@ -84,6 +84,7 @@ test('派单：记一条 dispatch 记录，正文里有任务号', async () => {
   assert.equal(records.length, 1);
   assert.equal(records[0].kind, CHAT_KIND.DISPATCH);
   assert.match(records[0].text, /t-9/, '任务号要在正文里：交互层下一轮要靠它说「停掉 t-9」');
+  assert.equal(records[0].meta.brief, '看看', '交底要进派单记录：页面要原样显示它');
 });
 
 test('派单：说明太长就让它写短点', async () => {

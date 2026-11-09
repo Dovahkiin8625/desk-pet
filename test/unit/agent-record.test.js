@@ -243,6 +243,7 @@ test('模型回合的记录', () => {
 test('派单记录带着交底原文', () => {
   const entry = dispatchRecord({ tool: 'task.submit', taskId: 't-1', title: '查视频', brief: '看看 F 盘 video 下有什么' });
   assert.equal(entry.meta.brief, '看看 F 盘 video 下有什么');
+  assert.equal(entry.meta.layer, LAYER.INTERACTION);
 });
 
 test('步骤记录带着是哪一层的', () => {

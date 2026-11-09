@@ -5,7 +5,7 @@ import { createStreamSplitter, parseReply } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
 import { createFastToolSet } from './fastTools.js';
 import { buildInteractionPrompt } from './prompt.js';
-import { TOOL_RISK } from '../../../shared/assistant.js';
+import { LAYER, TOOL_RISK } from '../../../shared/assistant.js';
 
 /**
  * 交互层后端（规格 §3、§4）。
@@ -139,7 +139,7 @@ export function createInteractionBackend({
               args: event.args || null,
               result: event.result || '',
               error: event.error || '',
-              layer: 'interaction',
+              layer: LAYER.INTERACTION,
             })
           );
         },

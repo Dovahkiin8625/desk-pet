@@ -334,6 +334,7 @@ test('交互层把这一回合的过程写成记录', async () => {
   assert.equal(model.length, 1);
   assert.equal(model[0].text, '在你剪贴板里');
   assert.equal(model[0].meta.model, 'stub-model');
+  assert.equal(model[0].meta.index, 2, '轮号是模型往返的次序：工具轮也占一个号');
 
   const call = written.filter((e) => e.kind === 'step');
   assert.equal(call.length, 1);

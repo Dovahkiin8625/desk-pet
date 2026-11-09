@@ -1,6 +1,7 @@
 import {
   APPROVAL_DECISION,
   CHAT_KIND,
+  LAYER,
   TASK_FINAL_STATUS,
   TASK_STATUS,
 } from '../../../shared/assistant.js';
@@ -56,7 +57,7 @@ export function stepRecord({
   args = null,
   result = '',
   error = '',
-  layer = 'execution',
+  layer = LAYER.EXECUTION,
   at = Date.now(),
 } = {}) {
   const name = String(tool || '工具');
@@ -65,7 +66,7 @@ export function stepRecord({
     role: 'assistant',
     text: error ? `${name} 出错：${error}` : name,
     at,
-    meta: { taskId, index, tool: name, args, result, error, layer: String(layer || 'execution') },
+    meta: { taskId, index, tool: name, args, result, error, layer: String(layer || LAYER.EXECUTION) },
   };
 }
 
@@ -95,7 +96,7 @@ export function modelRecord({
     role: 'assistant',
     text: String(text || ''),
     at,
-    meta: { layer: 'interaction', index, model: String(model || '') },
+    meta: { layer: LAYER.INTERACTION, index, model: String(model || '') },
   };
 }
 
@@ -195,6 +196,7 @@ export function dispatchRecord({
       title: String(title || ''),
       action: String(action || ''),
       brief: String(brief || ''),
+      layer: LAYER.INTERACTION,
     },
   };
 }
