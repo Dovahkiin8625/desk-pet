@@ -151,14 +151,18 @@
 | 交互层 `step` | 「调了一次剪贴板」/「看了目录 src/」 |
 | `dispatch`（`task.submit`） | 「派了个后台任务：查 F 盘 video」 |
 | `dispatch`（`task.list`） | 「看了看后台任务」 |
-| `dispatch`（`task.cancel`） | 「停掉了任务 t-1」 |
-| `dispatch`（`task.delete`） | 「归档了任务 t-1」 |
+| `dispatch`（`task.cancel`） | 「停掉了任务：{title}」 |
+| `dispatch`（`task.delete`） | 「归档了任务：{title}」 |
 | `dispatch`（`task.steer`） | 「给任务追加了一句要求」 |
 | `dispatch.meta.brief` | 「交底」 |
 | 执行层 `task` / `step` | 「查 F 盘 video · 排队中 → 进行中」/「步骤（3）」 |
 | `reply`（执行层） | 「结果：…」 |
 
 五个任务管理工具各有一条 `dispatch` 记录，页面按 `meta.tool` 映射成上面的话；**不认识的工具直接显示 `meta.action` 原文**（别把工具名甩给用户看）。
+
+**`taskId` 不上界面。** 停掉与归档那两句用**任务标题**指认任务，不显示 `t-1` 这种内部编号——
+用户看到的是一个他自己不认识的编号，既没有信息量，也是把内部结构甩到了界面上。
+取不到标题时退成「停掉了那个后台任务」。
 
 ## 5. 依赖与顺序
 
