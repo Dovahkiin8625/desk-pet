@@ -237,6 +237,160 @@ async function seedChatFlags() {
   );
 }
 
+/**
+ * 摆一份「用户问了一句、桌宠答了、过一会儿又主动搭话」的记录。
+ *
+ * 主动搭话不写用户那句话：它的模型原话与工具调用都夹在前一次答复之后，
+ * 那些过程记录要归**主动搭话自己那一块**。
+ */
+async function seedChatProactive() {
+  const base = todayBase();
+  await mkdir(USER_DATA, { recursive: true });
+  await writeFile(
+    join(USER_DATA, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      llm: { enabled: true, ackEnabled: false },
+      chat: {
+        messages: [
+          { kind: 'user', role: 'user', text: '在吗', at: base },
+          {
+            kind: 'model',
+            role: 'assistant',
+            text: '我先看看',
+            at: base + 1000,
+            meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' },
+          },
+          { kind: 'reply', role: 'assistant', text: '在呢', at: base + 2000 },
+          {
+            kind: 'model',
+            role: 'assistant',
+            text: '我看下时间',
+            at: base + 3000,
+            meta: { layer: 'interaction', index: 2, model: 'MiniMax-M2' },
+          },
+          {
+            kind: 'step',
+            role: 'assistant',
+            text: 'clock.now',
+            at: base + 4000,
+            meta: { layer: 'interaction', tool: 'clock.now' },
+          },
+          {
+            kind: 'reply',
+            role: 'assistant',
+            text: '早上好',
+            at: base + 5000,
+            proactive: true,
+          },
+        ],
+        facts: [],
+      },
+    }),
+    'utf8'
+  );
+}
+
+/**
+ * 摆一份「退回普通对话」的记录：只有答复，没有模型记录。
+ *
+ * 模型不认工具时走普通对话，那一轮没记模型原话——
+ * 但答复上带着轮数与模型名，页面上要看得见「问过模型」。
+ */
+async function seedChatPlain() {
+  const base = todayBase();
+  await mkdir(USER_DATA, { recursive: true });
+  await writeFile(
+    join(USER_DATA, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      llm: { enabled: true, ackEnabled: false },
+      chat: {
+        messages: [
+          { kind: 'user', role: 'user', text: '在吗', at: base },
+          {
+            kind: 'reply',
+            role: 'assistant',
+            text: '在呢',
+            at: base + 1000,
+            meta: { rounds: 1, model: 'MiniMax-M2' },
+          },
+        ],
+        facts: [],
+      },
+    }),
+    'utf8'
+  );
+}
+
+/**
+ * 摆一份「单轮对话」的记录：模型那一轮说的就是答复正文。
+ *
+ * 这一轮点开是空的——页面上该只留「问模型 X · N 轮」那一句。
+ */
+async function seedChatSingleRound() {
+  const base = todayBase();
+  await mkdir(USER_DATA, { recursive: true });
+  await writeFile(
+    join(USER_DATA, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      llm: { enabled: true, ackEnabled: false },
+      chat: {
+        messages: [
+          { kind: 'user', role: 'user', text: '在吗', at: base },
+          {
+            kind: 'model',
+            role: 'assistant',
+            text: '在呢',
+            at: base + 1000,
+            meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' },
+          },
+          {
+            kind: 'reply',
+            role: 'assistant',
+            text: '在呢',
+            at: base + 2000,
+            meta: { rounds: 1, model: 'MiniMax-M2' },
+          },
+        ],
+        facts: [],
+      },
+    }),
+    'utf8'
+  );
+}
+
+/**
+ * 摆一份长一点的记录：页面要长到能滚动。
+ *
+ * 停在最上面时新记录进来，新块直接出现在眼前——它得在视口里才看得见。
+ */
+async function seedChatTall() {
+  const base = todayBase();
+  const messages = [];
+  for (let i = 0; i < 25; i += 1) {
+    messages.push({ kind: 'user', role: 'user', text: `第${i + 1}句`, at: base + i * 2000 });
+    messages.push({
+      kind: 'reply',
+      role: 'assistant',
+      text: `答${i + 1}`,
+      at: base + i * 2000 + 1000,
+      meta: { rounds: 1, model: 'MiniMax-M2' },
+    });
+  }
+  await mkdir(USER_DATA, { recursive: true });
+  await writeFile(
+    join(USER_DATA, 'assistant.json'),
+    JSON.stringify({
+      version: 1,
+      llm: { enabled: true, ackEnabled: false },
+      chat: { messages, facts: [] },
+    }),
+    'utf8'
+  );
+}
+
 /** 启动应用（E2E 模式：不抢单实例锁，用临时 userData）。 */
 async function launch() {
   const app = await electron.launch({
@@ -561,6 +715,144 @@ test.describe('聊天记录插件', () => {
       // 更新不能把用户正在看的东西收起来。
       await expect(winFrame.locator('.detail[data-detail="steps:t-1"]')).toHaveAttribute('open', '');
       await expect(winFrame.locator('.detail[data-detail="steps:t-1"] .step-list li')).toHaveText('fs.list');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('主动搭话的过程归它自己那一块', async () => {
+    await seedChatProactive();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      const frame = panel.frameLocator('#plugin-frame');
+
+      // 用户问了一句、桌宠答了；过一会儿桌宠主动搭话 → 两块。
+      await expect(frame.locator('.turn')).toHaveCount(2);
+
+      // 主动搭话那块：它自己的模型原话与工具调用都在里面。
+      const petTurn = frame.locator('.turn').first();
+      await expect(petTurn.locator('.turn-flag')).toHaveText('桌宠自己起的头');
+      await expect(petTurn.locator('.turn-title')).toHaveText('早上好');
+      await expect(petTurn.locator('.lane-front')).toContainText('我看下时间');
+      await expect(petTurn.locator('.lane-front')).toContainText('问了时间');
+      await expect(petTurn.locator('.lane-front')).not.toContainText('我先看看');
+
+      // 用户那块：它自己的模型原话还在自己这里。
+      const user = frame.locator('.turn').nth(1);
+      await expect(user.locator('.turn-title')).toHaveText('在吗');
+      await expect(user.locator('.lane-front')).toContainText('我先看看');
+      await expect(user.locator('.lane-front')).not.toContainText('我看下时间');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('退回普通对话的那一轮：看得见「问过模型」', async () => {
+    await seedChatPlain();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      const frame = panel.frameLocator('#plugin-frame');
+      await expect(frame.locator('.lane-front')).toContainText('问模型 MiniMax-M2 · 1 轮');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('单轮对话：模型那一行不是个点开是空的盒子', async () => {
+    await seedChatSingleRound();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      const frame = panel.frameLocator('#plugin-frame');
+      await expect(frame.locator('.detail[data-detail="model"]')).toHaveCount(0);
+      await expect(frame.locator('.lane-front')).toContainText('问模型 MiniMax-M2 · 1 轮');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('停在最新的时候：新记录看得见', async () => {
+    await seedChatTall();
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      await panel.evaluate(() => document.querySelector('#detach')?.click());
+      const pluginWin = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(pluginWin, '插件的独立窗口没有出现').not.toBeNull();
+      await pluginWin.waitForLoadState('domcontentloaded');
+
+      const winFrame = pluginWin.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('.turn')).toHaveCount(25);
+
+      // 停在最上面（正在看最新那条）。
+      await winFrame.locator('#list').evaluate((node) => {
+        node.ownerDocument.scrollingElement.scrollTop = 0;
+      });
+
+      // 回到面板说一句话。
+      await pet.evaluate(() => window.pet.openPanel?.());
+      await panel.waitForFunction(() => window.__panel?.view === 'search', null, { timeout: 10000 });
+      await panel.fill('#query', '你好呀');
+      await panel.press('#query', 'Control+Enter');
+
+      await expect(winFrame.locator('.turn')).toHaveCount(26);
+      const newest = winFrame.locator('.turn').first();
+      await expect(newest.locator('.turn-title')).toHaveText('你好呀');
+
+      // 新块就在眼前，不该被顶到视口外面去。
+      await expect(newest).toBeInViewport();
+
+      // 视口也没跳：他本来就停在最上面，新记录进来时该原地不动。
+      const top = await winFrame
+        .locator('#list')
+        .evaluate((node) => node.ownerDocument.scrollingElement.scrollTop);
+      expect(top).toBe(0);
     } finally {
       await app.close();
     }

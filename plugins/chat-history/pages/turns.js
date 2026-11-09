@@ -45,9 +45,13 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const blocks = [];
   const cards = new Map();
   const dispatchedIn = new Map();
+  const entryBlocks = new Map();
+  const replyBlocks = new Map();
+  const processRecords = [];
   let current = null;
 
-  for (const entry of list) {
+  for (let i = 0; i < list.length; i += 1) {
+    const entry = list[i];
     const kind = chatKindOf(entry);
     const taskId = taskIdOf(entry);
 
@@ -59,11 +63,14 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     if (kind === CHAT_KIND.USER) {
       current = newBlock(entry, 'user');
       blocks.push(current);
+      entryBlocks.set(entry, current);
       continue;
     }
     if (kind === CHAT_KIND.REPLY && entry?.proactive) {
       current = newBlock(entry, 'pet');
       blocks.push(current);
+      entryBlocks.set(entry, current);
+      replyBlocks.set(entry, current);
       continue;
     }
     if (!current) {
@@ -73,9 +80,28 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     } else {
       current.entries.push(entry);
     }
+    entryBlocks.set(entry, current);
+    if (kind === CHAT_KIND.REPLY) replyBlocks.set(entry, current);
+    if (kind === CHAT_KIND.MODEL || (kind === CHAT_KIND.STEP && !taskId)) {
+      processRecords.push({ entry, index: i });
+    }
     if (kind === CHAT_KIND.DISPATCH && taskId && !dispatchedIn.has(taskId)) {
       dispatchedIn.set(taskId, current);
     }
+  }
+
+  for (const item of processRecords) {
+    const target = followingReplyBlock(list, item.index, replyBlocks);
+    if (!target) continue;
+    const from = entryBlocks.get(item.entry);
+    if (!from || from === target) continue;
+    from.entries = from.entries.filter((e) => e !== item.entry);
+    target.entries.push(item.entry);
+    entryBlocks.set(item.entry, target);
+  }
+
+  for (const block of blocks) {
+    block.entries.sort((a, b) => timeOf(a) - timeOf(b));
   }
 
   for (const card of cards.values()) {
@@ -90,14 +116,31 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     blocks.push(block);
   }
 
-  for (const block of blocks) {
+  const kept = blocks.filter((block) => block.entries.length || block.back.length);
+  for (const block of kept) {
     block.front = frontLines(block);
     block.title = titleOf(block);
     block.badge = badgeOf(block);
     delete block.entries;
   }
 
-  return groupByTime(blocks, now);
+  return groupByTime(kept, now);
+}
+
+/**
+ * 一条过程记录配到哪条前台答复上。
+ *
+ * 往后找**最近的一条前台答复**；中途用户又发话了，就停在那儿——
+ * 那是新的一轮，前面那轮的过程记录不挪走。
+ */
+function followingReplyBlock(list, index, replyBlocks) {
+  for (let i = index + 1; i < list.length; i += 1) {
+    const entry = list[i];
+    if (chatKindOf(entry) === CHAT_KIND.USER) return null;
+    const block = replyBlocks.get(entry);
+    if (block) return block;
+  }
+  return null;
 }
 
 /** 记录带的任务号。 */
@@ -255,6 +298,10 @@ function titleOf(block) {
   if (block.opener === 'user') {
     const user = block.entries.find((entry) => chatKindOf(entry) === CHAT_KIND.USER);
     if (user) return textOf(user);
+  }
+  if (block.opener === 'pet' && !block.orphan) {
+    const reply = block.entries.find((entry) => chatKindOf(entry) === CHAT_KIND.REPLY);
+    if (reply && textOf(reply)) return textOf(reply);
   }
   for (const entry of block.entries) {
     const text = textOf(entry);

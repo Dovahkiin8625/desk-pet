@@ -140,11 +140,12 @@ function restoreView(view) {
   }
   const scroller = document.scrollingElement || document.documentElement;
   if (!scroller) return;
-  // 新的在上面：内容长高了同样的量，滚动位置跟着往下挪同样多，
-  // 他正在看的那一条就停在原地。
+  // 新的在上面：他本来停在最上面（正在看最新那条），视口就别动，
+  // 新记录直接出现在眼前；往下滚过了，才锚住他正在读的那一条。
   requestAnimationFrame(() => {
     const delta = scroller.scrollHeight - view.height;
-    scroller.scrollTop = view.top + delta;
+    if (view.top <= 8) scroller.scrollTop = 0;
+    else scroller.scrollTop = view.top + delta;
   });
 }
 
@@ -164,11 +165,15 @@ function renderFront(turn) {
     : models.reduce((max, line) => Math.max(max, Number(line.index) || 0), 0);
 
   let modelDrawn = false;
+  const drawModels = () => {
+    if (modelDrawn) return;
+    modelDrawn = true;
+    lane.appendChild(renderModels(models, modelName, rounds, replyText));
+  };
+
   for (const line of turn.front) {
     if (line.type === 'model') {
-      if (modelDrawn) continue;
-      modelDrawn = true;
-      lane.appendChild(renderModels(models, modelName, rounds, replyText));
+      drawModels();
       continue;
     }
     if (line.type === 'call') {
@@ -180,6 +185,8 @@ function renderFront(turn) {
       continue;
     }
     if (line.type === 'reply') {
+      // 没有 model 记录的那一轮（退回普通对话），也画得出「问过模型」这一行。
+      if (!models.length) drawModels();
       lane.appendChild(el('p', 'reply-line', line.text));
       continue;
     }
@@ -196,9 +203,6 @@ function renderFront(turn) {
 
 /** 模型每一轮：默认折起，展开看见每一轮说了什么。 */
 function renderModels(models, modelName, rounds, replyText) {
-  const detail = el('details', 'detail');
-  detail.dataset.detail = 'model';
-  detail.appendChild(el('summary', 'detail-head', modelHeadLabel(modelName, rounds)));
   const body = el('div', 'detail-body');
   for (const line of models) {
     const text = String(line.text || '');
@@ -206,6 +210,13 @@ function renderModels(models, modelName, rounds, replyText) {
     if (replyText && text === replyText) continue;
     body.appendChild(el('p', 'model-line', modelRoundLabel(line.index, text)));
   }
+  // 没有可展开的轮次：只留那一句，不给一个点开是空的盒子。
+  if (!body.childElementCount) {
+    return el('p', 'model-line', modelHeadLabel(modelName, rounds));
+  }
+  const detail = el('details', 'detail');
+  detail.dataset.detail = 'model';
+  detail.appendChild(el('summary', 'detail-head', modelHeadLabel(modelName, rounds)));
   detail.appendChild(body);
   return detail;
 }

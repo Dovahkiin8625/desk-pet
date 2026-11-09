@@ -228,3 +228,65 @@ test('没有 taskId 的 task / approval：留在桌宠这边，不丢', () => {
   assert.equal(front.filter((l) => l.type === 'task').length, 1);
   assert.equal(front.filter((l) => l.type === 'approval').length, 1);
 });
+
+test('主动搭话的过程记录归它自己那一块', () => {
+  // 用户发话 → 模型 → 答复；过一会儿桌宠主动搭话 → 模型 → 工具 → proactive 答复。
+  // 后半段的过程记录归主动搭话那块，前半段的仍归用户那块。
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('model', '我先看看', { at: AT('10:01'), meta: { layer: 'interaction', index: 1, model: 'MiniMax-M2' } }),
+    entry('reply', '在呢', { at: AT('10:02') }),
+    entry('model', '我看下时间', { at: AT('10:03'), meta: { layer: 'interaction', index: 2, model: 'MiniMax-M2' } }),
+    entry('step', 'clock.now', { at: AT('10:04'), meta: { layer: 'interaction', tool: 'clock.now' } }),
+    entry('reply', '早上好', { at: AT('10:05'), proactive: true }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+
+  const pet = groups[0].turns[0];
+  assert.equal(pet.opener, 'pet');
+  assert.equal(pet.title, '早上好');
+  assert.deepEqual(pet.front.map((l) => l.type), ['model', 'call', 'reply']);
+  assert.equal(pet.front[0].text, '我看下时间');
+  assert.equal(pet.front[1].tool, 'clock.now');
+
+  const user = groups[0].turns[1];
+  assert.equal(user.opener, 'user');
+  assert.deepEqual(user.front.map((l) => l.type), ['model', 'reply']);
+  assert.equal(user.front[0].text, '我先看看');
+});
+
+test('主动搭话只有一句话：那一块就一行', () => {
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('reply', '在呢', { at: AT('10:01') }),
+    entry('reply', '早上好', { at: AT('10:02'), proactive: true }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+  const pet = groups[0].turns[0];
+  assert.equal(pet.front.length, 1);
+  assert.equal(pet.front[0].type, 'reply');
+  assert.equal(pet.front[0].text, '早上好');
+});
+
+test('用户发话后交互层没答复：过程记录仍留在用户那块', () => {
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('model', '我先看看', { at: AT('10:01'), meta: { layer: 'interaction', index: 1 } }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 1);
+  const turn = groups[0].turns[0];
+  assert.equal(turn.opener, 'user');
+  assert.deepEqual(turn.front.map((l) => l.type), ['model']);
+});
+
+test('过程记录不越过后一轮：用户又发话了，前一轮的过程记录留在原地', () => {
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('model', '我先看看', { at: AT('10:01'), meta: { layer: 'interaction', index: 1 } }),
+    entry('user', '换个话题', { at: AT('10:02') }),
+    entry('reply', '好', { at: AT('10:03') }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+  assert.deepEqual(groups[0].turns[1].front.map((l) => l.type), ['model']);
+  assert.deepEqual(groups[0].turns[0].front.map((l) => l.type), ['reply']);
+});
