@@ -255,6 +255,29 @@ test('主动搭话的过程记录归它自己那一块', () => {
   assert.equal(user.front[0].text, '我先看看');
 });
 
+test('主动搭话派了单：派单与后台卡都在主动搭话那块', () => {
+  // 桌宠主动搭话，顺手派了个后台任务——这件事从头到尾都在它自己那块。
+  const groups = buildTurns([
+    entry('user', '在吗', { at: AT('10:00') }),
+    entry('reply', '在呢', { at: AT('10:01') }),
+    entry('model', '我看下时间', { at: AT('10:03'), meta: { layer: 'interaction', index: 2, model: 'MiniMax-M2' } }),
+    entry('dispatch', '派了个任务：查视频', { at: AT('10:04'), meta: { tool: 'task.submit', taskId: 't-1', title: '查视频' } }),
+    entry('reply', '我去查查', { at: AT('10:05'), proactive: true }),
+    entry('task', '完成 · 查视频', { at: AT('10:06'), meta: { taskId: 't-1', status: 'done', title: '查视频' } }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+
+  const pet = groups[0].turns[0];
+  assert.equal(pet.opener, 'pet');
+  assert.deepEqual(pet.front.map((l) => l.type), ['model', 'dispatch', 'reply']);
+  assert.equal(pet.back.length, 1);
+  assert.equal(pet.back[0].taskId, 't-1');
+
+  const user = groups[0].turns[1];
+  assert.equal(user.opener, 'user');
+  assert.equal(user.back.length, 0);
+});
+
 test('主动搭话只有一句话：那一块就一行', () => {
   const groups = buildTurns([
     entry('user', '在吗', { at: AT('10:00') }),

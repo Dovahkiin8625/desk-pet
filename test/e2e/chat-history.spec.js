@@ -590,6 +590,8 @@ test.describe('聊天记录插件', () => {
       const frame = panel.frameLocator('#plugin-frame');
       await expect(frame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
       await expect(frame.locator('.lane-back')).toHaveCount(0);
+      // 旧记录既没有模型记录，答复上也没带轮数与模型名——不画「问过模型」那一行。
+      await expect(frame.locator('#list')).not.toContainText('问模型');
     } finally {
       await app.close();
     }

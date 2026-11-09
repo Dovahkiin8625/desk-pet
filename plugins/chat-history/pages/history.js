@@ -163,6 +163,8 @@ function renderFront(turn) {
   const rounds = replies.length
     ? replies[replies.length - 1].rounds
     : models.reduce((max, line) => Math.max(max, Number(line.index) || 0), 0);
+  // 旧记录既没有模型记录，答复上也没带轮数与模型名——那种不画「问过模型」这一行。
+  const hasModelInfo = Boolean(modelName) || rounds > 0;
 
   let modelDrawn = false;
   const drawModels = () => {
@@ -186,7 +188,7 @@ function renderFront(turn) {
     }
     if (line.type === 'reply') {
       // 没有 model 记录的那一轮（退回普通对话），也画得出「问过模型」这一行。
-      if (!models.length) drawModels();
+      if (!models.length && hasModelInfo) drawModels();
       lane.appendChild(el('p', 'reply-line', line.text));
       continue;
     }

@@ -45,6 +45,7 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const blocks = [];
   const cards = new Map();
   const dispatchedIn = new Map();
+  const firstDispatch = new Map();
   const entryBlocks = new Map();
   const replyBlocks = new Map();
   const processRecords = [];
@@ -82,11 +83,13 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     }
     entryBlocks.set(entry, current);
     if (kind === CHAT_KIND.REPLY) replyBlocks.set(entry, current);
-    if (kind === CHAT_KIND.MODEL || (kind === CHAT_KIND.STEP && !taskId)) {
+    if (kind === CHAT_KIND.MODEL
+      || (kind === CHAT_KIND.STEP && !taskId)
+      || kind === CHAT_KIND.DISPATCH) {
       processRecords.push({ entry, index: i });
     }
-    if (kind === CHAT_KIND.DISPATCH && taskId && !dispatchedIn.has(taskId)) {
-      dispatchedIn.set(taskId, current);
+    if (kind === CHAT_KIND.DISPATCH && taskId && !firstDispatch.has(taskId)) {
+      firstDispatch.set(taskId, entry);
     }
   }
 
@@ -98,6 +101,10 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
     from.entries = from.entries.filter((e) => e !== item.entry);
     target.entries.push(item.entry);
     entryBlocks.set(item.entry, target);
+  }
+
+  for (const [taskId, entry] of firstDispatch) {
+    dispatchedIn.set(taskId, entryBlocks.get(entry));
   }
 
   for (const block of blocks) {
