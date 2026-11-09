@@ -302,6 +302,42 @@ test('用户发话后交互层没答复：过程记录仍留在用户那块', ()
   assert.deepEqual(turn.front.map((l) => l.type), ['model']);
 });
 
+test('用户那一轮没答复，后面来一条主动搭话：过程记录仍留在用户那块', () => {
+  // 用户发话后前台没答上来，那些过程记录还是用户那一轮的——
+  // 不能被后面那条主动搭话吸走，连它派出去的后台任务一起。
+  const groups = buildTurns([
+    entry('user', '查视频', { at: AT('10:00') }),
+    entry('dispatch', '派了个任务：查视频', { at: AT('10:01'), meta: { tool: 'task.submit', taskId: 't-1', title: '查视频' } }),
+    entry('model', '我看下', { at: AT('10:02'), meta: { layer: 'interaction', index: 1 } }),
+    entry('reply', '早上好', { at: AT('10:03'), proactive: true }),
+    entry('task', '完成 · 查视频', { at: AT('10:04'), meta: { taskId: 't-1', status: 'done', title: '查视频' } }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+
+  const user = groups[0].turns[1];
+  assert.equal(user.opener, 'user');
+  assert.deepEqual(user.front.map((l) => l.type), ['dispatch', 'model']);
+  assert.equal(user.back.length, 1);
+  assert.equal(user.back[0].taskId, 't-1');
+
+  const pet = groups[0].turns[0];
+  assert.equal(pet.opener, 'pet');
+  assert.deepEqual(pet.front.map((l) => l.type), ['reply']);
+  assert.equal(pet.back.length, 0);
+});
+
+test('孤儿记录后面跟着主动搭话：孤儿块不丢，「没有对应的那句话」还在', () => {
+  const groups = buildTurns([
+    entry('model', '我看下', { at: AT('10:00'), meta: { layer: 'interaction', index: 1 } }),
+    entry('reply', '早上好', { at: AT('10:01'), proactive: true }),
+  ], { now: NOW });
+  assert.equal(groups[0].turns.length, 2);
+
+  const orphan = groups[0].turns[1];
+  assert.equal(orphan.orphan, true);
+  assert.deepEqual(orphan.front.map((l) => l.type), ['model']);
+});
+
 test('过程记录不越过后一轮：用户又发话了，前一轮的过程记录留在原地', () => {
   const groups = buildTurns([
     entry('user', '在吗', { at: AT('10:00') }),

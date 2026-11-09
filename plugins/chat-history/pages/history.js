@@ -144,7 +144,7 @@ function restoreView(view) {
   // 新记录直接出现在眼前；往下滚过了，才锚住他正在读的那一条。
   requestAnimationFrame(() => {
     const delta = scroller.scrollHeight - view.height;
-    if (view.top <= 8) scroller.scrollTop = 0;
+    if (view.top <= 2) scroller.scrollTop = 0;
     else scroller.scrollTop = view.top + delta;
   });
 }

@@ -50,6 +50,8 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   const replyBlocks = new Map();
   const processRecords = [];
   let current = null;
+  // 上一轮有没有收尾：用户发过话还没答复，就是没收尾。
+  let closed = false;
 
   for (let i = 0; i < list.length; i += 1) {
     const entry = list[i];
@@ -65,6 +67,7 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       current = newBlock(entry, 'user');
       blocks.push(current);
       entryBlocks.set(entry, current);
+      closed = false;
       continue;
     }
     if (kind === CHAT_KIND.REPLY && entry?.proactive) {
@@ -72,6 +75,7 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       blocks.push(current);
       entryBlocks.set(entry, current);
       replyBlocks.set(entry, current);
+      closed = true;
       continue;
     }
     if (!current) {
@@ -82,10 +86,14 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
       current.entries.push(entry);
     }
     entryBlocks.set(entry, current);
-    if (kind === CHAT_KIND.REPLY) replyBlocks.set(entry, current);
-    if (kind === CHAT_KIND.MODEL
+    if (kind === CHAT_KIND.REPLY) {
+      replyBlocks.set(entry, current);
+      closed = true;
+    }
+    // 上一轮还没收尾（用户发过话还没答复），这些过程记录就还属于那一轮。
+    if (closed && (kind === CHAT_KIND.MODEL
       || (kind === CHAT_KIND.STEP && !taskId)
-      || kind === CHAT_KIND.DISPATCH) {
+      || kind === CHAT_KIND.DISPATCH)) {
       processRecords.push({ entry, index: i });
     }
     if (kind === CHAT_KIND.DISPATCH && taskId && !firstDispatch.has(taskId)) {
@@ -94,10 +102,10 @@ export function buildTurns(entries, { now = Date.now() } = {}) {
   }
 
   for (const item of processRecords) {
-    const target = followingReplyBlock(list, item.index, replyBlocks);
-    if (!target) continue;
     const from = entryBlocks.get(item.entry);
-    if (!from || from === target) continue;
+    if (!from || from.orphan) continue;
+    const target = followingReplyBlock(list, item.index, replyBlocks);
+    if (!target || target === from) continue;
     from.entries = from.entries.filter((e) => e !== item.entry);
     target.entries.push(item.entry);
     entryBlocks.set(item.entry, target);
