@@ -345,6 +345,49 @@ test.describe('聊天记录插件', () => {
     }
   });
 
+  test('一次发话的事：过程与结果都在同一块里', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', '聊天记录');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('chat-history'),
+        null,
+        { timeout: 10000 }
+      );
+      await panel.click('#results li:has-text("聊天记录")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+        timeout: 10000,
+      });
+
+      await panel.evaluate(() => document.querySelector('#detach')?.click());
+      const pluginWin = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(pluginWin, '插件的独立窗口没有出现').not.toBeNull();
+      await pluginWin.waitForLoadState('domcontentloaded');
+      const winFrame = pluginWin.frameLocator('#plugin-frame');
+
+      const turn = winFrame.locator('.turn').first();
+      await expect(turn.locator('.lane-front')).toContainText('派了个后台任务');
+      await expect(turn.locator('.lane-back .task')).toContainText('查视频');
+
+      // 结果回到**这一块**里：它是执行层的一条可折叠明细，摘要写「结果」。
+      const result = turn.locator('.detail[data-detail="result"]');
+      await expect(result.locator('summary')).toHaveText('结果');
+      await expect(result).toContainText('有 12 个视频');
+
+      // 只有一块：一次发话就是一块。
+      await expect(winFrame.locator('.turn')).toHaveCount(1);
+
+      // 界面上没有内部标识。
+      const visible = await winFrame.locator('#list').textContent();
+      for (const word of ['kind', 'taskId', 'layer', 'dispatch']) {
+        expect(visible, `界面上出现了内部标识：${word}`).not.toContain(word);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   test('能分离成独立窗口：里面装的是同一份页面', async () => {
     const { app, pet } = await launch();
     try {

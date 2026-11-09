@@ -268,6 +268,41 @@ test.describe('双层 agent', () => {
     }
   });
 
+  test('真对话写出过程记录：状态文件里有一条模型原话', async () => {
+    // **这道防线只能落在 e2e 上**：
+    // 交互层的记录靠 `index.js` 里的 `appendRecord: appendChatRecord` 接上，
+    // 而 `createInteractionBackend` 的默认值是 `appendRecord = () => {}`——
+    // 接线一没，交互层就静默地什么都不记，页面上「模型说了什么」永远是空的，
+    // **而且不报错**。`index.js` 依赖 electron，node --test 跑不了。
+    const stub = await startStubLlm({
+      interaction: () => say('我先看看。'),
+      execution: () => say('不该走到的执行层。'),
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      await panel.fill('#query', '说点什么');
+      await panel.press('#query', 'Control+Enter');
+
+      // 落盘有 300ms 防抖，得等。
+      const model = await waitForState((s) =>
+        (s?.chat?.messages || []).find((m) => m.kind === 'model')
+      );
+      expect(
+        model,
+        '交互层的过程记录没写出来：生产接线（index.js 的 appendRecord）漏了吧'
+      ).toBeTruthy();
+      expect(model.text, `模型原话不对：${JSON.stringify(model)}`).toContain('我先看看');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
   test('任务跑着的时候用户又说话：两句答复都在', async () => {
     const stub = await startStubLlm({
       interaction: (body) => {
