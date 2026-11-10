@@ -275,3 +275,99 @@ test('宿主：插件抢不走内置工具的名字', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('宿主：不接给 agent 的插件，它的工具不进表', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(
+      root,
+      'weather',
+      { id: 'weather', name: '天气', tools: [TOOL_DECL] },
+      `export default function create() {
+         return { tools() { return [{ name: 'weather.get', run: async () => ({ text: 'x' }) }]; } };
+       }`
+    );
+    const registry = createToolRegistry();
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: root,
+      assistant: {},
+      toolRegistry: registry,
+    });
+    await host.load();
+    assert.ok(registry.get('weather.get'), '默认是接给 agent 的');
+    await host.setAgentEnabled('weather', false);
+    assert.equal(registry.get('weather.get'), null, '不接给 agent，工具就该消失');
+    await host.setAgentEnabled('weather', true);
+    assert.ok(registry.get('weather.get'), '再接回去，工具该回来');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：插件开着但不接给 agent——面板里照样能搜到', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(
+      root,
+      'weather',
+      { id: 'weather', name: '天气', tools: [TOOL_DECL] },
+      `export default function create() {
+         return { tools() { return [{ name: 'weather.get', run: async () => ({ text: 'x' }) }]; } };
+       }`
+    );
+    const registry = createToolRegistry();
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: root,
+      assistant: {},
+      toolRegistry: registry,
+    });
+    await host.load();
+    await host.setAgentEnabled('weather', false);
+    assert.equal(host.isEnabled('weather'), true, '插件本身还开着');
+    assert.ok(host.list().some((p) => p.id === 'weather'), '面板的搜索里还得有它');
+    const item = host.listAll().find((p) => p.id === 'weather');
+    assert.equal(item.enabled, true);
+    assert.equal(item.agentEnabled, false);
+    assert.equal(item.hasAgent, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：agent 开关落盘，重开还在', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  try {
+    await makePlugin(
+      root,
+      'weather',
+      { id: 'weather', name: '天气', tools: [TOOL_DECL] },
+      `export default function create() {
+         return { tools() { return [{ name: 'weather.get', run: async () => ({ text: 'x' }) }]; } };
+       }`
+    );
+    const registry = createToolRegistry();
+    const host = await createPluginHost({
+      rootDir: root,
+      userDataDir: root,
+      assistant: {},
+      toolRegistry: registry,
+    });
+    await host.load();
+    await host.setAgentEnabled('weather', false);
+
+    const registry2 = createToolRegistry();
+    const host2 = await createPluginHost({
+      rootDir: root,
+      userDataDir: root,
+      assistant: {},
+      toolRegistry: registry2,
+    });
+    await host2.load();
+    assert.equal(registry2.get('weather.get'), null, '关过的要记住');
+    assert.equal(host2.isAgentEnabled('weather'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

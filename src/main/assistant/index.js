@@ -1,5 +1,6 @@
 import { powerMonitor } from 'electron';
 import { join } from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
 import {
   MESSAGE_KIND,
   POMODORO_PRESETS,
@@ -10,7 +11,7 @@ import {
   LAYER,
   chatKindOf,
 } from '../../shared/assistant.js';
-import { loadAssistant, saveAssistant, mergePatch, sanitizeAssistant } from './state.js';
+import { loadAssistant, saveAssistant, mergeAssistantPatch, sanitizeAssistant } from './state.js';
 import { loadApiKey, loadLlmApiKey } from '../credentials.js';
 import * as clock from './clock.js';
 import * as todos from './todos.js';
@@ -28,7 +29,9 @@ import { createAgentBackend } from './chat/agent.js';
 import { createAck, ACK_HOLD_MS } from './chat/ack.js';
 import { createReplyBubble } from './chat/stream.js';
 import { createToolRegistry } from './agent/tools/registry.js';
-import { createBuiltinTools } from './agent/tools/builtin.js';
+import { createBuiltinTools, killProcessTree } from './agent/tools/builtin.js';
+import { createSkillRegistry, createSkillTools } from './agent/skills.js';
+import { createHarnessRunner } from './agent/harness.js';
 import { createAgentFacade } from './agent/facade.js';
 import { createAgentTasks } from './agent/tasks.js';
 import { describeToolCall } from './agent/approval.js';
@@ -37,7 +40,7 @@ import { createInteractionBackend, INTERACTION_MAX_STEPS } from './layer/interac
 import { createTaskTools } from './layer/taskTools.js';
 import { runForeground, FALLBACK_NOTICE } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
-import { mergeFacts } from './chat/memory.js';
+import { mergeFacts, pickMemories } from './chat/memory.js';
 import { createRecordSink } from './chat/recordSink.js';
 
 /**
@@ -121,6 +124,13 @@ export function createAssistant({  userDataDir,
    * 传索引本身的话，建好之前那个引用会是空的。
    */
   getAppIndex = null,
+  /**
+   * 已启用的插件清单（能力清单工具与提示词用）。
+   *
+   * **注入的是取值函数**：插件宿主比助理晚一步建好，
+   * 这里晚一点拿到也没关系。
+   */
+  getPlugins = null,
 }) {
   let state = null;
   // 桌宠被隐藏时排队的消息（最多 5 条）。
@@ -161,7 +171,7 @@ export function createAssistant({  userDataDir,
   // 告诉过了就别再应一声——刚说过的话不用再说一遍。
   let thinkNoticeShown = false;
   // 审批请求的序号：每一次审批都要有自己的 id
-  // （审批气泡只有一个，答复按 id 认——见 bubbleApproval.js）。
+  // （挂着的审批会排队，答复按 id 认——见 bubbleApproval.js）。
   let approvalSeq = 0;
 
   // 对话后端注册表。
@@ -192,15 +202,42 @@ export function createAssistant({  userDataDir,
     // 用户永久放行过的工具（规格 §8.1）按它声明的风险算——
     // 插件提供的工具默认按「要确认」算，见注册表里的说明。
     getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+    // 用户关掉的工具（设置页的「工具」页）：不进工具表，模型看不见。
+    getDisabled: () => state?.agent?.tools?.disabled || [],
   });
   toolRegistry.registerAll(
     createBuiltinTools({
       getWorkspace: () => state?.agent?.workspace || '',
       getTimeoutMs: () => state?.agent?.timeoutMs || DEFAULT_AGENT.timeoutMs,
-      readClipboard: () => clipboardWatcher.readNow(),
-      // 剪贴板助手默认关着：工具不能绕过用户这个开关。
-      isClipboardEnabled: () => Boolean(state?.clipboard?.enabled),
       getAppIndex: () => getAppIndex?.() || null,
+      // 外部助手（claude code）：日志落在 userData/agent-logs 下。
+      harness: createHarnessRunner({
+        spawn: nodeSpawn,
+        // **杀进程树，不只是杀自己**：Windows 上子进程会留下。
+        killTree: (child) => killProcessTree(child, { spawn: nodeSpawn }),
+        logDir: join(userDataDir, 'agent-logs'),
+      }),
+      // 审批档位决定外部助手的权限模式（headless 里没人能回答它的提问）。
+      getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
+    })
+  );
+
+  // ------------------------------------------------------------------
+  // agent 的技能表
+  //
+  // 技能是**插件怎么用的说明书**（渐进式披露）：
+  // 提示词里只有「名字：说明」一行，正文等模型要用了再读。
+  // ------------------------------------------------------------------
+  const skillRegistry = createSkillRegistry({ logger: console });
+  // 读技能正文的工具：内置的，所有技能共用一个。
+  //
+  // **它自己也可能被关掉**：关掉之后模型没有读技能的入口，
+  // 提示词里就不该再列技能清单（列了模型也读不了）。
+  toolRegistry.registerAll(
+    createSkillTools({
+      registry: skillRegistry,
+      getDisabledTools: () =>
+        (state?.agent?.tools?.disabled || []).map((name) => ({ name })),
     })
   );
 
@@ -212,6 +249,11 @@ export function createAssistant({  userDataDir,
   const agentBackend = createAgentBackend({
     fetchImpl,
     getTools: () => toolRegistry,
+    // 技能清单进系统提示词（只有名字与说明，正文按需读）。
+    //
+    // **`skill.read` 被关掉时就不列技能**：模型没有读正文的入口，
+    // 列了也只是让它去调一个调不通的工具。
+    getSkills: () => (toolRegistry.get('skill.read') ? skillRegistry.list() : []),
     getGate: () => null,
     getWorkspace: () => state?.agent?.workspace || '',
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
@@ -240,7 +282,15 @@ export function createAssistant({  userDataDir,
         return { ok: true, taskId: task.taskId };
       },
       cancel: async (taskId) => agentTasks.cancel(taskId),
+      list: () => agentTasks.list(),
+      steer: (taskId, note) => agentTasks.steer(taskId, note),
+      archive: (taskId) => agentTasks.archive(taskId),
       history: () => chatHistoryView().messages,
+    },
+    // 待答的审批住在气泡那边（气泡才是给人看的地方）。
+    approvals: {
+      list: () => bubble.pendingApprovals(),
+      answer: (id, decision) => bubble.answerApproval({ id, decision }),
     },
     getHistory: () => chatHistoryView().messages,
   });
@@ -280,11 +330,12 @@ export function createAssistant({  userDataDir,
   // ------------------------------------------------------------------
   const agentTasks = createAgentTasks({
     backend: agentBackend,
-    // 问用户：审批气泡。气泡只有一只，挂着的审批会互相顶——
+    // 问用户：审批气泡。挂着的审批可以有好几个（排队），
     // 所以每一次请求都要有自己的 id（inbox 按 id 认，见 bubbleApproval.js）。
     ask: ({ taskId, tool, args, risk }) =>
       bubble.showApproval({
         id: `${taskId}-${++approvalSeq}`,
+        taskId,
         title: '需要你点头',
         text: describeToolCall(tool, args),
         risk,
@@ -344,6 +395,10 @@ export function createAssistant({  userDataDir,
   const interactionBackend = createInteractionBackend({
     fetchImpl,
     getRegistry: () => toolRegistry,
+    // 能力清单：技能表、插件清单、工具表。
+    getSkills: () => skillRegistry.list(),
+    // **只给开着的插件**：用户关掉的插件不该被报成「我有」。
+    getPlugins: () => (getPlugins?.() || []).filter((p) => p && p.enabled !== false),
     // 任务管理工具**每轮新建**：它们绑着这一轮的历史与配置。
     getTaskTools: (turn) =>
       createTaskTools({
@@ -367,15 +422,13 @@ export function createAssistant({  userDataDir,
   backends.register('interaction', interactionBackend);
 
   /**
-   * 能不能派单。
+   * 能不能派单（设置里的「桌宠能做什么」）。
    *
-   * **这里先一律返回 true**：设置里的「桌宠能做什么」是 Task 6 才接上的，
-   * 那时再改成读 `state.agent.dispatch`。
-   * （`state.agent.dispatch` 这个键在 Task 6 之前根本存不住——
-   * 状态的清洗会把 `agent` 整块换掉，所以这时候读它只会读到 undefined。）
+   * 读不到就当能派单：新装的用户什么也没配过，
+   * 不该先给他一个残废的桌宠。
    */
   function dispatchEnabled() {
-    return true;
+    return (state?.agent?.dispatch || 'auto') === 'auto';
   }
 
   // ------------------------------------------------------------------
@@ -782,19 +835,28 @@ export function createAssistant({  userDataDir,
   // 番茄钟
   // ------------------------------------------------------------------
 
-  function startPomodoro(phase) {
+  /**
+   * 开始一段计时。
+   *
+   * `minutes` 不给就用预设（专注 25 分钟、休息 5 分钟）；
+   * 给了就按它来——插件的时长设置与 agent 的工具都走这一条路。
+   */
+  function startPomodoro(phase, minutes) {
     const isBreak = phase === pomodoro.PHASE.BREAK;
-    const ms = isBreak ? POMODORO_PRESETS.break : POMODORO_PRESETS.focus;
+    const preset = isBreak ? POMODORO_PRESETS.break : POMODORO_PRESETS.focus;
+    const ms =
+      Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60 * 1000) : preset;
     state.pomodoro = pomodoro.start(
       state.pomodoro,
       isBreak ? pomodoro.PHASE.BREAK : pomodoro.PHASE.FOCUS,
       ms
     );
     scheduleSave();
+    const label = isBreak ? '休息' : '专注';
     return act({
       emotion: 'happy',
       sound: 'success',
-      message: isBreak ? '开始休息，5 分钟' : '开始专注，25 分钟',
+      message: `开始${label}，${Math.round(ms / 60000)} 分钟`,
     });
   }
 
@@ -1190,8 +1252,10 @@ export function createAssistant({  userDataDir,
         model: String(config.model || ''),
       },
     });
-    if (result.memories?.length) {
-      state.chat.facts = mergeFacts(state.chat.facts, result.memories);
+    // 只记「重要的事」：临时的一律不记，用户明确要求记住的必须记上。
+    const memories = pickMemories(result.memories, { userText: content });
+    if (memories.length) {
+      state.chat.facts = mergeFacts(state.chat.facts, memories);
     }
     // 探测出来的可用地址记下来：下次先用它（照 tts.host 的做法）。
     if (result.baseUrl && result.baseUrl !== state.llm.lastWorkingBaseUrl) {
@@ -1444,7 +1508,9 @@ export function createAssistant({  userDataDir,
       // 否则内存里可能留着越界的值（比如语速 0），
       // 而落盘的那份被夹紧过——内存与磁盘不一致，
       // 越界的值还会被直接发给接口。
-      const next = mergePatch(state, patch || {});
+      // agent.approval 要**深一层**合并：
+      // 只带 policy 的补丁会把「永久放行的工具名单」整个换掉。
+      const next = mergeAssistantPatch(state, patch);
       // `llm` 里的 persona / proactive 要**深一层**合并：
       // 设置窗口只会送来用户能改的那几个字段，
       // 浅合并会把「上次搭话时间」「连续失败次数」这些内部状态抹掉。
@@ -1519,6 +1585,14 @@ export function createAssistant({  userDataDir,
      * 插件没开的，它声明的工具就不在表里——提示词里也就看不见。
      */
     agentTools: toolRegistry,
+    /**
+     * agent 的技能表。
+     *
+     * 插件宿主用它挂进**插件的技能说明**（渐进式披露）：
+     * 插件的清单声明一个技能、正文在插件目录的 markdown 文件里，
+     * 宿主就把它挂进这张表。系统提示词里只有名字与说明。
+     */
+    agentSkills: skillRegistry,
     /**
      * agent 的对外接口（插件用它反向提交任务、读历史、订阅事件）。
      *

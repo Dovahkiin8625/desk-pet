@@ -57,14 +57,18 @@ export function stepRecord({
   args = null,
   result = '',
   error = '',
+  label = '',
   layer = LAYER.EXECUTION,
   at = Date.now(),
 } = {}) {
   const name = String(tool || '工具');
+  // **有人话就用它**：外部 harness 的步骤要让人看得懂
+  // （「claude code 调了 Read」），光有工具名不够。
+  const text = String(label || '') || (error ? `${name} 出错：${error}` : name);
   return {
     kind: CHAT_KIND.STEP,
     role: 'assistant',
-    text: error ? `${name} 出错：${error}` : name,
+    text,
     at,
     meta: { taskId, index, tool: name, args, result, error, layer: String(layer || LAYER.EXECUTION) },
   };

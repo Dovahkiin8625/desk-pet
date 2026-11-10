@@ -238,6 +238,46 @@ test('中枢：事件带着任务号转发出去', async () => {
   );
 });
 
+test('中枢：任务列表带上了步数与出错原因', async () => {
+  // 界面要靠这两个字段画「跑到第几步了」「为什么没做成」。
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({
+          type: 'step',
+          index: 2,
+          tool: 'fs.write',
+          args: {},
+          result: 'ok',
+          error: '',
+        });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '写个文件', messages: [] });
+  await t.done;
+  const row = tasks.list()[0];
+  assert.equal(row.stepIndex, 2);
+  assert.equal(row.lastStep, 'fs.write');
+  assert.equal(row.error, '');
+});
+
+test('中枢：任务失败时，列表里说得清为什么', async () => {
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async () => {
+        throw new Error('后端炸了');
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '查视频', messages: [] });
+  await assert.rejects(() => t.done, /后端炸了/);
+  assert.equal(tasks.list()[0].error, '后端炸了');
+});
+
 test('中枢：取消一个任务', async () => {
   const tasks = createAgentTasks({ backend: fakeBackend() });
   const t = tasks.submit({ prompt: '查天气', messages: [] });

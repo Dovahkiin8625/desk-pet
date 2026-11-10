@@ -69,6 +69,25 @@
 }
 .block-toggle input { accent-color: var(--dp-accent-strong); }
 
+/* 插件自己的配置项：控件在插件自己的页面里。 */
+.block-settings { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; }
+.block-settings .config-row { display: flex; align-items: center; gap: 10px; }
+.block-settings .config-label {
+  flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--dp-text-soft);
+}
+.block-settings input[type="text"],
+.block-settings input[type="number"],
+.block-settings select {
+  flex: 0 1 220px; width: auto;
+  font: inherit; padding: 6px 10px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  background: #fff; color: inherit;
+}
+.block-settings input[type="checkbox"] {
+  flex: none; width: 15px; height: 15px; accent-color: var(--dp-accent-strong);
+}
+
 /* 聊天记录：带角色与时间，条条都不可点。 */
 .block-messages { list-style: none; margin: 0 0 10px; padding: 0; }
 .block-messages li {

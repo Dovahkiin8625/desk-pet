@@ -52,6 +52,8 @@ export const BLOCK_KIND = Object.freeze({
   EMPTY: 'empty',
   /** 一段对话记录：带角色与时间，**不可点**。 */
   MESSAGES: 'messages',
+  /** 一组配置控件：插件自己的配置项（在插件自己的页面里）。 */
+  SETTINGS: 'settings',
 });
 
 /**
@@ -126,11 +128,27 @@ export function emptyBlock(text) {
 }
 
 /**
- * 一段对话记录。
+ * 一组配置控件：插件自己的配置项。
  *
- * 与 `list` 的区别：这一块**不可点**（聊天记录不是菜单），
- * 而且每条都带角色（用户 / 桌宠）与时间。
+ * `items` 里的每一项是一个配置项：
+ * `{ key, label, type, options, value, hint }`——
+ * `type` 是 `text` / `number` / `boolean` / `select`。
  */
+export function settingsBlock(items) {
+  return {
+    kind: BLOCK_KIND.SETTINGS,
+    items: (Array.isArray(items) ? items : []).map((item) => ({
+      key: String(item?.key ?? ''),
+      label: String(item?.label ?? ''),
+      type: String(item?.type ?? 'text'),
+      options: Array.isArray(item?.options) ? item.options.map((o) => String(o)) : [],
+      value: item?.value ?? '',
+      hint: String(item?.hint ?? ''),
+    })),
+  };
+}
+
+/** 一段对话记录：带角色与时间，**不可点**。 */
 export function messagesBlock(items) {
   return {
     kind: BLOCK_KIND.MESSAGES,

@@ -16,10 +16,18 @@
  * ## 运行时的接缝
  *
  * 这个文件**不知道**后台任务怎么跑——它只认一个 `runtime` 对象：
- * `run(prompt, opts)` / `cancel(taskId)` / `history()`。
+ * `run(prompt, opts)` / `cancel(taskId)` / `history()` /
+ * `list()` / `steer(taskId, note)` / `archive(taskId)`。
  * L3 之前没有运行时，`run()` / `cancel()` 会**明确说「还没上线」**，
  * 不假装成功——给插件一个假成功，它会以为任务在跑，而它根本没进队列。
  * L3 之后（src/main/assistant/index.js）把真的运行时接了进来。
+ *
+ * ## 审批的接缝
+ *
+ * 待答的审批**不住在运行时里**——它住在气泡那边（src/main/bubble.js），
+ * 因为审批是要**给人看**的。所以这里认第二个接缝 `approvals`：
+ * `list()` / `answer(id, decision)`。
+ * 没接上时一样降级：列表是空的，答复明确说「还没上线」。
  */
 
 /** 运行时还没上线时，run/cancel 给出的回话。 */
@@ -31,9 +39,15 @@ const NOT_READY = '后台任务运行时还没上线';
  * @param {object} options
  * @param {object} [options.tools] agent 的工具表（插件提供的工具也挂在这里）
  * @param {object} [options.runtime] 后台任务运行时（L3 才有）
+ * @param {object} [options.approvals] 待答审批的队列（气泡那边）
  * @param {Function} [options.getHistory] 读聊天记录
  */
-export function createAgentFacade({ tools = null, runtime = null, getHistory = null } = {}) {
+export function createAgentFacade({
+  tools = null,
+  runtime = null,
+  approvals = null,
+  getHistory = null,
+} = {}) {
   /** 订阅 agent 事件的回调。 */
   const listeners = new Set();
 
@@ -58,6 +72,58 @@ export function createAgentFacade({ tools = null, runtime = null, getHistory = n
      */
     async cancel(taskId) {
       if (typeof runtime?.cancel === 'function') return runtime.cancel(taskId);
+      return { ok: false, message: NOT_READY };
+    },
+
+    /**
+     * 现在有哪些后台任务（不含归档）。
+     *
+     * @returns {Promise<Array<object>>}
+     */
+    async tasks() {
+      if (typeof runtime?.list === 'function') return runtime.list() || [];
+      return [];
+    },
+
+    /**
+     * 给正在跑的任务追加一句要求。
+     *
+     * @returns {Promise<{ok: boolean, message?: string, dropped?: boolean}>}
+     */
+    async steer(taskId, note) {
+      if (typeof runtime?.steer === 'function') return runtime.steer(taskId, note);
+      return { ok: false, message: NOT_READY };
+    },
+
+    /**
+     * 归档一个已经结束的任务。
+     *
+     * @returns {Promise<{ok: boolean, message?: string}>}
+     */
+    async archive(taskId) {
+      if (typeof runtime?.archive === 'function') return runtime.archive(taskId);
+      return { ok: false, message: NOT_READY };
+    },
+
+    /**
+     * 现在等着用户点头的审批。
+     *
+     * @returns {Promise<Array<{id: string, taskId: string, title: string, text: string, risk: string}>>}
+     */
+    async approvals() {
+      if (typeof approvals?.list === 'function') return approvals.list() || [];
+      return [];
+    },
+
+    /**
+     * 答复一个审批（allow / deny / always / cancel）。
+     *
+     * **谁先答谁算数**：后答的那个拿到「这个已经答复过了」。
+     *
+     * @returns {Promise<{ok: boolean, message?: string}>}
+     */
+    async answerApproval(id, decision) {
+      if (typeof approvals?.answer === 'function') return approvals.answer(id, decision);
       return { ok: false, message: NOT_READY };
     },
 

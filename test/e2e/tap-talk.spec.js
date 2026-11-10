@@ -378,6 +378,33 @@ test.describe('点桌宠时念台词', () => {
     }
   });
 
+  test('双击桌宠不念台词：双击是「我要搜索」，不是「摸一下」', async () => {
+    const stub = await startStub();
+    const app = await launch(stub.url);
+    try {
+      const pet = await app.firstWindow();
+      await waitForPet(pet);
+      const cacheDir = join(USER_DATA, 'tts-cache', 'tap');
+      await waitUntil(async () => {
+        const files = await readdir(cacheDir).catch(() => []);
+        return files.filter((f) => f.endsWith('.mp3')).length > 0;
+      });
+
+      const solid = await findSolidPoint(pet);
+      expect(solid).toBeTruthy();
+      await pet.mouse.dblclick(solid.x, solid.y);
+
+      // 双击被认出来了（不然这条用例就是白过）。
+      await pet.waitForFunction(() => window.__pet.doubleTaps > 0, null, { timeout: 10000 });
+      // 等过双击窗口：押着的台词要是没作废，这时候就该念出来了。
+      await pet.waitForTimeout(1500);
+      expect(await pet.evaluate(() => window.__pet.speechCount)).toBe(0);
+    } finally {
+      await app.close();
+      stub.server.close();
+    }
+  });
+
   test('设置窗口的「语音」分区里能改这些开关', async () => {
     const dir = join(ROOT, '.tmp-e2e-tap-talk-settings');
     await rm(dir, { recursive: true, force: true });

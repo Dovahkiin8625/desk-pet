@@ -47,5 +47,40 @@ export default function createSystemPlugin() {
       }
       return page(ctx);
     },
+
+    /**
+     * 给 agent 用的工具。
+     *
+     * 清单里声明、这里实现，两边必须同名。
+     * 报错要**抛出去**：错误会喂回模型，模型能换个参数再试。
+     */
+    tools(ctx) {
+      return [
+        {
+          name: 'system.status',
+          async run() {
+            const view = ctx.assistant.statusView();
+            return {
+              text: view.text,
+              data: {
+                cpu: view.cpu,
+                memory: view.memory,
+                thermal: view.thermal,
+                onBattery: view.onBattery,
+              },
+            };
+          },
+        },
+        {
+          name: 'system.hotalert.set',
+          async run({ enabled }) {
+            const on = enabled === true || enabled === 'true';
+            const r = ctx.assistant.setHotAlertEnabled(on);
+            if (!r?.ok) throw new Error(r?.message || '设置不了');
+            return { text: r.message, data: { enabled: on } };
+          },
+        },
+      ];
+    },
   };
 }

@@ -40,7 +40,7 @@ test('路径：相对路径按工作区解析，绝对路径原样给', () => {
   assert.equal(resolveToolPath(base, join(base, '..', '逃出去.txt')), join(tmpdir(), '逃出去.txt'));
 });
 
-test('工具集：七个内置工具齐活，风险等级对得上', () => {
+test('工具集：内置工具齐活，风险等级对得上', () => {
   const tools = createBuiltinTools({});
   const names = tools.map((t) => t.name);
   for (const name of [
@@ -50,7 +50,7 @@ test('工具集：七个内置工具齐活，风险等级对得上', () => {
     'fs.write',
     'shell.exec',
     'app.launch',
-    'clipboard.read',
+    'harness.run',
   ]) {
     assert.ok(names.includes(name), `少了 ${name}`);
   }
@@ -58,6 +58,7 @@ test('工具集：七个内置工具齐活，风险等级对得上', () => {
   assert.equal(pick(tools, 'fs.write').risk, 'write');
   assert.equal(pick(tools, 'shell.exec').risk, 'exec');
   assert.equal(pick(tools, 'app.launch').risk, 'exec');
+  assert.equal(pick(tools, 'harness.run').risk, 'exec');
 });
 
 test('工具集：每个工具都能装进注册表', () => {
@@ -280,23 +281,6 @@ test('app.launch：找不到程序要抛错', async () => {
   const index = { list: async () => [], launch: async () => ({ ok: true }) };
   const tools = createBuiltinTools({ getAppIndex: () => index });
   await assert.rejects(() => pick(tools, 'app.launch').run({ name: '不存在的程序' }), /没找到/);
-});
-
-test('clipboard.read：剪贴板助手没开就不给读', async () => {
-  const tools = createBuiltinTools({
-    isClipboardEnabled: () => false,
-    readClipboard: async () => '秘密',
-  });
-  await assert.rejects(() => pick(tools, 'clipboard.read').run({}), /剪贴板/);
-});
-
-test('clipboard.read：开着了才读得到', async () => {
-  const tools = createBuiltinTools({
-    isClipboardEnabled: () => true,
-    readClipboard: async () => '复制来的东西',
-  });
-  const out = await pick(tools, 'clipboard.read').run({});
-  assert.match(out.text, /复制来的东西/);
 });
 
 /**

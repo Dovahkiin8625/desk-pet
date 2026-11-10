@@ -23,6 +23,7 @@ export function registerIpc({
   onModelError,
   getAssistantState,
   saveAssistantPrefs,
+  listAgentTools,
   getTtsStatus,
   setTtsApiKey,
   getLlmStatus,
@@ -34,6 +35,7 @@ export function registerIpc({
   clearHotkey,
   listPlugins,
   setPluginEnabled,
+  setPluginAgentEnabled,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
@@ -90,6 +92,8 @@ export function registerIpc({
   // 助理状态：设置窗口用它显示与修改偏好（待办/提醒在插件面板里管）。
   ipcMain.handle('pet:getAssistantState', () => getAssistantState());
   ipcMain.handle('pet:saveAssistantPrefs', (_e, patch) => saveAssistantPrefs(patch));
+  // 工具清单：设置窗口用它列出「可以永久放行」的工具。
+  ipcMain.handle('pet:listAgentTools', () => listAgentTools());
   // 语音状态：只回掩码，**绝不回明文 key**。
   ipcMain.handle('pet:getTtsStatus', () => getTtsStatus());
   ipcMain.handle('pet:setTtsApiKey', (_e, key) => setTtsApiKey(key));
@@ -115,4 +119,6 @@ export function registerIpc({
   // 插件的启用状态存在 userData/plugins.json，宿主负责落盘。
   ipcMain.handle('pet:listPlugins', () => listPlugins());
   ipcMain.handle('pet:setPluginEnabled', (_e, id, enabled) => setPluginEnabled(id, enabled));
+  // 这个插件接不接给 agent（它的工具与技能挂不挂进 agent 的表）。
+  ipcMain.handle('pet:setPluginAgentEnabled', (_e, id, enabled) => setPluginAgentEnabled(id, enabled));
 }

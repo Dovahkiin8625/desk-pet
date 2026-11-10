@@ -30,7 +30,7 @@
  * @property {string} text 最终回复正文
  * @property {string} emotion 情绪标签
  * @property {number} mood 心情增量
- * @property {string[]} memories 本轮新学到的长期事实
+ * @property {{text: string, kind: string}[]} memories 本轮报告的长期事实（待记忆闸筛选）
  * @property {string} [baseUrl] 探测出来的可用接口地址（记下来，下次先用它）
  */
 export function createBackendRegistry() {

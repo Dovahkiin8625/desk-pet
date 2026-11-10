@@ -154,6 +154,8 @@ test.describe('设置页分区与记忆', () => {
       const settings = await openSettings(app);
       await settings.click('#tab-chat');
       await settings.waitForSelector('#panel-chat:not([hidden])', { timeout: 10000 });
+      await settings.click('#chat-tab-proactive');
+      await settings.waitForSelector('#chat-sub-proactive:not([hidden])', { timeout: 10000 });
 
       // 选「2 秒」。
       await settings.selectOption('#llmAckDelay', '2000');

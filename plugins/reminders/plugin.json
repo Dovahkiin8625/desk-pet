@@ -4,6 +4,44 @@
   "icon": "⏰",
   "description": "到点提醒你做事",
   "keywords": ["reminder", "remind", "alarm", "tixing", "tx", "naozhong", "闹钟", "备忘"],
+  "skill": {
+    "name": "reminders",
+    "description": "管理定时提醒：添加、列出、删除",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "reminders.add",
+      "label": "添加提醒",
+      "description": "加一条提醒。时间写在正文里，例如「30分钟后喝水」「2小时后站起来」「14:30 吃药」。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "带时间的提醒内容，例如「30分钟后喝水」" }
+        },
+        "required": ["text"]
+      },
+      "risk": "write"
+    },
+    {
+      "name": "reminders.list",
+      "label": "看提醒清单",
+      "description": "列出还没触发的提醒，含每条的 id 与触发时刻。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    },
+    {
+      "name": "reminders.remove",
+      "label": "删除提醒",
+      "description": "删掉一条提醒。id 从 reminders.list 的结果里取。",
+      "parameters": {
+        "type": "object",
+        "properties": { "id": { "type": "string", "description": "提醒 id" } },
+        "required": ["id"]
+      },
+      "risk": "write"
+    }
+  ],
   "window": {
     "title": "提醒",
     "width": 320,

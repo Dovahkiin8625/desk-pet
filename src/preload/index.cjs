@@ -129,6 +129,8 @@ contextBridge.exposeInMainWorld('pet', {
   // 助理状态：设置窗口用它显示与修改偏好（待办/提醒在插件面板里管）。
   getAssistantState: () => ipcRenderer.invoke('pet:getAssistantState'),
   saveAssistantPrefs: (patch) => ipcRenderer.invoke('pet:saveAssistantPrefs', patch),
+  // 工具清单：设置窗口列「可以永久放行」的工具。
+  listAgentTools: () => ipcRenderer.invoke('pet:listAgentTools'),
   // 语音状态：只回掩码，**绝不回明文 key**。
   getTtsStatus: () => ipcRenderer.invoke('pet:getTtsStatus'),
   setTtsApiKey: (key) => ipcRenderer.invoke('pet:setTtsApiKey', key),
@@ -139,4 +141,7 @@ contextBridge.exposeInMainWorld('pet', {
   // 设置窗口的「插件」分区：列出全部插件、开关它们。
   listPlugins: () => ipcRenderer.invoke('pet:listPlugins'),
   setPluginEnabled: (id, enabled) => ipcRenderer.invoke('pet:setPluginEnabled', id, enabled),
+  // 这个插件接不接给 agent（它的工具与技能挂不挂进 agent 的表）。
+  setPluginAgentEnabled: (id, enabled) =>
+    ipcRenderer.invoke('pet:setPluginAgentEnabled', id, enabled),
 });

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
   MAX_CHAT_FACTS,
+  MAX_NEW_MEMORIES,
+  MAX_MEMORY_LENGTH,
+  MEMORY_KINDS,
   CHAT_KIND,
   CHAT_KIND_LIMITS,
   chatKindOf,
@@ -175,4 +178,153 @@ export function mergeFacts(facts, newFacts, max = MAX_CHAT_FACTS) {
     next.push(text);
   }
   return next.length > max ? next.slice(next.length - max) : next;
+}
+
+// ---------------------------------------------------------------------------
+// 「什么才值得记」
+//
+// 模型会在 META 里报告它觉得该记的事，但「觉得」不等于「该记」：
+// 上一句「今天天气不错」也值得记，长期记忆很快就成了一本流水账。
+//
+// 所以这里有一道闸：
+// - **explicit**（用户明确要求记住的）一律收；
+// - 其它类型里带临时性用语的（今天、刚才、这次……）丢掉——过几天就失效；
+// - 剩下的才算「重要的事」。
+// ---------------------------------------------------------------------------
+
+/** 临时性用语：带这些词的事过几天就失效，不该进长期记忆。 */
+const EPHEMERAL_WORDS = /(今天|今日|刚才|刚刚|现在|目前|这次|这一次|这轮|等会|待会|一会儿|正在)/;
+
+/**
+ * 用户「让我记住」的口气。
+ *
+ * **长的排前面**：先匹配到「帮我记」再切，剩下的就会是「一下」这种废话。
+ */
+const REQUEST_PHRASES = [
+  '不要忘记',
+  '别忘了',
+  '帮我记一下',
+  '帮我记住',
+  '帮我记',
+  '请记住',
+  '保存一下',
+  '记住',
+  '记一下',
+  '记着',
+  '记下',
+  '存一下',
+  '存下',
+];
+
+/**
+ * 「记住」前面允许出现的字。
+ *
+ * **用来挡住同形词**：「我把笔记下来了」里的「记下」不是请求——
+ * 前面那个「笔」说明它是个别的词。
+ */
+const REQUEST_PREFIX = /[我你他她请帮麻烦要给替让顺便另外还有然后再先记]|^[\s:：，,。！？、]/;
+
+/** 指代含糊的说法：记下来也没用。 */
+const VAGUE_REFERENCE = /^(刚才|刚刚|前面|上面|这个|那个|这些|那些|这件事|那件事|说的|说过)/;
+
+/**
+ * 把模型报告的一条记忆规整成 `{text, kind}`。
+ *
+ * 两种形态都认：对象（`{"text":"…","kind":"fact"}`）与裸字符串。
+ * 裸字符串一律当作 `fact`——**它还得过临时性那道闸**。
+ */
+export function normalizeMemory(item) {
+  if (typeof item === 'string') {
+    const text = item.trim().slice(0, MAX_MEMORY_LENGTH);
+    return text ? { text, kind: 'fact' } : null;
+  }
+  if (!item || typeof item !== 'object') return null;
+  const text = String(item.text ?? '').trim().slice(0, MAX_MEMORY_LENGTH);
+  if (!text) return null;
+  // 不认识的 kind 当作 fact：模型自造的类型不该被当成「显式要求」，
+  // 但也不该因为类型名不对就把内容丢了。
+  const kind = MEMORY_KINDS.includes(item.kind) ? item.kind : 'fact';
+  return { text, kind };
+}
+
+/**
+ * 这一轮该记什么。
+ *
+ * @param {Array} candidates 模型报告的记忆（对象或字符串）
+ * @param {object} [options]
+ * @param {string} [options.userText] 用户这一轮说的话（用来兜住「记住…」）
+ * @param {number} [options.max] 这一轮最多收几条
+ * @returns {string[]} 可以直接交给 `mergeFacts` 的文本
+ */
+export function pickMemories(candidates, { userText = '', max = MAX_NEW_MEMORIES } = {}) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  const entries = [];
+  list.forEach((item, index) => {
+    const entry = normalizeMemory(item);
+    if (!entry) return;
+    if (entry.kind !== 'explicit' && EPHEMERAL_WORDS.test(entry.text)) return;
+    entries.push({ ...entry, index });
+  });
+
+  // 显式要求优先占位：模型自己抽出来的那条可能不如用户原话准，
+  // 但它也在场，两者都要留。
+  const explicit = entries.filter((e) => e.kind === 'explicit');
+  const others = entries.filter((e) => e.kind !== 'explicit');
+  const chosen = [...explicit, ...others]
+    .sort((a, b) => a.index - b.index)
+    .slice(0, Math.max(0, max));
+  const texts = chosen.map((e) => e.text);
+
+  // 兜底：用户明确说了「记住…」，而模型这一轮没报——
+  // 我们自己记下来，别让用户的要求白说。
+  if (!chosen.some((e) => e.kind === 'explicit')) {
+    const derived = deriveExplicitMemory(userText);
+    if (derived) {
+      // 用户明确要求的占一个位子：模型自己抽的那条让位。
+      const others = chosen.filter((e) => e.kind !== 'explicit').slice(0, Math.max(0, max - 1));
+      return [...others.map((e) => e.text), derived];
+    }
+  }
+  return texts;
+}
+
+/**
+ * 从用户的话里抽出「要记住的那件事」。
+ *
+ * 抽不出来就返回空串：指代含糊（「记住刚才说的」）记下来也没用。
+ */
+export function deriveExplicitMemory(text) {
+  const s = String(text || '').trim();
+  if (!s) return '';
+  const cut = cutAtRequest(s);
+  if (!cut) return '';
+  const rest = cut
+    .replace(/^[\s:：，,、]+/, '')
+    .replace(/[。！!？?，,、\s]+$/, '')
+    .replace(/一下$/, '')
+    .trim();
+  if (rest.length < 2) return '';
+  if (VAGUE_REFERENCE.test(rest) && rest.length < 8) return '';
+  return `用户要求记住：${rest}`;
+}
+
+/**
+ * 在「记住…」那句口气之后切开，返回它后面的部分。
+ *
+ * 找不到就返回 null。
+ */
+function cutAtRequest(text) {
+  let best = null;
+  for (const phrase of REQUEST_PHRASES) {
+    const at = text.indexOf(phrase);
+    if (at < 0) continue;
+    // 同形词不算请求：「笔记下来了」里的「记下」前面是「笔」。
+    if (at > 0 && !REQUEST_PREFIX.test(text.slice(0, at).slice(-1))) continue;
+    // 同样靠前时取更长的那个（「别忘了」胜过「别忘」）。
+    if (!best || at < best.at || (at === best.at && phrase.length > best.phrase.length)) {
+      best = { at, phrase };
+    }
+  }
+  if (!best) return null;
+  return text.slice(best.at + best.phrase.length).trim();
 }

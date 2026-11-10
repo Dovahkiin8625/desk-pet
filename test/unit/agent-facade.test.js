@@ -44,6 +44,55 @@ test('facade：运行时接上后，提交与取消都转给它', async () => {
   ]);
 });
 
+test('facade：没接线时，任务与审批的口子都降级', async () => {
+  const agent = createAgentFacade({});
+  assert.deepEqual(await agent.tasks(), []);
+  assert.deepEqual(await agent.approvals(), []);
+  const results = [
+    await agent.steer('t1', '快点'),
+    await agent.archive('t1'),
+    await agent.answerApproval('a1', 'allow'),
+  ];
+  for (const r of results) {
+    assert.equal(r.ok, false);
+    assert.match(r.message, /还没上线/);
+  }
+});
+
+test('facade：接线之后，任务与审批都转过去', async () => {
+  const calls = [];
+  const agent = createAgentFacade({
+    runtime: {
+      list: () => [{ taskId: 't1', status: 'running' }],
+      steer: (taskId, note) => {
+        calls.push(['steer', taskId, note]);
+        return { ok: true };
+      },
+      archive: (taskId) => {
+        calls.push(['archive', taskId]);
+        return { ok: true };
+      },
+    },
+    approvals: {
+      list: () => [{ id: 'a1', taskId: 't1', title: '需要你点头' }],
+      answer: (id, decision) => {
+        calls.push(['answer', id, decision]);
+        return { ok: true };
+      },
+    },
+  });
+  assert.equal((await agent.tasks()).length, 1);
+  assert.equal((await agent.approvals())[0].id, 'a1');
+  assert.deepEqual(await agent.steer('t1', '快点'), { ok: true });
+  assert.deepEqual(await agent.archive('t1'), { ok: true });
+  assert.deepEqual(await agent.answerApproval('a1', 'allow'), { ok: true });
+  assert.deepEqual(calls, [
+    ['steer', 't1', '快点'],
+    ['archive', 't1'],
+    ['answer', 'a1', 'allow'],
+  ]);
+});
+
 test('facade：历史读的是聊天记录', () => {
   const agent = createAgentFacade({ getHistory: () => [{ id: '1', kind: 'user', text: '在呢' }] });
   assert.equal(agent.history().length, 1);
@@ -122,6 +171,11 @@ test('宿主：插件拿得到 ctx.agent', async () => {
     assert.equal(typeof seen.cancel, 'function');
     assert.equal(typeof seen.history, 'function');
     assert.equal(typeof seen.onEvent, 'function');
+    assert.equal(typeof seen.tasks, 'function');
+    assert.equal(typeof seen.steer, 'function');
+    assert.equal(typeof seen.archive, 'function');
+    assert.equal(typeof seen.approvals, 'function');
+    assert.equal(typeof seen.answerApproval, 'function');
     assert.equal(seen.history().length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });

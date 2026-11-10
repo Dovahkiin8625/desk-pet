@@ -11,7 +11,6 @@ import { TOOL_RISK } from '../../../shared/assistant.js';
 /** 快工具白名单：只读、瞬时。 */
 export const FAST_TOOL_NAMES = Object.freeze([
   'clock.now',
-  'clipboard.read',
   'fs.read',
   'fs.list',
 ]);
@@ -44,7 +43,7 @@ function formatNow(when) {
  * 计数器就是那一轮一个。
  *
  * @param {object} options
- * @param {object} [options.registry] 工具表（取 fs.read / fs.list / clipboard.read）
+ * @param {object} [options.registry] 工具表（取 fs.read / fs.list）
  * @param {number} [options.limit] 整轮配额
  * @param {Function} [options.now] 取当前时刻
  */

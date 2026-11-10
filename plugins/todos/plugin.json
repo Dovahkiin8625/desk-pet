@@ -4,6 +4,49 @@
   "icon": "✓",
   "description": "查看与添加待办",
   "keywords": ["todo", "todos", "daiban", "dai", "qingdan", "清单", "任务", "事项"],
+  "skill": {
+    "name": "todos",
+    "description": "管理待办清单：添加、列出、勾选完成、清理已完成",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "todos.add",
+      "label": "添加待办",
+      "description": "加一条待办。正文写清楚要做的事。",
+      "parameters": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "description": "要做的事" } },
+        "required": ["text"]
+      },
+      "risk": "write"
+    },
+    {
+      "name": "todos.list",
+      "label": "看待办清单",
+      "description": "列出全部待办，含每条的 id 与是否已完成。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    },
+    {
+      "name": "todos.toggle",
+      "label": "勾选待办",
+      "description": "把某条待办在已完成与未完成之间切换。id 从 todos.list 的结果里取。",
+      "parameters": {
+        "type": "object",
+        "properties": { "id": { "type": "string", "description": "待办 id" } },
+        "required": ["id"]
+      },
+      "risk": "write"
+    },
+    {
+      "name": "todos.clear",
+      "label": "清理已完成",
+      "description": "删掉全部已完成的待办。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    }
+  ],
   "window": {
     "title": "待办",
     "width": 320,

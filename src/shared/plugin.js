@@ -194,6 +194,101 @@ function normalizeToolDeclaration(raw) {
 }
 
 /**
+ * 技能名的形状：小写字母、数字、连字符（与插件 id 同一种形状）。
+ *
+ * 技能名是**全局唯一**的：agent 按名字读技能说明，
+ * 两个插件叫同一个名字就会有一份读不出来。
+ */
+export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** 配置项 key 的形状：字母开头，字母数字下划线。 */
+export const PLUGIN_SETTING_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
+/** 配置项支持的类型。 */
+export const PLUGIN_SETTING_TYPES = Object.freeze(['text', 'number', 'boolean', 'select']);
+
+/**
+ * 规整插件清单里声明的技能。
+ *
+ * 返回 `{ ok: true, value }` 或 `{ ok: false, error }`。
+ *
+ * **坏技能不许把插件干掉**：技能只是这个插件没有说明书而已，
+ * 插件照常加载（宽容度与工具声明一致）。
+ */
+function normalizeSkillDeclaration(raw) {
+  if (!isPlainObject(raw)) return { ok: false, error: '技能声明不是一个对象' };
+  const name = str(raw.name).trim();
+  if (name && !SKILL_NAME_RE.test(name)) {
+    return { ok: false, error: `技能名「${name}」不合法：只能用小写字母、数字与连字符` };
+  }
+  const file = str(raw.file).trim() || 'skill.md';
+  if (!isSafeRelativePath(file)) {
+    return { ok: false, error: `技能文件「${file}」不合法：必须留在插件目录里` };
+  }
+  return {
+    ok: true,
+    value: {
+      name,
+      description: str(raw.description).trim().slice(0, 500),
+      file,
+    },
+  };
+}
+
+/**
+ * 规整插件清单里声明的一个配置项。
+ *
+ * **默认值按类型归一**：清单是文件，作者写 `"true"` 当布尔用，
+ * 界面上就会显示成一个说不清的控件。认不出来就报错，
+ * 那个配置项没有而已。
+ */
+function normalizeSettingDeclaration(raw) {
+  if (!isPlainObject(raw)) return { ok: false, error: '配置项不是一个对象' };
+  const key = str(raw.key).trim();
+  if (!key) return { ok: false, error: '配置项缺少 key' };
+  if (!PLUGIN_SETTING_KEY_RE.test(key)) {
+    return { ok: false, error: `配置项 key「${key}」不合法：字母开头，只能有字母、数字与下划线` };
+  }
+  const type = str(raw.type).trim() || 'text';
+  if (!PLUGIN_SETTING_TYPES.includes(type)) {
+    return {
+      ok: false,
+      error: `配置项「${key}」的类型「${type}」不合法：只能是 ${PLUGIN_SETTING_TYPES.join(' / ')}`,
+    };
+  }
+  const options = Array.isArray(raw.options)
+    ? raw.options.map((o) => str(o).trim()).filter(Boolean)
+    : [];
+  if (type === 'select' && !options.length) {
+    return { ok: false, error: `配置项「${key}」是下拉，但没给可选项` };
+  }
+  const label = str(raw.label).trim() || key;
+  let def = raw.default;
+  if (type === 'number') {
+    const n = Number(def);
+    def = Number.isFinite(n) ? n : 0;
+  } else if (type === 'boolean') {
+    def = Boolean(def);
+  } else if (type === 'select') {
+    def = str(def).trim() || options[0];
+    if (!options.includes(def)) def = options[0];
+  } else {
+    def = str(def);
+  }
+  return {
+    ok: true,
+    value: {
+      key,
+      label,
+      type,
+      default: def,
+      options,
+      hint: str(raw.hint).trim().slice(0, 200),
+    },
+  };
+}
+
+/**
  * 校验并规整一份插件清单。
  *
  * 校验失败**不抛错**，而是把问题列出来：宿主要把原因写进日志，
@@ -250,6 +345,37 @@ export function validateManifest(raw) {
     tools.push(result.value);
   }
 
+  // 插件给 agent 的**技能说明**（怎么用这个插件）：
+  // 清单里写 `skill: {name, description, file}`，正文在插件目录里的 markdown 文件。
+  // 名字缺省用插件 id。
+  //
+  // 技能坏了**不**算清单不合法——它只是这个插件没有说明书而已。
+  const skillResult = isPlainObject(raw.skill)
+    ? normalizeSkillDeclaration(raw.skill)
+    : { ok: false, error: '' };
+  const skillErrors = [];
+  let skill = null;
+  if (isPlainObject(raw.skill)) {
+    if (!skillResult.ok) skillErrors.push(skillResult.error);
+    else skill = { ...skillResult.value, name: skillResult.value.name || id };
+  }
+
+  // 插件自己的配置项（设置页按这个渲染）。
+  const settings = [];
+  const settingErrors = [];
+  for (const rawSetting of Array.isArray(raw.settings) ? raw.settings : []) {
+    const result = normalizeSettingDeclaration(rawSetting);
+    if (!result.ok) {
+      settingErrors.push(result.error);
+      continue;
+    }
+    if (settings.some((s) => s.key === result.value.key)) {
+      settingErrors.push(`配置项「${result.value.key}」重复声明了，只留第一个`);
+      continue;
+    }
+    settings.push(result.value);
+  }
+
   if (errors.length) return { ok: false, errors };
 
   const manifest = {
@@ -270,6 +396,12 @@ export function validateManifest(raw) {
     // 插件提供的工具（给 agent 用）与它们的毛病。
     tools,
     toolErrors,
+    // 插件的技能说明（渐进式披露的第一级：只有 name 与 description）。
+    skill,
+    skillErrors,
+    // 插件自己的配置项（设置页按这个渲染）。
+    settings,
+    settingErrors,
   };
   return { ok: true, value: manifest, errors: [] };
 }

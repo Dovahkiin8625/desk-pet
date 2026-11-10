@@ -58,42 +58,70 @@ export const LLM_BASE_URLS = Object.freeze([
 ]);
 
 /**
- * 可选的大模型对话后端。
+ * 桌宠能做什么（规格 §10.3）。
  *
- * 'chat' 是普通对话（一次调用、一段回复，见 src/main/assistant/chat/plain.js）；
- * 'agent' 是多步循环（会调工具，见 src/main/assistant/chat/agent.js）。
+ * 前台恒定是交互层（会调工具），没有「换后端」这个选择——
+ * 取而代之的是**能不能派后台任务**。
  *
- * **定义只有一份**：状态清洗、后端注册都从这儿取——
- * 两边各认一套的话，用户改了设置却没生效，是最难查的那种 bug。
- *
- * （设置界面已经不再从这里取了：前台恒定走交互层，那个下拉撤掉了。
- * 这份清单留着，是给磁盘上旧数据用的——迁移那一步会把它换成派单方式。）
+ * **定义只有一份**：状态清洗、设置界面都从这儿取。
  */
-export const LLM_BACKENDS = Object.freeze(['chat', 'agent']);
+export const DISPATCH_MODES = Object.freeze(['auto', 'off']);
 
 /**
- * 每个后端的中文名与说明。
+ * 每个派单模式的中文名与说明。
  *
- * 放在共享契约里（而不是设置页里）：加了后端却忘了写名字与说明，
- * 设置页上就是一个空白下拉框。
+ * 说明写的是**用户看得懂的后果**，不写字段名：
+ * 用户要判断的是「它会不会动我的文件」，不是「dispatch 是哪一档」。
  */
-export const LLM_BACKEND_INFO = Object.freeze({
-  chat: Object.freeze({
-    label: '普通对话',
-    hint: '问一句答一句：只聊天，不动手。',
+export const DISPATCH_MODE_INFO = Object.freeze({
+  auto: Object.freeze({
+    label: '能派活',
+    hint: '桌宠能派后台任务：查本机、翻文件、跑一会儿的活都交给它。动你文件的事要你点头。',
   }),
-  agent: Object.freeze({
-    label: 'agent 模式',
-    hint:
-      '会动手：能读文件、列目录、搜索（需要模型支持工具调用）。' +
-      '写文件与执行命令要你点头，目前还不能自动做。',
+  off: Object.freeze({
+    label: '只聊天',
+    hint: '桌宠只跟你聊天：读时间、读单个文件，其他事一概不派。',
   }),
 });
 
-/** 取某个后端的名字与说明；认不出来就原样回显 id（磁盘上的值可能被手改过）。 */
-export function llmBackendInfo(id) {
+/** 取某个派单模式的名字与说明；认不出来就原样回显 id（磁盘上的值可能被手改过）。 */
+export function dispatchModeInfo(id) {
   const key = String(id || '');
-  return LLM_BACKEND_INFO[key] || Object.freeze({ label: key, hint: '' });
+  return DISPATCH_MODE_INFO[key] || Object.freeze({ label: key, hint: '' });
+}
+
+/**
+ * 审批策略的三档（规格 §8.1）。
+ *
+ * **定义只有一份**：状态清洗与设置界面都从这儿取。
+ */
+export const APPROVAL_POLICIES = Object.freeze(['graded', 'manual', 'auto']);
+
+/**
+ * 每档策略的中文名与说明。
+ *
+ * 说明写的是**用户看得懂的后果**：
+ * 用户要判断的是「它会不会自己动我的文件」，不是「策略是哪一档」。
+ */
+export const APPROVAL_POLICY_INFO = Object.freeze({
+  graded: Object.freeze({
+    label: '问一声（只读的不问）',
+    hint: '读文件、查目录这类只读的事直接做；写文件、跑命令要你点头。',
+  }),
+  manual: Object.freeze({
+    label: '每件事都问',
+    hint: '连读文件都要你点头。放心，但桌宠会慢很多。',
+  }),
+  auto: Object.freeze({
+    label: '都不问（危险）',
+    hint: '桌宠写文件、跑命令都不问你。一次提示词注入就能在你机器上执行命令。',
+  }),
+});
+
+/** 取某档策略的名字与说明；认不出来就原样回显 id（磁盘上的值可能被手改过）。 */
+export function approvalPolicyInfo(id) {
+  const key = String(id || '');
+  return APPROVAL_POLICY_INFO[key] || Object.freeze({ label: key, hint: '' });
 }
 
 /** TTS 的默认偏好。 */
@@ -218,9 +246,6 @@ export const DEFAULT_LLM = Object.freeze({
   // `max_tokens` 与 `max_completion_tokens` **不能同时发**
   // （有的服务端遇到不认识的字段直接 400），所以做成可配置。
   maxTokensField: 'max_tokens',
-  // 用哪个后端（见 src/main/assistant/chat/backend.js 的注册表）。
-  // 将来加 agent 后端时，这里换一个 id 就行。
-  backend: 'chat',
   // think 模式：模型先思考再回答。默认关——
   // 关着时请求里明确说「不要思考」（有些模型本来总在思考）。
   think: false,
@@ -261,6 +286,13 @@ export const DEFAULT_LLM = Object.freeze({
  * `workspace` 空 = 用户主目录：agent 总得有个起点。
  */
 export const DEFAULT_AGENT = Object.freeze({
+  /**
+   * 能不能派后台任务（规格 §10.3）。
+   *
+   * 'auto' 能派；'off' 只聊天。
+   * 默认 'auto'：新装的用户什么也没配过，不该先给他们一个残废的桌宠。
+   */
+  dispatch: 'auto',
   /** 同时跑几个后台任务。 */
   maxConcurrent: 1,
   /** 一个任务最多走几步。 */
@@ -277,6 +309,16 @@ export const DEFAULT_AGENT = Object.freeze({
     policy: 'graded',
     /** 永久放行的工具名。 */
     allowAlways: [],
+  },
+  /** 工具的开关。 */
+  tools: {
+    /**
+     * 被用户关掉的工具名。
+     *
+     * **记「关掉的」而不是「开着的」**：新插件带来新工具时，
+     * 默认就该能用——不然每装一个插件都得手动开一遍。
+     */
+    disabled: [],
   },
 });
 
@@ -307,6 +349,24 @@ export const MAX_CHAT_MESSAGES = 40;
 
 /** 长期记忆（模型抽取的「事实」）最多留多少条。 */
 export const MAX_CHAT_FACTS = 50;
+
+/**
+ * 长期记忆的类型。
+ *
+ * - `explicit`：用户**明确要求**记住的（说了「记住…」「别忘了…」）；
+ * - `preference`：用户的偏好与习惯；
+ * - `fact`：关于用户的稳定事实；
+ * - `plan`：长期约定、承诺、待办。
+ *
+ * 只有这四类值得进长期记忆——临时的、一次性的事不进。
+ */
+export const MEMORY_KINDS = Object.freeze(['explicit', 'preference', 'fact', 'plan']);
+
+/** 一轮最多记几条新记忆。 */
+export const MAX_NEW_MEMORIES = 2;
+
+/** 单条记忆最长多少字。 */
+export const MAX_MEMORY_LENGTH = 200;
 
 /** 每次发给模型的上下文最多带多少条消息。 */
 export const PROMPT_HISTORY_MESSAGES = 12;
@@ -488,7 +548,7 @@ export const APPROVAL_DECISION = Object.freeze({
  * 插件在清单里声明 `risk: 'read'`，宿主与插件作者得认同一套取值。
  */
 export const TOOL_RISK = Object.freeze({
-  /** 只读：读文件、列目录、搜索、读剪贴板、查状态。 */
+  /** 只读：读文件、列目录、搜索、查状态。 */
   READ: 'read',
   /** 写入：写文件、改配置。 */
   WRITE: 'write',

@@ -1,9 +1,9 @@
-import { LAYER, TOOL_RISK } from '../../../shared/assistant.js';
+import { LAYER, TASK_STATUS, TOOL_RISK } from '../../../shared/assistant.js';
 import { buildHistoryMessages } from '../chat/prompt.js';
 import { dispatchRecord } from '../agent/record.js';
 
 /**
- * 交互层的五个任务管理工具（规格 §4.1）。
+ * 交互层的六个任务管理工具（规格 §4.1）。
  *
  * ## 全部免审批
  *
@@ -16,6 +16,17 @@ import { dispatchRecord } from '../agent/record.js';
  * 2. **交互层的理解**（title + brief）：要干什么、要什么结果、有什么约束；
  * 3. **相关历史**：执行层自己再读最近几条 user/reply。
  */
+
+/** 任务状态的中文说法（人看的那份）。 */
+const STATUS_LABEL = Object.freeze({
+  [TASK_STATUS.QUEUED]: '排队中',
+  [TASK_STATUS.RUNNING]: '进行中',
+  [TASK_STATUS.WAITING_APPROVAL]: '等你点头',
+  [TASK_STATUS.DONE]: '已完成',
+  [TASK_STATUS.FAILED]: '失败',
+  [TASK_STATUS.CANCELLED]: '已取消',
+  [TASK_STATUS.INTERRUPTED]: '被中断',
+});
 
 /**
  * 派单说明最多几个字。
@@ -129,6 +140,39 @@ export function createTaskTools({
     },
 
     {
+      name: 'task.status',
+      label: '看任务进展',
+      description:
+        '查后台任务的状态与进展：跑到哪一步了、做完没有、结果是什么。' +
+        '用户问「任务到哪了」「你在干什么」「进展怎么样」时用它。',
+      parameters: {
+        type: 'object',
+        properties: { taskId: { type: 'string', description: '可选：只看这一个任务' } },
+        required: [],
+      },
+      risk: TOOL_RISK.READ,
+      async run(args) {
+        const taskId = String(args?.taskId || '').trim();
+        const all = tasks.list();
+        const list = taskId ? all.filter((t) => t.taskId === taskId) : all;
+        record('task.status', {
+          taskId,
+          action: list.length ? `看了看任务进展：${list.length} 个` : '看了看任务：没有',
+        });
+        if (!list.length) {
+          return {
+            text: taskId ? `没有这个任务：${taskId}` : '现在没有后台任务',
+            data: { tasks: [] },
+          };
+        }
+        return {
+          text: list.map(describeTask).join('\n'),
+          data: { tasks: list },
+        };
+      },
+    },
+
+    {
       name: 'task.cancel',
       label: '停掉后台任务',
       description: '停掉一个正在跑的后台任务。',
@@ -206,4 +250,23 @@ export function createTaskTools({
       },
     },
   ];
+}
+
+/** 把一个任务说成一行人话：谁、在干嘛、到哪一步了、结果是什么。 */
+function describeTask(task) {
+  const parts = [String(task?.taskId || ''), String(task?.title || '')];
+  parts.push(STATUS_LABEL[task?.status] || String(task?.status || ''));
+  if (task?.lastStep) parts.push(`刚做完 ${task.lastStep}`);
+  if (task?.result) parts.push(`结果：${task.result}`);
+  parts.push(`用了 ${formatElapsed(task?.elapsedMs)}`);
+  return parts.filter(Boolean).join('｜');
+}
+
+/** 把毫秒说成「不到 1 秒」「12 秒」「3 分钟」。 */
+function formatElapsed(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '一会儿';
+  if (n < 1000) return '不到 1 秒';
+  if (n < 60_000) return `${Math.round(n / 1000)} 秒`;
+  return `${Math.round(n / 60_000)} 分钟`;
 }

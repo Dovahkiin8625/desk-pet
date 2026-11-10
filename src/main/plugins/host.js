@@ -11,8 +11,15 @@ import {
   toggleBlock,
   emptyBlock,
   messagesBlock,
+  settingsBlock,
 } from '../../shared/panel.js';
-import { canDetach, hasWidget, resolveWindowSpec, PLUGIN_WINDOW_MODE } from '../../shared/plugin.js';
+import {
+  canDetach,
+  hasWidget,
+  resolveWindowSpec,
+  isSafeRelativePath,
+  PLUGIN_WINDOW_MODE,
+} from '../../shared/plugin.js';
 import { createAgentFacade } from '../assistant/agent/facade.js';
 import { appUrl } from '../protocol.js';
 import { discoverPlugins, loadPluginFactory } from './loader.js';
@@ -36,6 +43,14 @@ import { bundledPluginsDir, userPluginsDir as userPluginsPath } from './paths.js
 
 /** 插件的启用状态存在哪。 */
 const PREFS_FILE = 'plugins.json';
+
+/**
+ * 配置控件的动作前缀：`settings:<key>`。
+ *
+ * 插件页面里改自己的配置走这条动作——宿主认得这个前缀，
+ * 自己把值写掉，不用插件写一遍。
+ */
+const SETTINGS_ACTION_PREFIX = 'settings:';
 
 /** 界面积木：插件用它拼出自己的页面。 */
 const UI = Object.freeze({
@@ -63,6 +78,12 @@ export async function createPluginHost({
    */
   toolRegistry = null,
   /**
+   * agent 的技能表：插件的技能说明挂进这里。
+   *
+   * 省略时用 `assistant.agentSkills`。
+   */
+  skillRegistry = null,
+  /**
    * agent 的对外接口（插件用它反向提交任务、读历史、订阅事件）。
    *
    * 省略时用 `assistant.agent`。
@@ -87,6 +108,8 @@ export async function createPluginHost({
   const surfaceListeners = new Set();
   /** 真正在用的工具表：注入的优先，其次助理的。 */
   const tools = toolRegistry || assistant?.agentTools || null;
+  /** 真正在用的技能表：注入的优先，其次助理的。 */
+  const skills = skillRegistry || assistant?.agentSkills || null;
   /**
    * 插件拿到的 agent 接口：注入的优先，其次助理的。
    *
@@ -96,6 +119,67 @@ export async function createPluginHost({
   const agentApi = agent || assistant?.agent || createAgentFacade({});
   /** 插件 id → 它的工具实现（name → 实现）。取过了就不重复问插件。 */
   const toolImplCache = new Map();
+
+  /**
+   * 某个插件的配置值：清单里的默认值 + 用户改过的值。
+   *
+   * **清单里没声明的配置项不进结果**：插件没说要这个键，
+   * 宿主就不给它——省得插件读到一堆没意义的 undefined。
+   */
+  function getConfig(id) {
+    const record = records.get(String(id || ''));
+    const schema = record?.manifest?.settings || [];
+    const stored = configStore.get(String(id || '')) || {};
+    const out = {};
+    for (const item of schema) {
+      const value = stored[item.key];
+      out[item.key] = value === undefined ? item.default : value;
+    }
+    return out;
+  }
+
+  /**
+   * 改一个插件的配置值，并落盘。
+   *
+   * 只认清单里声明过的 key：别的键写进去也没地方显示。
+   */
+  async function setConfig(id, patch) {
+    const key = String(id || '');
+    const record = records.get(key);
+    if (!record) return { ok: false, message: '没有这个插件' };
+    const schema = record.manifest.settings || [];
+    const current = configStore.get(key) || {};
+    const next = { ...current };
+    for (const [name, value] of Object.entries(patch || {})) {
+      const item = schema.find((s) => s.key === name);
+      if (!item) continue;
+      next[name] = coerceSetting(item, value);
+    }
+    configStore.set(key, next);
+    prefs = { ...prefs, config: Object.fromEntries(configStore) };
+    try {
+      await writeJson(userDataDir, PREFS_FILE, prefs);
+    } catch (err) {
+      console.warn('[desk-pet] 插件配置保存失败：', err?.message);
+      return { ok: false, message: `保存失败：${err?.message || err}` };
+    }
+    notifyChange();
+    return { ok: true, config: getConfig(key) };
+  }
+
+  /** 按声明的类型把值规整好（设置页传过来的可能是字符串）。 */
+  function coerceSetting(item, value) {
+    if (item.type === 'boolean') return value === true || value === 'true';
+    if (item.type === 'number') {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : item.default;
+    }
+    if (item.type === 'select') {
+      const v = String(value ?? '');
+      return item.options.includes(v) ? v : item.default;
+    }
+    return String(value ?? '');
+  }
 
   /**
    * 订阅界面开合。返回取消订阅的函数。
@@ -112,6 +196,60 @@ export async function createPluginHost({
   const disabled = new Set(
     Array.isArray(prefs?.disabled) ? prefs.disabled.filter((x) => typeof x === 'string') : []
   );
+  /**
+   * 不接给 agent 的插件 id。
+   *
+   * 与「关掉的插件」分开记：插件开着、只是不给 agent 用，
+   * 面板里照样能搜到、能用，只是不进 agent 的工具表与技能表。
+   */
+  const agentDisabled = new Set(
+    Array.isArray(prefs?.agentDisabled) ? prefs.agentDisabled.filter((x) => typeof x === 'string') : []
+  );
+  /**
+   * 插件自己的配置值：id → { key: value }。
+   *
+   * 与「启用状态」同一个文件（`plugins.json`）——它们都是宿主管的、
+   * 与插件代码无关的东西。
+   */
+  const configStore = new Map(
+    Object.entries(prefs?.config && typeof prefs.config === 'object' ? prefs.config : {})
+  );
+
+  /**
+   * 插件自己的配置项（清单里声明的那些），配上当前值。
+   *
+   * 配置项**只出现在插件自己的页面里**——不在桌宠的【设置】里，
+   * 也不在别的地方。宿主按清单的声明渲染控件。
+   */
+  function settingsItems(record) {
+    const values = getConfig(record.manifest.id);
+    return (record.manifest.settings || []).map((item) => ({
+      key: item.key,
+      label: item.label,
+      type: item.type,
+      options: item.options,
+      hint: item.hint,
+      value: values[item.key],
+    }));
+  }
+
+  /**
+   * 把插件的配置控件挂到它自己的页面上。
+   *
+   * **插件的页面就是它自己的配置页**：清单里声明了配置项，
+   * 宿主就把它画在那个插件的界面里——桌宠的【设置】不管这件事。
+   *
+   * 插件自带页面（iframe）时页面是它自己画的，宿主插不进手：
+   * 那类插件的配置由它自己的页面负责。
+   */
+  function withSettingsBlock(record, page) {
+    if (!page || !Array.isArray(page.blocks)) return page;
+    if (!(record.manifest.settings || []).length) return page;
+    return {
+      ...page,
+      blocks: [...page.blocks, settingsBlock(settingsItems(record))],
+    };
+  }
 
   /**
    * 插件的上下文。
@@ -120,7 +258,7 @@ export async function createPluginHost({
    * 天气查询要联网，返回之前页面已经画出来了，结果到了再刷新。
    */
   function makeContext(record, update) {
-    return {
+    const ctx = {
       plugin: {
         id: record.manifest.id,
         manifest: record.manifest,
@@ -148,7 +286,11 @@ export async function createPluginHost({
         broadcaster?.(record.manifest.id, 'data', data);
       },
       update: typeof update === 'function' ? update : () => {},
-      ui: UI,
+      // 积木：插件用它拼出自己的页面。
+      //
+      // `settingsBlock` 是**按插件绑定**的：它知道这个插件声明了哪些配置项、
+      // 那些项现在是什么值，插件不用自己拼。
+      ui: { ...UI, settingsBlock: () => settingsBlock(settingsItems(record)) },
       host: {
         /** 全部插件（含被关掉的）与它们的启用状态：设置窗口的「插件」分区要用。 */
         listAll: () => listAll(),
@@ -166,13 +308,35 @@ export async function createPluginHost({
          * 返回取消订阅的函数。
          */
         onSurfaceChange: (cb) => onSurfaceChange(cb),
+        /** 插件自己的配置值（当前值）。 */
+        getConfig: () => getConfig(record.manifest.id),
+        /** 改插件自己的配置值。 */
+        setConfig: (patch) => setConfig(record.manifest.id, patch),
       },
     };
+    // **配置值是活的**：插件的 `tools()` 实现会被缓存，
+    // 快照式的 config 会在用户改完设置后一直是旧值。
+    // 用取值器，每次读都是当前的。
+    Object.defineProperty(ctx, 'config', {
+      enumerable: true,
+      get: () => getConfig(record.manifest.id),
+    });
+    return ctx;
   }
 
   /** 插件有没有被关掉。 */
   function isEnabled(id) {
     return records.has(id) && !disabled.has(id);
+  }
+
+  /**
+   * 这个插件接不接给 agent。
+   *
+   * 关掉的插件**永远**不接（它整个都不在了）。
+   * 开着的插件由用户决定：设置里的「注册到 agent」开关。
+   */
+  function isAgentEnabled(id) {
+    return isEnabled(id) && !agentDisabled.has(String(id || ''));
   }
 
   /**
@@ -221,7 +385,35 @@ export async function createPluginHost({
     return [...records.values()].map((r) => ({
       ...toMeta(r),
       enabled: isEnabled(r.manifest.id),
+      // 这个插件接不接给 agent（它的工具与技能挂不挂进 agent 的表）。
+      agentEnabled: isAgentEnabled(r.manifest.id),
+      // 有没有东西可以接给 agent（工具或技能）——没有就不必给开关。
+      hasAgent: Boolean(r.manifest.tools?.length || r.manifest.skill),
     }));
+  }
+
+  /**
+   * 开/关「这个插件接给 agent」，并落盘。
+   *
+   * 与「插件开不开」是**两件事**：插件开着但不给 agent 用，
+   * 它的工具与技能就不在 agent 的表里——模型看不见，也调不着。
+   */
+  async function setAgentEnabled(id, enabled) {
+    const key = String(id || '');
+    if (!records.has(key)) return { ok: false, message: '没有这个插件' };
+    const on = Boolean(enabled);
+    if (on) agentDisabled.delete(key);
+    else agentDisabled.add(key);
+    prefs = { ...prefs, agentDisabled: [...agentDisabled] };
+    try {
+      await writeJson(userDataDir, PREFS_FILE, prefs);
+    } catch (err) {
+      console.warn('[desk-pet] 插件的 agent 开关保存失败：', err?.message);
+    }
+    await syncPluginTools();
+    await syncPluginSkills();
+    notifyChange();
+    return { ok: true, agentEnabled: on };
   }
 
   /** 开/关一个插件，并落盘。 */
@@ -240,6 +432,8 @@ export async function createPluginHost({
     if (!on) windowOpener?.close(id);
     // 插件开关 → 它提供的工具也要跟着进出 agent 的工具表。
     await syncPluginTools();
+    // 它的技能说明同样进出（提示词里不该留着读不到的技能）。
+    await syncPluginSkills();
     // 插件清单变了：缓存里的页面地址不再可信（下次查盘重算）。
     invalidatePageUrls();
     notifyChange();
@@ -287,7 +481,7 @@ export async function createPluginHost({
         };
       }
       const page = await instance.page?.(ctx);
-      return page || null;
+      return page ? withSettingsBlock(record, page) : null;
     } catch (err) {
       console.warn(`[desk-pet] 插件「${id}」打开失败：`, err?.message);
       return null;
@@ -337,8 +531,17 @@ export async function createPluginHost({
     if (!record || !isEnabled(id)) return null;
     const ctx = makeContext(record, update);
     try {
+      // 改插件自己的配置：宿主自己写，不用插件写一遍。
+      // 写完重画一次页面——控件上的值要跟着变。
+      if (String(actionId).startsWith(SETTINGS_ACTION_PREFIX)) {
+        const key = String(actionId).slice(SETTINGS_ACTION_PREFIX.length);
+        const result = await setConfig(id, { [key]: value });
+        if (!result.ok) return null;
+        const page = await record.instance.page?.(ctx);
+        return page ? withSettingsBlock(record, page) : null;
+      }
       const page = await record.instance.action?.(ctx, actionId, value);
-      return page ?? null;
+      return page ? withSettingsBlock(record, page) : null;
     } catch (err) {
       console.warn(`[desk-pet] 插件「${id}」的动作失败：`, err?.message);
       return null;
@@ -524,7 +727,7 @@ export async function createPluginHost({
     for (const id of records.keys()) tools.unregister(id);
     for (const record of records.values()) {
       const id = record.manifest.id;
-      if (!isEnabled(id)) continue;
+      if (!isAgentEnabled(id)) continue;
       const declared = record.manifest.tools || [];
       if (!declared.length) continue;
       let impls = toolImplCache.get(id);
@@ -550,6 +753,50 @@ export async function createPluginHost({
         }
       }
     }
+  }
+
+  /**
+   * 把当前**启用**的插件的技能说明挂进技能表。
+   *
+   * 与工具一样：**插件被关掉时它的技能也要消失**——
+   * 提示词里不该留着「有个技能叫天气」而模型却读不到。
+   *
+   * 技能正文**不预读**：第一级披露只需要 name 与 description，
+   * 正文等模型真的调 `skill.read` 时才去磁盘上拿。
+   */
+  async function syncPluginSkills() {
+    if (!skills) return;
+    for (const id of records.keys()) skills.unregister(id);
+    for (const record of records.values()) {
+      const id = record.manifest.id;
+      if (!isAgentEnabled(id)) continue;
+      const skill = record.manifest.skill;
+      if (!skill) continue;
+      skills.register(
+        {
+          name: skill.name,
+          description: skill.description || record.manifest.description,
+          read: (path) => readSkillFile(record, skill, path),
+        },
+        { owner: id }
+      );
+    }
+  }
+
+  /**
+   * 读技能正文。
+   *
+   * 不给路径就是清单里写的那份；给了路径就是插件目录里的那个文件
+   * （正文里提到的参考资料）。
+   *
+   * **路径必须留在插件目录里**：宿主替插件读文件，
+   * 插件自己写 `../../` 就能读到插件目录外面去。
+   */
+  async function readSkillFile(record, skill, path) {
+    const rel = String(path || '').trim() || skill.file;
+    if (!isSafeRelativePath(rel)) throw new Error('这个路径不在插件目录里');
+    const full = join(record.dir, rel);
+    return readFile(full, 'utf8');
   }
 
   /**
@@ -590,6 +837,8 @@ export async function createPluginHost({
     );
     // 插件提供的工具挂进 agent 的工具表。
     await syncPluginTools();
+    // 插件的技能说明挂进 agent 的技能表。
+    await syncPluginSkills();
     // 插件刚加载出来：之前算过的页面地址（如果有）全部作废。
     invalidatePageUrls();
     return records.size;
@@ -599,6 +848,10 @@ export async function createPluginHost({
     load,
     list,
     listAll,
+    /** 某个插件的配置值（默认值 + 用户改过的）。 */
+    getConfig,
+    /** 改某个插件的配置值并落盘。 */
+    setConfig,
     open,
     action,
     data,
@@ -614,6 +867,10 @@ export async function createPluginHost({
     baseUrl,
     isEnabled,
     setEnabled,
+    /** 这个插件接不接给 agent（工具与技能挂不挂进 agent 的表）。 */
+    isAgentEnabled,
+    /** 开/关「这个插件接给 agent」，并落盘。 */
+    setAgentEnabled,
     /** 把插件分离成独立窗口 / 桌面小部件。 */
     openWindow: (id, mode) => windowOpener?.open(id, mode) || { ok: false, message: '窗口还没准备好' },
     /** 关掉某个插件的窗口。 */

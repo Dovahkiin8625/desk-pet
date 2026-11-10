@@ -982,6 +982,27 @@ app.whenReady().then(async () => {
     // —— 桌面助理 ——
     // 助理状态：设置窗口用它显示与修改偏好。
     getAssistantState: () => assistant?.getState() || null,
+    // 工具清单：设置窗口用它列出「启用/停用」与「以后不问」的工具。
+    //
+    // **只回给人看的字段**：工具表里还有实现（run），那东西不该进渲染层。
+    //
+    // **用 listAll 而不是 list**：list 只给开着的工具，
+    // 设置界面得**看见关掉的那些**，否则用户没法把它们打开。
+    listAgentTools: () =>
+      (assistant?.agentTools?.listAll?.() || []).map((t) => ({
+        name: String(t?.name || ''),
+        label: String(t?.label || t?.name || ''),
+        // 来源：内置工具没有 owner，插件工具的 owner 是插件 id。
+        owner: String(t?.owner || ''),
+        // 介绍与入参：设置页的抽屉要给用户看这个。
+        description: String(t?.description || ''),
+        parameters:
+          t?.parameters && typeof t.parameters === 'object' && !Array.isArray(t.parameters)
+            ? t.parameters
+            : null,
+        // 风险等级：决定这个工具用起来要不要用户点头。
+        risk: String(t?.risk || ''),
+      })),
     saveAssistantPrefs: (patch) => {
       const next = assistant?.update(patch || {});
       // 音效开关要立刻生效：它作用在渲染层的提示音上。
@@ -1035,6 +1056,9 @@ app.whenReady().then(async () => {
     // 调用发生在宿主就绪之后，那时 plugins 已经不是 null 了。
     listPlugins: () => plugins?.listAll() || [],
     setPluginEnabled: (id, enabled) => plugins?.setEnabled(String(id || ''), Boolean(enabled)),
+    // 这个插件接不接给 agent：它的工具与技能挂不挂进 agent 的表。
+    setPluginAgentEnabled: (id, enabled) =>
+      plugins?.setAgentEnabled(String(id || ''), Boolean(enabled)),
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
@@ -1157,6 +1181,11 @@ app.whenReady().then(async () => {
     // 本机程序索引：agent 的 `app.launch` 工具要用它。
     // 索引在下面才建好（它要扫盘），所以传的是取值函数。
     getAppIndex: () => apps,
+    // 已启用的插件：交互层答「你有哪些插件」时用它。
+    // 插件宿主在下面才建好，所以传的是取值函数。
+    // 用 listAll：它带着「这个插件接不接给后台任务」这个标记，
+    // 助理那边再按「开着的」过滤。
+    getPlugins: () => plugins?.listAll() || [],
   });
   await assistant.start();
 

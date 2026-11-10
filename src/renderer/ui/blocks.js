@@ -148,6 +148,52 @@ export function renderBlock(block, { onAction } = {}) {
       label.append(input, text);
       return label;
     }
+    case 'settings': {
+      const wrap = document.createElement('div');
+      wrap.className = 'block-settings';
+      for (const item of block.items || []) {
+        const row = document.createElement('div');
+        row.className = 'config-row';
+        row.dataset.settingKey = item.key || '';
+
+        const label = document.createElement('label');
+        label.className = 'config-label';
+        label.textContent = item.label || item.key || '';
+        if (item.hint) label.title = item.hint;
+
+        let input;
+        if (item.type === 'boolean') {
+          input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = item.value === true || item.value === 'true';
+        } else if (item.type === 'number') {
+          input = document.createElement('input');
+          input.type = 'number';
+          input.value = String(item.value ?? '');
+        } else if (item.type === 'select') {
+          input = document.createElement('select');
+          for (const opt of item.options || []) {
+            const option = document.createElement('option');
+            option.value = opt;
+            option.textContent = opt;
+            input.appendChild(option);
+          }
+          input.value = String(item.value ?? '');
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+          input.value = String(item.value ?? '');
+        }
+
+        input.addEventListener('change', () => {
+          onAction?.(`settings:${item.key || ''}`, input.type === 'checkbox' ? String(input.checked) : input.value);
+        });
+
+        row.append(label, input);
+        wrap.append(row);
+      }
+      return wrap;
+    }
     default:
       return null;
   }

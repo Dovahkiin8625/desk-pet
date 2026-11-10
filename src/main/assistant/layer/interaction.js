@@ -1,9 +1,10 @@
-import { createAgentLoop } from '../agent/loop.js';
+import { createAgentLoop, AGENT_OUTCOME } from '../agent/loop.js';
 import { modelRecord, stepRecord } from '../agent/record.js';
 import { createModelCaller } from '../chat/caller.js';
 import { createStreamSplitter, parseReply } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
 import { createFastToolSet } from './fastTools.js';
+import { createCapabilityTool } from './capabilityTool.js';
 import { buildInteractionPrompt } from './prompt.js';
 import { LAYER, TOOL_RISK } from '../../../shared/assistant.js';
 
@@ -33,6 +34,8 @@ export const INTERACTION_MAX_STEPS = 3;
  * @param {object} options
  * @param {Function} [options.fetchImpl]
  * @param {Function} [options.getRegistry] 工具表（取快工具）
+ * @param {Function} [options.getSkills] 技能清单（能力清单工具用）
+ * @param {Function} [options.getPlugins] 插件清单（能力清单工具与提示词用）
  * @param {Function} [options.getTaskTools] (turn) => 任务管理工具数组
  * @param {Function} [options.getDispatchEnabled] 能不能派单
  * @param {Function} [options.getPersona]
@@ -45,6 +48,8 @@ export const INTERACTION_MAX_STEPS = 3;
 export function createInteractionBackend({
   fetchImpl = fetch,
   getRegistry = () => null,
+  getSkills = () => [],
+  getPlugins = () => [],
   getTaskTools = () => [],
   getDispatchEnabled = () => true,
   getPersona = () => ({}),
@@ -55,21 +60,87 @@ export function createInteractionBackend({
   appendRecord = () => {},
   logger = null,
 } = {}) {
+  /**
+   * 这一轮没答上来时的兜底。
+   *
+   * **不能把模型的窝囊甩给用户**：一句「我没能在这 3 步之内做完这件事」，
+   * 用户既不知道发生了什么，也不知道下一步该干什么。
+   *
+   * 这里按交互层的分派规则来：一次调工具搞不定的事**统统派后台任务**，
+   * 然后回用户一句「我去查」——用户看到的是事情在往前走。
+   */
+  async function rescueWithoutAnswer({
+    run,
+    tools,
+    dispatched,
+    dispatchEnabled,
+    turn,
+    trigger,
+  }) {
+    if (run.outcome !== AGENT_OUTCOME.MAX_STEPS) return fallbackText(run);
+    if (dispatched) return '活儿派出去了，结果出来告诉你。';
+
+    const userText = String(turn?.userText || '').trim();
+    // 主动搭话不是用户的请求：别替用户派单。
+    if (!dispatchEnabled || trigger !== 'user' || !userText) {
+      return '这件事我在这儿一次做不完，先停下了。';
+    }
+
+    const submit = tools.find((t) => t.name === 'task.submit');
+    if (!submit) return '这件事我在这儿一次做不完，先停下了。';
+    try {
+      await submit.run({
+        title: userText.length > 20 ? `${userText.slice(0, 20)}…` : userText,
+        // 派单说明限长 200 字（工具自己会拦），截在这里；
+        // 用户原话由 task.submit 原样传给后台任务，不会丢。
+        brief: `用户的请求：${userText.slice(0, 190)}`,
+      });
+    } catch {
+      return '这件事我没能在这儿办起来。';
+    }
+    return '我去查一下，结果出来告诉你。';
+  }
+
   return {
     id: 'interaction',
     label: '交互层',
 
     async chat(ctx) {
       const { messages = [], config = {}, onDelta, turn = {}, signal = null } = ctx || {};
+      const trigger = String(ctx?.trigger || 'user');
       const registry = getRegistry();
       const dispatchEnabled = Boolean(getDispatchEnabled());
 
       // **每轮新建**：快工具的配额是「每轮一次」，计数器必须每轮归零。
       const fastTools = createFastToolSet({ registry, now: getNow });
+      // 能力清单工具：答「你有哪些插件/技能/工具」时用。
+      // 它**不受快工具配额限制**——查清单不该把「读一个文件」的机会顶掉。
+      const capabilityTools = createCapabilityTool({
+        getSkills,
+        getPlugins,
+        getTools: () => registry?.list?.() || [],
+      });
       // 关了派单就**不把任务管理工具给模型**：
       // 给了它就会去调，然后被拒——白白浪费一轮。
       const taskTools = dispatchEnabled ? getTaskTools(turn) : [];
-      const tools = [...fastTools, ...taskTools];
+      // **这一轮有没有派过单**：模型自己派了，就别再替它派一次。
+      let dispatched = false;
+      const tools = [
+        ...fastTools,
+        ...capabilityTools,
+        ...taskTools.map((t) =>
+          t.name === 'task.submit'
+            ? {
+                ...t,
+                run: async (args, toolCtx) => {
+                  const out = await t.run(args, toolCtx);
+                  dispatched = true;
+                  return out;
+                },
+              }
+            : t
+        ),
+      ];
       const toolMap = new Map(tools.map((t) => [t.name, t]));
 
       // **只读工具这道关**（规格 §8.1 的「没有闸门时」的语义）：
@@ -90,6 +161,7 @@ export function createInteractionBackend({
       }
 
       const counts = getTaskCounts() || {};
+      const plugins = getPlugins() || [];
       const system = buildInteractionPrompt({
         persona: getPersona(),
         facts: getFacts(),
@@ -100,6 +172,9 @@ export function createInteractionBackend({
         // 报**这一轮实际可用**的快工具：注册表里没有的就不报，
         // 否则模型会去调一个不存在的工具，白烧一步。
         fastToolNames: fastTools.map((t) => t.name),
+        // 插件名写进提示词：模型据此知道「这类问题有路可走」，
+        // 完整清单由 capability.list 给。
+        pluginNames: plugins.map((p) => p?.name).filter(Boolean),
       });
 
       // **流式正文与元数据要分开**：模型会在正文后面接一段 <<META>> 的 JSON，
@@ -167,8 +242,18 @@ export function createInteractionBackend({
       if (tail) onDelta?.(tail);
 
       const parsed = parseReply(run.text || '');
+      const text =
+        parsed.text ||
+        (await rescueWithoutAnswer({
+          run,
+          tools,
+          dispatched,
+          dispatchEnabled,
+          turn,
+          trigger,
+        }));
       return {
-        text: parsed.text || fallbackText(run),
+        text,
         emotion: parsed.emotion,
         mood: parsed.mood,
         memories: parsed.memories,

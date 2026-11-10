@@ -164,6 +164,31 @@
     }
     .group-title { font-size: 13px; font-weight: 600; color: var(--accent-ink); margin: 0 0 12px; }
 
+    /* ---------- 二级标签（对话分区里的一组组设置） ---------- */
+    /* 标签**不换行**：换行后折下去的那个看着像个小标题，
+       分不清它是标签还是分组名。放不下就横向滚。 */
+    .subtabs {
+      display: flex; gap: 2px; flex-wrap: nowrap;
+      margin: 0 0 18px;
+      border-bottom: 1px solid var(--border-hair);
+      overflow-x: auto; overflow-y: hidden;
+      scrollbar-width: none;
+    }
+    .subtabs::-webkit-scrollbar { display: none; }
+    .sub-tab {
+      flex: none; white-space: nowrap;
+      padding: 7px 10px 8px;
+      border: none; border-bottom: 2px solid transparent;
+      background: transparent; color: var(--muted);
+      font: inherit; cursor: pointer;
+      transition: color .12s ease, border-color .12s ease;
+    }
+    .sub-tab:hover { color: var(--text-2); }
+    .sub-tab[aria-selected="true"] {
+      color: var(--text); font-weight: 600;
+      border-bottom-color: var(--accent);
+    }
+
     /* ---------- 插件清单 ---------- */
     .plugin-list {
       list-style: none; margin: 0 0 14px; padding: 0;
@@ -186,11 +211,108 @@
     .plugin-row input[type="checkbox"] {
       flex: none; width: 15px; height: 15px; accent-color: var(--accent);
     }
+    /* 「注册到 agent」：插件开着但不给 agent 用时的那个开关。 */
+    .p-agent {
+      flex: none; display: flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--muted-2); cursor: pointer;
+    }
+
+    /* ---------- 可放行的工具 ---------- */
+    .tool-list {
+      list-style: none; margin: 0 0 12px; padding: 0;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    /* 工具行：整行点开抽屉。 */
+    .tool-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 11px;
+      border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
+      background: var(--surface);
+      cursor: pointer;
+    }
+    .tool-row:hover { background: var(--surface-hover); }
+    .tool-row input[type="checkbox"] {
+      flex: none; width: 15px; height: 15px; accent-color: var(--accent);
+    }
+    .tool-text { flex: 1 1 auto; min-width: 0; }
+    .tool-name { display: block; font-weight: 600; }
+    .tool-id { display: block; color: var(--muted-2); font-size: 12px; }
+    .tool-row.unavailable .tool-name { color: var(--muted); font-weight: 400; }
+    .tool-list:empty::before {
+      content: '（现在没有可选的工具）'; color: var(--muted-2); font-size: 13px;
+    }
+    /* 关掉的工具：整行压暗。 */
+    .tool-row.off .tool-name { color: var(--muted); font-weight: 400; }
+    .tool-row.off { opacity: 0.62; }
+    /* 行尾的箭头：提示这行能点开。 */
+    .tool-arrow { flex: none; color: var(--muted-3); font-size: 12px; }
+    /* 工具分组：内置一组，插件各一组。 */
+    .tool-group { margin-bottom: 16px; }
+    .tool-group-title {
+      margin: 0 0 8px; font-size: 12px; font-weight: 600;
+      color: var(--muted-2); letter-spacing: 0.04em;
+    }
     code {
       padding: 1px 5px; border-radius: 4px;
       background: var(--surface-sunken); color: var(--text-2);
       font-family: Consolas, "Courier New", monospace; font-size: 12px;
     }
+
+    /* ---------- 工具抽屉 ---------- */
+    .drawer-backdrop {
+      position: fixed; inset: 0; z-index: 40;
+      background: rgba(43, 42, 38, 0.28);
+    }
+    .drawer {
+      position: fixed; top: 0; bottom: 0; right: 0; z-index: 41;
+      width: min(380px, 82vw);
+      display: flex; flex-direction: column;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      box-shadow: -6px 0 24px rgba(43, 42, 38, 0.14);
+      animation: drawer-in 0.18s ease-out;
+    }
+    @keyframes drawer-in {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .drawer-head {
+      flex: none; display: flex; align-items: flex-start; gap: 10px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border-hair);
+    }
+    .drawer-title { flex: 1 1 auto; min-width: 0; }
+    .drawer-title h2 { margin: 0 0 2px; font-size: 15px; }
+    .drawer-title code { font-size: 12px; }
+    .drawer-close {
+      flex: none; width: 26px; height: 26px; line-height: 1;
+      border: 1px solid var(--border-input); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--muted); font-size: 15px;
+      cursor: pointer;
+    }
+    .drawer-close:hover { background: var(--surface-hover); }
+    .drawer-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 16px 20px; }
+    .drawer-body h3 {
+      margin: 0 0 6px; font-size: 12px; font-weight: 600;
+      color: var(--muted-2); letter-spacing: 0.04em;
+    }
+    .drawer-section { margin-bottom: 18px; }
+    .drawer-desc { margin: 0; white-space: pre-wrap; color: var(--text-2); }
+    .drawer-empty { margin: 0; color: var(--muted-2); font-size: 13px; }
+    .drawer-field { margin-bottom: 10px; }
+    .drawer-field > label {
+      display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted-2);
+    }
+    .drawer-field select { width: 100%; }
+    .drawer-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .drawer-toggle input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); }
+    /* 入参表：参数名、类型、说明。 */
+    .param-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .param-item { border-left: 2px solid var(--border-hair); padding-left: 9px; }
+    .param-name { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+    .param-type { margin-left: 6px; color: var(--muted-2); font-size: 11px; }
+    .param-req { margin-left: 6px; color: var(--accent-ink); font-size: 11px; }
+    .param-desc { display: block; color: var(--muted-2); font-size: 12px; }
 
     /* ---------- 控件 ---------- */
     select, input[type="text"], input[type="password"], textarea {
@@ -288,7 +410,7 @@
     #status[data-kind="error"] { color: var(--danger); }
 
     /* ---------- 焦点环与滚动条 ---------- */
-    :is(select, input, textarea, button, .nav-tab):focus-visible {
+    :is(select, input, textarea, button, .nav-tab, .sub-tab):focus-visible {
       outline: 2px solid var(--focus); outline-offset: 1px;
     }
     /* Windows 原生滚动条是冷灰蓝的——这里也换成暖色。 */
@@ -512,84 +634,114 @@
           <h1>对话</h1>
           <p class="panel-sub">走 OpenAI 兼容协议，填别的服务商的地址也能用。</p>
 
-          <div class="toggle solo">
-            <input type="checkbox" id="llmEnabled">
-            <label for="llmEnabled"><span class="t-label">允许和桌宠聊天</span></label>
+          <!-- 二级标签：对话里的设置按分组摆开，标签条贴在分区标题下面。 -->
+          <div class="subtabs" id="chatTabs" role="tablist" aria-label="对话设置分类">
+            <button type="button" class="sub-tab" id="chat-tab-model" role="tab"
+                    data-sub="model" aria-controls="chat-sub-model"
+                    aria-selected="true" tabindex="0">模型</button>
+            <button type="button" class="sub-tab" id="chat-tab-persona" role="tab"
+                    data-sub="persona" aria-controls="chat-sub-persona"
+                    aria-selected="false" tabindex="-1">人设</button>
+            <button type="button" class="sub-tab" id="chat-tab-proactive" role="tab"
+                    data-sub="proactive" aria-controls="chat-sub-proactive"
+                    aria-selected="false" tabindex="-1">搭话</button>
+            <button type="button" class="sub-tab" id="chat-tab-agent" role="tab"
+                    data-sub="agent" aria-controls="chat-sub-agent"
+                    aria-selected="false" tabindex="-1">后台任务</button>
+            <button type="button" class="sub-tab" id="chat-tab-tools" role="tab"
+                    data-sub="tools" aria-controls="chat-sub-tools"
+                    aria-selected="false" tabindex="-1">工具</button>
           </div>
 
-          <div class="field">
-            <label for="llmBaseUrl">接口地址</label>
-            <div class="control"><input type="text" id="llmBaseUrl" placeholder="https://api.minimaxi.com/v1"></div>
-          </div>
-
-          <div class="field">
-            <label for="llmModel">模型</label>
-            <div class="control"><input type="text" id="llmModel" placeholder="MiniMax-Text-01"></div>
-          </div>
-
-          <div class="field">
-            <label for="llmTemperature">温度</label>
-            <div class="control range">
-              <input type="range" id="llmTemperature" min="0" max="2" step="0.1">
-              <span class="val" id="llmTemperatureVal"></span>
+          <div class="subpanel" id="chat-sub-model" role="tabpanel" aria-labelledby="chat-tab-model">
+            <div class="toggle solo">
+              <input type="checkbox" id="llmEnabled">
+              <label for="llmEnabled"><span class="t-label">允许和桌宠聊天</span></label>
             </div>
-          </div>
 
-          <div class="field">
-            <label for="llmMaxTokens">回复长度</label>
-            <div class="control">
-              <select id="llmMaxTokens">
-                <option value="200">简短</option>
-                <option value="500">适中</option>
-                <option value="800">默认</option>
-                <option value="1500">较长</option>
-                <option value="3000">很长</option>
-              </select>
+            <div class="field">
+              <label for="llmDispatch">桌宠能做什么</label>
+              <div class="control">
+                <!-- 选项由脚本按 shared/assistant.js 的 DISPATCH_MODES 填：
+                     清单只有一份定义（加了新模式，设置页自动出现）。 -->
+                <select id="llmDispatch"></select>
+              </div>
             </div>
-          </div>
+            <p class="hint" id="llmDispatchHint"></p>
 
-          <div class="field">
-            <label for="llmTokensField">长度字段</label>
-            <div class="control">
-              <select id="llmTokensField">
-                <option value="max_tokens">max_tokens</option>
-                <option value="max_completion_tokens">max_completion_tokens</option>
-              </select>
+            <div class="field">
+              <label for="llmBaseUrl">接口地址</label>
+              <div class="control"><input type="text" id="llmBaseUrl" placeholder="https://api.minimaxi.com/v1"></div>
             </div>
-          </div>
 
-          <div class="toggle solo">
-            <input type="checkbox" id="llmThink">
-            <label for="llmThink"><span class="t-label">启用 think 模式</span></label>
-          </div>
-
-          <div class="field">
-            <label for="llmThinkLevel">思考深度</label>
-            <div class="control">
-              <select id="llmThinkLevel">
-                <option value="low">低</option>
-                <option value="medium">中</option>
-                <option value="high">高</option>
-              </select>
+            <div class="field">
+              <label for="llmModel">模型</label>
+              <div class="control"><input type="text" id="llmModel" placeholder="MiniMax-Text-01"></div>
             </div>
-          </div>
-          <p class="hint">
-            think 模式下模型会先想再回答：更聪明，但也更慢、更吃额度。
-            有些模型不支持这个设置，遇到时会告诉你，然后按普通模式继续。
-          </p>
 
-          <div class="field">
-            <label for="llmApiKey">对话 Key</label>
-            <div class="control inline">
-              <input type="password" id="llmApiKey" placeholder="留空表示沿用上面的 Key">
-              <button type="button" id="saveLlmKey" class="btn primary">保存</button>
-              <button type="button" id="clearLlmKey" class="btn">清除</button>
+            <div class="field">
+              <label for="llmTemperature">温度</label>
+              <div class="control range">
+                <input type="range" id="llmTemperature" min="0" max="2" step="0.1">
+                <span class="val" id="llmTemperatureVal"></span>
+              </div>
             </div>
-          </div>
-          <p class="hint">对话：<span class="mask" id="llmKeyStatus">未配置</span></p>
 
-          <div class="group">
-            <h2 class="group-title">人设</h2>
+            <div class="field">
+              <label for="llmMaxTokens">回复长度</label>
+              <div class="control">
+                <select id="llmMaxTokens">
+                  <option value="200">简短</option>
+                  <option value="500">适中</option>
+                  <option value="800">默认</option>
+                  <option value="1500">较长</option>
+                  <option value="3000">很长</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="llmTokensField">长度字段</label>
+              <div class="control">
+                <select id="llmTokensField">
+                  <option value="max_tokens">max_tokens</option>
+                  <option value="max_completion_tokens">max_completion_tokens</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="toggle solo">
+              <input type="checkbox" id="llmThink">
+              <label for="llmThink"><span class="t-label">启用 think 模式</span></label>
+            </div>
+
+            <div class="field">
+              <label for="llmThinkLevel">思考深度</label>
+              <div class="control">
+                <select id="llmThinkLevel">
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+            </div>
+            <p class="hint">
+              think 模式下模型会先想再回答：更聪明，但也更慢、更吃额度。
+              有些模型不支持这个设置，遇到时会告诉你，然后按普通模式继续。
+            </p>
+
+            <div class="field">
+              <label for="llmApiKey">对话 Key</label>
+              <div class="control inline">
+                <input type="password" id="llmApiKey" placeholder="留空表示沿用上面的 Key">
+                <button type="button" id="saveLlmKey" class="btn primary">保存</button>
+                <button type="button" id="clearLlmKey" class="btn">清除</button>
+              </div>
+            </div>
+            <p class="hint">对话：<span class="mask" id="llmKeyStatus">未配置</span></p>
+          </div>
+
+          <div class="subpanel" id="chat-sub-persona" role="tabpanel" aria-labelledby="chat-tab-persona" hidden>
             <div class="field">
               <label for="llmPersonaName">名字</label>
               <div class="control"><input type="text" id="llmPersonaName" placeholder="小桌"></div>
@@ -604,40 +756,106 @@
             </div>
           </div>
 
-          <div class="group">
-            <h2 class="group-title">主动搭话</h2>
-            <div class="toggle solo">
-              <input type="checkbox" id="llmProactive">
-              <label for="llmProactive"><span class="t-label">允许桌宠主动开口</span></label>
+          <div class="subpanel" id="chat-sub-proactive" role="tabpanel" aria-labelledby="chat-tab-proactive" hidden>
+            <div class="group">
+              <h3 class="group-title">主动搭话</h3>
+              <div class="toggle solo">
+                <input type="checkbox" id="llmProactive">
+                <label for="llmProactive"><span class="t-label">允许桌宠主动开口</span></label>
+              </div>
+              <div class="field">
+                <label for="llmProactiveInterval">最少间隔</label>
+                <div class="control">
+                  <select id="llmProactiveInterval">
+                    <option value="1800000">半小时</option>
+                    <option value="3600000">一小时</option>
+                    <option value="10800000">三小时</option>
+                    <option value="21600000">六小时</option>
+                  </select>
+                </div>
+              </div>
+              <p class="hint">深夜（23:00–08:00）不搭话；用户刚说过话时也不插嘴。</p>
             </div>
+
+            <div class="group">
+              <h3 class="group-title">先应一声</h3>
+              <div class="field">
+                <label for="llmAckDelay">等多久</label>
+                <div class="control">
+                  <!-- 选项由脚本按 shared/assistant.js 的 ACK_DELAY_PRESETS 填：
+                       预设值比让人手填毫秒更不容易改错。 -->
+                  <select id="llmAckDelay"></select>
+                </div>
+              </div>
+              <p class="hint">
+                它还在算的时候先应一句，免得你以为程序卡住了。
+                选「关闭」就一声不吭地等答案。
+              </p>
+            </div>
+          </div>
+
+          <div class="subpanel" id="chat-sub-agent" role="tabpanel" aria-labelledby="chat-tab-agent" hidden>
+            <p class="panel-sub">
+              桌宠派出去的活儿怎么跑、跑多快、动你的东西要不要问一声。
+            </p>
+
             <div class="field">
-              <label for="llmProactiveInterval">最少间隔</label>
+              <label for="agentMaxConcurrent">同时跑几个</label>
               <div class="control">
-                <select id="llmProactiveInterval">
-                  <option value="1800000">半小时</option>
-                  <option value="3600000">一小时</option>
-                  <option value="10800000">三小时</option>
-                  <option value="21600000">六小时</option>
+                <input type="number" id="agentMaxConcurrent" min="1" max="8" step="1" value="1">
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="agentMaxSteps">一个任务最多几步</label>
+              <div class="control">
+                <input type="number" id="agentMaxSteps" min="1" max="100" step="1" value="20">
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="agentTimeout">一条命令或一次外部助手最多跑多久</label>
+              <div class="control">
+                <select id="agentTimeout">
+                  <option value="30000">30 秒</option>
+                  <option value="60000">1 分钟</option>
+                  <option value="120000">2 分钟</option>
+                  <option value="300000">5 分钟</option>
+                  <option value="600000">10 分钟</option>
+                  <option value="1800000">30 分钟</option>
                 </select>
               </div>
             </div>
-            <p class="hint">深夜（23:00–08:00）不搭话；用户刚说过话时也不插嘴。</p>
-          </div>
 
-          <div class="group">
-            <h2 class="group-title">先应一声</h2>
             <div class="field">
-              <label for="llmAckDelay">等多久</label>
+              <label for="agentWorkspace">工作目录</label>
               <div class="control">
-                <!-- 选项由脚本按 shared/assistant.js 的 ACK_DELAY_PRESETS 填：
-                     预设值比让人手填毫秒更不容易改错。 -->
-                <select id="llmAckDelay"></select>
+                <input type="text" id="agentWorkspace" placeholder="留空 = 用户主目录">
               </div>
             </div>
-            <p class="hint">
-              它还在算的时候先应一句，免得你以为程序卡住了。
-              选「关闭」就一声不吭地等答案。
+
+            <div class="field">
+              <label for="agentPolicy">动我的东西要不要问</label>
+              <div class="control">
+                <select id="agentPolicy"></select>
+              </div>
+            </div>
+            <p class="hint" id="agentPolicyHint"></p>
+          </div>
+
+          <div class="subpanel" id="chat-sub-tools" role="tabpanel" aria-labelledby="chat-tab-tools" hidden>
+            <p class="panel-sub">
+              桌宠能用哪些工具。点一个工具能看它的介绍与入参，也能改它的开关。
             </p>
+
+            <div class="field">
+              <label for="toolGroup">只看</label>
+              <div class="control">
+                <select id="toolGroup"></select>
+              </div>
+            </div>
+
+            <div id="toolGroups"></div>
           </div>
         </section>
 
@@ -732,6 +950,44 @@
       <span id="status" role="status"></span>
     </footer>
   </div>
+
+  <div class="drawer-backdrop" id="toolDrawerBackdrop" hidden></div>
+  <aside class="drawer" id="toolDrawer" hidden aria-label="工具详情">
+    <div class="drawer-head">
+      <div class="drawer-title">
+        <h2 id="toolDrawerName"></h2>
+        <code id="toolDrawerId"></code>
+      </div>
+      <button type="button" class="drawer-close" id="toolDrawerClose" aria-label="关闭">×</button>
+    </div>
+    <div class="drawer-body">
+      <section class="drawer-section">
+        <h3>介绍</h3>
+        <p class="drawer-desc" id="toolDrawerDesc"></p>
+      </section>
+      <section class="drawer-section">
+        <h3>入参</h3>
+        <ul class="param-list" id="toolDrawerParams"></ul>
+      </section>
+      <section class="drawer-section">
+        <h3>设置</h3>
+        <div class="drawer-field">
+          <label class="drawer-toggle">
+            <input type="checkbox" id="toolDrawerEnabled">
+            <span>启用</span>
+          </label>
+        </div>
+        <div class="drawer-field">
+          <label for="toolDrawerApproval">审批等级</label>
+          <select id="toolDrawerApproval">
+            <option value="ask">每次询问</option>
+            <option value="always">以后不问</option>
+          </select>
+        </div>
+        <p class="drawer-empty" id="toolDrawerRisk"></p>
+      </section>
+    </div>
+  </aside>
 
   <script type="module" src="/src/settings/main.js"></script>
 </body>

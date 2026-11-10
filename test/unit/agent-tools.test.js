@@ -169,3 +169,32 @@ test('注册表：规整一个描述符', () => {
   assert.equal(normalizeTool(null), null);
   assert.equal(normalizeTool({ name: 'fs.read' }), null, '没有 run 就不算工具');
 });
+
+/** 被用户关掉的工具：模型看不见它，也调不到它。 */
+test('注册表：关掉的工具不进工具表，也取不到实现', () => {
+  let disabled = ['fs.write'];
+  const reg = createToolRegistry({ getDisabled: () => disabled });
+  reg.register(tool('fs.read'));
+  reg.register(tool('fs.write'));
+
+  assert.deepEqual(reg.list().map((t) => t.name), ['fs.read']);
+  assert.equal(reg.get('fs.write'), null, '关掉的工具不该拿得到实现');
+  assert.ok(reg.get('fs.read'), '开着的工具不受影响');
+
+  // 关掉是立刻生效的：名单一改，下一次问就变了。
+  disabled = [];
+  assert.deepEqual(reg.list().map((t) => t.name), ['fs.read', 'fs.write']);
+  assert.ok(reg.get('fs.write'));
+});
+
+/** 设置界面要能看见关掉的那些，否则用户没法把它们打开。 */
+test('注册表：listAll 给出全部工具并标出开关', () => {
+  const reg = createToolRegistry({ getDisabled: () => ['fs.write'] });
+  reg.register(tool('fs.read'));
+  reg.register(tool('fs.write'));
+
+  const all = reg.listAll();
+  assert.deepEqual(all.map((t) => t.name), ['fs.read', 'fs.write']);
+  assert.equal(all.find((t) => t.name === 'fs.write').enabled, false);
+  assert.equal(all.find((t) => t.name === 'fs.read').enabled, true);
+});

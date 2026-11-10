@@ -22,31 +22,6 @@ export default function createWeatherPlugin() {
 
   return {
     page,
-    /**
-     * 给 agent 用的工具（规格 §5.4）。
-     *
-     * **清单里声明、这里实现，两边必须同名**：
-     * 清单（plugin.json 的 tools[]）里写的是「weather.get」，
-     * 这里返回的实现也得叫「weather.get」——对不上宿主就不注册它。
-     *
-     * 清单是给模型看的契约，实现是干活的那一口：
-     * 这里返回 `{ text, data }`——`text` 给模型，`data` 给界面。
-     */
-    tools(ctx) {
-      return [
-        {
-          name: 'weather.get',
-          async run({ city }) {
-            const name = String(city || '').trim();
-            if (!name) throw new Error('要查哪个城市？给个 city');
-            const result = await ctx.assistant.fetchWeather(name);
-            // 查不到就抛错：错误会喂回模型，模型可以换个城市再试。
-            if (!result?.ok) throw new Error(result?.message || '查不到天气');
-            return { text: result.message, data: { city: name } };
-          },
-        },
-      ];
-    },
     action(ctx, actionId, value) {
       if (actionId === 'city') {
         const r = ctx.assistant.setWeatherCity(value);
@@ -71,6 +46,36 @@ export default function createWeatherPlugin() {
         return { ...page(ctx), status: '正在查…' };
       }
       return page(ctx);
+    },
+
+    /**
+     * 给 agent 用的工具。
+     *
+     * 清单里声明、这里实现，两边必须同名。
+     * 报错要**抛出去**：错误会喂回模型，模型能换个城市再试。
+     */
+    tools(ctx) {
+      return [
+        {
+          name: 'weather.get',
+          async run({ city }) {
+            const name = String(city || '').trim();
+            const result = await ctx.assistant.fetchWeather(name || undefined);
+            if (!result?.ok) throw new Error(result?.message || '查不到天气');
+            return { text: result.message, data: { city: name } };
+          },
+        },
+        {
+          name: 'weather.city.set',
+          async run({ city }) {
+            const name = String(city || '').trim();
+            if (!name) throw new Error('要设哪个城市？给个 city');
+            const r = ctx.assistant.setWeatherCity(name);
+            if (!r?.ok) throw new Error(r?.message || '设不了');
+            return { text: r.message, data: { city: name } };
+          },
+        },
+      ];
     },
   };
 }

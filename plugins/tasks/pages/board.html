@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>后台任务</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font: var(--dp-font);
+        color: var(--dp-text);
+        background: var(--dp-bg);
+      }
+      body.dp-panel {
+        min-height: 0;
+      }
+      #wrap {
+        display: flex;
+        flex-direction: column;
+        gap: var(--dp-gap);
+        padding: 12px;
+      }
+      #head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--dp-gap);
+      }
+      #head h1 {
+        margin: 0;
+        font-size: 15px;
+      }
+      #counts {
+        color: var(--dp-text-soft);
+        font-size: 12px;
+      }
+      #interrupted {
+        color: var(--dp-text-soft);
+        font-size: 12px;
+      }
+      section {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      section:empty {
+        display: none;
+      }
+      /* 一行任务。 */
+      .row {
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .row-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        cursor: pointer;
+        list-style: none;
+      }
+      .row-head::-webkit-details-marker {
+        display: none;
+      }
+      .row-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .dot {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--dp-text-faint);
+        align-self: center;
+      }
+      .dot[data-status='running'] {
+        background: var(--dp-accent-strong);
+      }
+      .dot[data-status='waiting_approval'] {
+        background: var(--dp-danger);
+      }
+      .dot[data-status='done'] {
+        background: var(--dp-text-soft);
+      }
+      .dot[data-status='failed'] {
+        background: var(--dp-danger);
+      }
+      .row-title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .row-status {
+        flex: none;
+        font-size: 12px;
+        color: var(--dp-text-soft);
+      }
+      .row-time {
+        flex: none;
+        font-size: 12px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .row-step {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+      }
+      .row-body {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .row-error {
+        color: var(--dp-danger);
+      }
+      .row-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .row-actions button {
+        padding: 2px 10px;
+        font-size: 12px;
+      }
+      /* 追加要求：展开一个输入框。 */
+      .steer-box {
+        display: flex;
+        gap: 6px;
+      }
+      .steer-box[hidden] {
+        display: none;
+      }
+      .steer-box input {
+        flex: 1;
+        min-width: 0;
+        font-size: 12px;
+      }
+      /* 待答审批：一张卡片。 */
+      .card {
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-bg);
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .card-text {
+        font-size: 13px;
+        word-break: break-word;
+      }
+      .card-task {
+        font-size: 12px;
+        color: var(--dp-text-faint);
+      }
+      .card-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .card-actions button {
+        padding: 2px 10px;
+        font-size: 12px;
+      }
+      #empty {
+        color: var(--dp-text-faint);
+        text-align: center;
+        padding: 24px 0;
+      }
+      #message {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        min-height: 18px;
+      }
+      /* 小部件：紧凑版。同一个页面文件，靠 body 上的类切。 */
+      body.dp-widget #wrap {
+        padding: 8px;
+        gap: 4px;
+      }
+      body.dp-widget #head h1 {
+        font-size: 13px;
+      }
+      body.dp-widget .row-step,
+      body.dp-widget .row-actions,
+      body.dp-widget .steer-box,
+      body.dp-widget #finished-sec,
+      body.dp-widget #message {
+        display: none;
+      }
+      body.dp-widget .row {
+        padding: 4px 8px;
+      }
+      body.dp-widget .card {
+        padding: 4px 8px;
+      }
+      body.dp-widget .card-actions {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="head">
+        <h1>后台任务</h1>
+        <span id="counts"></span>
+      </div>
+      <div id="interrupted" hidden></div>
+      <section id="pending-sec">
+        <h2 class="dp-section-title">待你点头</h2>
+        <div id="pending"></div>
+      </section>
+      <section id="running-sec">
+        <h2 class="dp-section-title">在跑与排队</h2>
+        <div id="running"></div>
+      </section>
+      <section id="finished-sec">
+        <h2 class="dp-section-title">已结束</h2>
+        <div id="finished"></div>
+      </section>
+      <div id="empty">现在没有后台任务</div>
+      <div id="message"></div>
+    </div>
+    <script type="module" src="board.js"></script>
+  </body>
+</html>

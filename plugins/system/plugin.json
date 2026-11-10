@@ -4,6 +4,31 @@
   "icon": "📊",
   "description": "CPU、内存、温度、电源",
   "keywords": ["system", "status", "cpu", "neicun", "xituan", "状态", "内存", "温度", "电源"],
+  "skill": {
+    "name": "system",
+    "description": "读本机的运行状况：CPU、内存、温度、电源，以及过热提醒的开关",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "system.status",
+      "label": "看系统状态",
+      "description": "看当前的 CPU、内存、温度与电源状态。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    },
+    {
+      "name": "system.hotalert.set",
+      "label": "设置过热提醒",
+      "description": "开或关「过热时提醒我」。",
+      "parameters": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean", "description": "true 开，false 关" } },
+        "required": ["enabled"]
+      },
+      "risk": "write"
+    }
+  ],
   "window": {
     "title": "系统状态",
     "width": 320,

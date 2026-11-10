@@ -4,19 +4,32 @@
   "icon": "🌤",
   "description": "当前天气与定时播报",
   "keywords": ["weather", "tianqi", "tq", "天气", "气温", "下雨", "温度"],
+  "skill": {
+    "name": "weather",
+    "description": "查当前天气，以及设置默认城市",
+    "file": "skill.md"
+  },
   "tools": [
     {
       "name": "weather.get",
       "label": "查天气",
-      "description": "按城市名查当前的天气（温度与天气状况）。",
+      "description": "按城市名查当前的天气（温度与天气状况）。不写城市就查用户设置好的那个。",
       "parameters": {
         "type": "object",
-        "properties": {
-          "city": { "type": "string", "description": "城市名，例如「北京」" }
-        },
-        "required": ["city"]
+        "properties": { "city": { "type": "string", "description": "城市名，例如「北京」" } }
       },
       "risk": "read"
+    },
+    {
+      "name": "weather.city.set",
+      "label": "设置城市",
+      "description": "把默认城市改掉，之后查天气就用它。",
+      "parameters": {
+        "type": "object",
+        "properties": { "city": { "type": "string", "description": "城市名，例如「北京」" } },
+        "required": ["city"]
+      },
+      "risk": "write"
     }
   ],
   "window": {

@@ -4,6 +4,70 @@
   "icon": "🍅",
   "description": "25 分钟专注 / 5 分钟休息",
   "keywords": ["pomodoro", "tomato", "fanqie", "fq", "focus", "专注", "计时", "计时器"],
+  "skill": {
+    "name": "pomodoro",
+    "description": "管理专注计时：开始、暂停、继续、重置，以及查看当前状态",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "pomodoro.start",
+      "label": "开始番茄钟",
+      "description": "开始一段专注或休息计时。phase 是 focus（专注）或 break（休息）；不写就用默认的专注。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phase": { "type": "string", "description": "focus（专注）或 break（休息）" },
+          "minutes": { "type": "number", "description": "时长（分钟）。不写就用配置里的默认时长。" }
+        }
+      },
+      "risk": "write"
+    },
+    {
+      "name": "pomodoro.pause",
+      "label": "暂停番茄钟",
+      "description": "暂停正在走的计时（剩余时间会冻住）。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "pomodoro.resume",
+      "label": "继续番茄钟",
+      "description": "从暂停处接着走计时。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "pomodoro.reset",
+      "label": "重置番茄钟",
+      "description": "把番茄钟重置回空闲状态。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "pomodoro.status",
+      "label": "看番茄钟状态",
+      "description": "看番茄钟现在什么状态：还在走什么阶段、剩多少时间。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    }
+  ],
+  "settings": [
+    {
+      "key": "focusMinutes",
+      "label": "专注时长（分钟）",
+      "type": "number",
+      "default": 25,
+      "hint": "用户说「开始专注」而没给时长时，用这个。"
+    },
+    {
+      "key": "breakMinutes",
+      "label": "休息时长（分钟）",
+      "type": "number",
+      "default": 5,
+      "hint": "用户说「开始休息」而没给时长时，用这个。"
+    }
+  ],
   "window": {
     "title": "番茄钟",
     "width": 300,

@@ -174,6 +174,89 @@ test('提示词：写着先自己答一次，别动不动就派单', async () =>
   assert.ok(system.includes('先自己答一次'), `提示词没写清楚派单条件：\n${system}`);
 });
 
+test('提示词：写着怎么判断该自己答还是派单', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.match(system, /一次工具调用就能答的/, `提示词没写清楚自己答的条件：\n${system}`);
+  assert.match(system, /要调好几次工具.*派后台任务/, `提示词没写清楚派单的条件：\n${system}`);
+  assert.match(system, /拿不准就派单/, `提示词没写清楚拿不准时怎么办：\n${system}`);
+});
+
+test('提示词：一次调工具搞不定的事一律派单（插件的活儿也是）', async () => {
+  // 用户问天气时，交互层没有天气工具：
+  // 提示词必须说清「插件的活儿你干不了，派单」，
+  // 否则模型会去找一个不存在的工具，把 3 步全烧光。
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.match(system, /一律派后台任务/, `提示词没写清派单是默认路径：\n${system}`);
+  assert.match(system, /天气/, `提示词没点名插件的活儿：\n${system}`);
+  assert.match(system, /capability\.list 只在用户问/, `提示词没限制 capability.list 的用法：\n${system}`);
+});
+
+test('提示词：清单类回答可以写长一点', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.match(system, /可以写到 300 字/, `提示词没放开清单类回答的字数：\n${system}`);
+});
+
+test('提示词：写着能力清单要查工具，别凭印象说', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你有哪些插件' }],
+    config: CONFIG,
+  });
+  const system = calls[0].body.messages[0].content;
+  assert.match(system, /capability\.list/, `提示词没提能力清单工具：\n${system}`);
+  assert.match(system, /你装着的插件：天气/, `提示词里没有插件名：\n${system}`);
+});
+
+test('工具：能力清单工具在这一轮可用', async () => {
+  const { calls, fetchImpl } = fakeFetch([toolCall('capability.list'), say('我有天气和待办。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '你有哪些插件' }],
+    config: CONFIG,
+  });
+  assert.equal(result.text, '我有天气和待办。');
+  // 工具表里要有它，模型才调得动。
+  const names = calls[0].body.tools.map((t) => t.function.name);
+  assert.ok(names.includes('capability.list'), `工具表里没有 capability.list：${names.join(' / ')}`);
+});
+
 test('轮次上限：3 步还没给答复就收尾，不空着', async () => {
   // 每次都调工具：模型一直没交卷。
   //
@@ -193,7 +276,74 @@ test('轮次上限：3 步还没给答复就收尾，不空着', async () => {
     config: CONFIG,
   });
   assert.equal(result.steps, 3);
-  assert.match(result.text, /没能在这 3 步之内/);
+  // 没有派单工具时只能实话实说，但别再报「3 步」这种内部黑话。
+  assert.match(result.text, /一次做不完/);
+});
+
+test('兜底：3 步用尽还没答复 → 自动派单，别把模型的窝囊甩给用户', async () => {
+  // 用户问天气，交互层没有天气工具：模型自己绕来绕去也没答上来。
+  // 这时交互层该做的是**派后台任务**（后台有插件工具），
+  // 而不是甩一句「我没能在这 3 步之内做完这件事」。
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getTaskTools: () => [
+      {
+        name: 'task.submit',
+        label: '派单',
+        description: '派一个后台任务',
+        parameters: { type: 'object', properties: {} },
+        risk: TOOL_RISK.READ,
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '派了' };
+        },
+      },
+    ],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '今天天气怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天天气怎么样', history: [] },
+  });
+  assert.equal(submitted.length, 1, '没有替用户派单');
+  assert.match(submitted[0].brief, /今天天气怎么样/);
+  assert.match(result.text, /我去查/);
+});
+
+test('兜底：模型自己已经派过单了 → 不要再派一次', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([
+    toolCall('task.submit', { title: '查天气', brief: '查一下天气' }),
+    toolCall('fs.list'),
+    toolCall('clock.now'),
+  ]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getTaskTools: () => [
+      {
+        name: 'task.submit',
+        label: '派单',
+        description: '派一个后台任务',
+        parameters: { type: 'object', properties: {} },
+        risk: TOOL_RISK.READ,
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '派了' };
+        },
+      },
+    ],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '今天天气怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天天气怎么样', history: [] },
+  });
+  assert.equal(submitted.length, 1, '同一个需求派了两遍');
+  assert.match(result.text, /派出去了/);
 });
 
 test('步数用尽：不再多跑一轮总结（交互层要秒级）', async () => {

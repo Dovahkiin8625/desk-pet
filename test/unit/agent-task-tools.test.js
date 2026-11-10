@@ -114,6 +114,49 @@ test('查看：把任务列出来', async () => {
   assert.match(out.text, /查视频/);
 });
 
+test('查进展：说出任务在干嘛、到哪一步了', async () => {
+  const { byName } = makeTools();
+  const out = await byName.get('task.status').run({});
+  assert.match(out.text, /t-9/);
+  assert.match(out.text, /查视频/);
+  assert.match(out.text, /进行中/);
+  assert.match(out.text, /fs\.list/);
+});
+
+test('查进展：指定任务号就只看那一个', async () => {
+  const tasks = fakeTasks();
+  tasks.list = () => [
+    { taskId: 't-9', title: '查视频', status: 'running', lastStep: 'fs.list', result: '', elapsedMs: 1200 },
+    { taskId: 't-8', title: '别的', status: 'done', lastStep: 'fs.read', result: '找到了', elapsedMs: 5000 },
+  ];
+  const tools = createTaskTools({
+    tasks,
+    dispatchEnabled: true,
+    appendRecord: () => {},
+    now: () => 1,
+    turn: { history: [], userText: 't-9 到哪了', config: {} },
+  });
+  const status = tools.find((t) => t.name === 'task.status');
+  const out = await status.run({ taskId: 't-9' });
+  assert.match(out.text, /t-9/);
+  assert.doesNotMatch(out.text, /t-8/);
+});
+
+test('查进展：没有任务就如实说没有', async () => {
+  const tasks = fakeTasks();
+  tasks.list = () => [];
+  const tools = createTaskTools({
+    tasks,
+    dispatchEnabled: true,
+    appendRecord: () => {},
+    now: () => 1,
+    turn: { history: [], userText: '有任务吗', config: {} },
+  });
+  const status = tools.find((t) => t.name === 'task.status');
+  const out = await status.run({});
+  assert.match(out.text, /现在没有后台任务/);
+});
+
 test('停掉 / 归档 / 追加要求：都转给中枢', async () => {
   const { byName, tasks } = makeTools();
   await byName.get('task.cancel').run({ taskId: 't-9' });

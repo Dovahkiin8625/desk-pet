@@ -2,6 +2,10 @@ import { DEFAULT_VOLUME } from '../shared/volume.js';
 import { parseTapLines } from '../shared/tapVoice.js';
 import { resolveVoiceId, applyVoiceChoice } from '../shared/voiceChoice.js';
 import {
+  DISPATCH_MODES,
+  dispatchModeInfo,
+  APPROVAL_POLICIES,
+  approvalPolicyInfo,
   THINK_LEVELS,
   ACK_DELAY_PRESETS,
   ACK_DELAY_OFF,
@@ -52,6 +56,8 @@ const tapTalkLinesInput = document.getElementById('tapTalkLines');
 
 // 对话
 const llmEnabledBox = document.getElementById('llmEnabled');
+const llmDispatchSelect = document.getElementById('llmDispatch');
+const llmDispatchHint = document.getElementById('llmDispatchHint');
 const llmBaseUrlInput = document.getElementById('llmBaseUrl');
 const llmModelInput = document.getElementById('llmModel');
 const llmTemperatureInput = document.getElementById('llmTemperature');
@@ -72,6 +78,28 @@ const llmProactiveIntervalSelect = document.getElementById('llmProactiveInterval
 const llmAckDelaySelect = document.getElementById('llmAckDelay');
 const llmFactsList = document.getElementById('llmFacts');
 const clearFactsBtn = document.getElementById('clearFacts');
+
+// 后台任务
+const agentMaxConcurrentInput = document.getElementById('agentMaxConcurrent');
+const agentMaxStepsInput = document.getElementById('agentMaxSteps');
+const agentTimeoutSelect = document.getElementById('agentTimeout');
+const agentWorkspaceInput = document.getElementById('agentWorkspace');
+const agentPolicySelect = document.getElementById('agentPolicy');
+const agentPolicyHint = document.getElementById('agentPolicyHint');
+
+// 工具
+const toolGroupSelect = document.getElementById('toolGroup');
+const toolGroupsBox = document.getElementById('toolGroups');
+const toolDrawer = document.getElementById('toolDrawer');
+const toolDrawerBackdrop = document.getElementById('toolDrawerBackdrop');
+const toolDrawerClose = document.getElementById('toolDrawerClose');
+const toolDrawerName = document.getElementById('toolDrawerName');
+const toolDrawerId = document.getElementById('toolDrawerId');
+const toolDrawerDesc = document.getElementById('toolDrawerDesc');
+const toolDrawerParams = document.getElementById('toolDrawerParams');
+const toolDrawerEnabled = document.getElementById('toolDrawerEnabled');
+const toolDrawerApproval = document.getElementById('toolDrawerApproval');
+const toolDrawerRisk = document.getElementById('toolDrawerRisk');
 
 // 系统
 const autoLaunchBox = document.getElementById('autoLaunch');
@@ -241,6 +269,50 @@ narrowQuery.addEventListener('change', syncOrientation);
 syncOrientation();
 
 // ---------------------------------------------------------------------------
+// 对话分区的二级标签
+//
+// 「对话」这一节里的设置项分成了五组（模型、人设、主动搭话、先应一声、
+// 后台任务），平铺下来太长。标签条放在分区标题下面，一组一页。
+// ---------------------------------------------------------------------------
+
+const chatTabs = document.getElementById('chatTabs');
+const chatSubTabs = Array.from(chatTabs.querySelectorAll('[data-sub]'));
+const chatSubPanels = new Map(
+  chatSubTabs.map((t) => [t.dataset.sub, document.getElementById(t.getAttribute('aria-controls'))])
+);
+
+/** 切到某个分组。焦点留在标签上，与左边目录一个路数。 */
+function activateChatSub(key, { focus = false } = {}) {
+  for (const t of chatSubTabs) {
+    const active = t.dataset.sub === key;
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+    // roving tabindex：整条标签只占一个 Tab 停靠点。
+    t.tabIndex = active ? 0 : -1;
+    chatSubPanels.get(t.dataset.sub).hidden = !active;
+  }
+  if (focus) chatTabs.querySelector(`[data-sub="${key}"]`)?.focus();
+  // 标签条放不下时是横向滚的：选中的那个得滚进视野。
+  chatTabs.querySelector(`[data-sub="${key}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+for (const t of chatSubTabs) {
+  t.addEventListener('click', () => activateChatSub(t.dataset.sub));
+}
+
+// 方向键在标签条里移动并切换。
+chatTabs.addEventListener('keydown', (e) => {
+  const idx = chatSubTabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+  let next = -1;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % chatSubTabs.length;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx + chatSubTabs.length - 1) % chatSubTabs.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = chatSubTabs.length - 1;
+  if (next < 0) return;
+  e.preventDefault();
+  activateChatSub(chatSubTabs[next].dataset.sub, { focus: true });
+});
+
+// ---------------------------------------------------------------------------
 // 目录右侧的状态摘要
 //
 // 目录因此兼作一块仪表盘：不进每一节，也看得出整个应用现在是什么状态。
@@ -267,11 +339,12 @@ function refreshNavSummaries() {
   setSummary('voice', ttsEnabledBox.checked ? (ttsKey ? '已开' : '缺 Key') : '已关');
 
   const llmKey = llmKeyStatus.dataset.configured === 'true';
-  // 摘要只说「开没开」：前台恒定走交互层，没有后端可选了，
-  // 摘要里再挂个后端名反而是在说一件不成立的事。
+  // 摘要里带上派单模式：用户最常问的「它现在会自己干活吗」，
+  // 不该靠切进分区去看下拉框。
+  const dispatchName = dispatchModeInfo(llmDispatchSelect.value).label;
   setSummary(
     'chat',
-    llmEnabledBox.checked ? (llmKey ? '已开' : '缺 Key') : '已关'
+    llmEnabledBox.checked ? (llmKey ? `已开 · ${dispatchName}` : '缺 Key') : '已关'
   );
 
   setSummary('memory', `${llmFactsList.children.length} 条`);
@@ -430,6 +503,32 @@ function fillAckOptions() {
 fillAckOptions();
 
 /**
+ * 填「桌宠能做什么」的下拉框。
+ *
+ * 选项按 shared/assistant.js 的 DISPATCH_MODES 填，不在这里写死：
+ * 写死一份的话，加了第三个模式，设置页上还是那两个。
+ *
+ * 模块加载时就填好：init() 要拉一堆数据，万一哪步失败，
+ * 设置页至少还能看见下拉框。
+ */
+function fillDispatchOptions() {
+  llmDispatchSelect.textContent = '';
+  for (const id of DISPATCH_MODES) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = dispatchModeInfo(id).label;
+    llmDispatchSelect.appendChild(opt);
+  }
+}
+fillDispatchOptions();
+
+/** 把当前派单模式的说明写在下面——用户切过去时得当场看见差别。 */
+function updateDispatchHint() {
+  const info = dispatchModeInfo(llmDispatchSelect.value);
+  llmDispatchHint.textContent = info.hint || `桌宠能做什么：${info.label}`;
+}
+
+/**
  * 把当前值补进下拉框（如果预设里没有它）。
  *
  * 磁盘上的值可能是手改的，也可能是旧版本留下的——
@@ -443,6 +542,286 @@ function ensureAckOption(value) {
   opt.value = str;
   opt.textContent = `${(Number(str) / 1000).toFixed(1)} 秒`;
   llmAckDelaySelect.appendChild(opt);
+}
+
+/**
+ * 填「动我的东西要不要问」的下拉框。
+ *
+ * 选项按 shared/assistant.js 的 APPROVAL_POLICIES 填：
+ * 档位增删时设置页跟着走，不在这里写死一份。
+ */
+function fillApprovalOptions() {
+  agentPolicySelect.textContent = '';
+  for (const id of APPROVAL_POLICIES) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = approvalPolicyInfo(id).label;
+    agentPolicySelect.appendChild(opt);
+  }
+}
+fillApprovalOptions();
+
+/** 把当前档位的后果写在下面——用户切过去时得当场看见差别。 */
+function updateApprovalHint() {
+  const info = approvalPolicyInfo(agentPolicySelect.value);
+  agentPolicyHint.textContent = info.hint || '';
+}
+
+/**
+ * 把当前超时值补进下拉框（如果预设里没有它）。
+ *
+ * 磁盘上的值可能是手改的，也可能是旧版本留下的——
+ * 下拉框里没有对应选项时它会显示成空的，
+ * 那等于骗用户说「没设置」，还会在下一次保存时把它改掉。
+ */
+function ensureTimeoutOption(value) {
+  const str = String(value);
+  if (Array.from(agentTimeoutSelect.options).some((o) => o.value === str)) return;
+  const opt = document.createElement('option');
+  opt.value = str;
+  const ms = Number(str);
+  opt.textContent = ms % 60000 === 0 ? `${ms / 60000} 分钟` : `${ms / 1000} 秒`;
+  agentTimeoutSelect.appendChild(opt);
+}
+
+/**
+ * 读一个「有几个」的输入框，并把读到的值夹回合法范围。
+ *
+ * 越界的值主进程也会夹，但界面上得显示夹完的值——
+ * 不然用户填 999，磁盘上存着 100，界面还写着 999。
+ */
+function readClampedInt(input) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const n = Math.round(Number(input.value));
+  const v = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+  input.value = String(v);
+  return v;
+}
+
+/** 工具清单：主进程给的工具与它们的来源。 */
+let agentToolList = [];
+
+/** 永久放行（以后不问）的工具名。 */
+let allowAlwaysNames = new Set();
+
+/** 被关掉的工具名。 */
+let disabledToolNames = new Set();
+
+/** 插件 id → 插件名（分组标题用）。 */
+let pluginNames = new Map();
+
+/** 工具按来源分组：内置的一组，每个接给 agent 的插件各一组。 */
+function toolGroups() {
+  const groups = new Map();
+  const push = (key, title) => {
+    if (!groups.has(key)) groups.set(key, { key, title, tools: [] });
+    return groups.get(key);
+  };
+  for (const t of agentToolList) {
+    const owner = String(t.owner || '');
+    const key = owner ? `plugin:${owner}` : 'builtin';
+    const title = owner ? pluginNames.get(owner) || owner : '内置';
+    push(key, title).tools.push(t);
+  }
+  return [...groups.values()];
+}
+
+/** 画「工具」这一页：按来源分组，每组一个下拉框能筛。 */
+function renderTools() {
+  toolGroupsBox.textContent = '';
+
+  // 分组下拉框：全部 / 内置 / 每个插件。
+  const groups = toolGroups();
+  const keep = toolGroupSelect.value;
+  toolGroupSelect.textContent = '';
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = '全部分组';
+  toolGroupSelect.appendChild(all);
+  for (const g of groups) {
+    const opt = document.createElement('option');
+    opt.value = g.key;
+    opt.textContent = g.title;
+    toolGroupSelect.appendChild(opt);
+  }
+  toolGroupSelect.value = groups.some((g) => g.key === keep) ? keep : '';
+
+  const shown = groups.filter((g) => !toolGroupSelect.value || g.key === toolGroupSelect.value);
+  for (const g of shown) {
+    const section = document.createElement('section');
+    section.className = 'tool-group';
+
+    const title = document.createElement('h2');
+    title.className = 'tool-group-title';
+    title.textContent = g.title;
+    section.appendChild(title);
+
+    const ul = document.createElement('ul');
+    ul.className = 'tool-list';
+    for (const t of g.tools) ul.appendChild(toolRow(t));
+    section.appendChild(ul);
+
+    toolGroupsBox.appendChild(section);
+  }
+
+  // 名单里有的、工具表里没有的（插件被卸了）：也列出来，
+  // 否则用户看不见它，也没法把它从「以后不问」里去掉。
+  const orphans = [...allowAlwaysNames].filter(
+    (name) => !agentToolList.some((t) => t.name === name)
+  );
+  if (orphans.length) {
+    const section = document.createElement('section');
+    section.className = 'tool-group';
+    const title = document.createElement('h2');
+    title.className = 'tool-group-title';
+    title.textContent = '已不存在的工具';
+    section.appendChild(title);
+    const ul = document.createElement('ul');
+    ul.className = 'tool-list';
+    for (const name of orphans) {
+      const li = document.createElement('li');
+      li.className = 'tool-row unavailable';
+      const text = document.createElement('span');
+      text.className = 'tool-text';
+      const label = document.createElement('span');
+      label.className = 'tool-name';
+      label.textContent = name;
+      const id = document.createElement('span');
+      id.className = 'tool-id';
+      id.textContent = '（插件已经不在了）';
+      text.append(label, id);
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = true;
+      box.title = '从「以后不问」的名单里去掉';
+      box.addEventListener('change', () => {
+        if (!box.checked) {
+          allowAlwaysNames.delete(name);
+          persistAssistantPrefs();
+        }
+      });
+      li.append(box, text);
+      ul.appendChild(li);
+    }
+    section.appendChild(ul);
+    toolGroupsBox.appendChild(section);
+  }
+}
+
+/**
+ * 一个工具的一行。
+ *
+ * 行里只有名字：开关与介绍都在**抽屉**里。
+ */
+function toolRow(t) {
+  const li = document.createElement('li');
+  li.className = disabledToolNames.has(t.name) ? 'tool-row off' : 'tool-row';
+  li.dataset.toolName = t.name;
+
+  const text = document.createElement('span');
+  text.className = 'tool-text';
+  const name = document.createElement('span');
+  name.className = 'tool-name';
+  name.textContent = t.label || t.name;
+  const id = document.createElement('span');
+  id.className = 'tool-id';
+  id.textContent = t.name;
+  text.append(name, id);
+
+  const arrow = document.createElement('span');
+  arrow.className = 'tool-arrow';
+  arrow.textContent = '›';
+
+  li.append(text, arrow);
+  li.addEventListener('click', () => openToolDrawer(t));
+  return li;
+}
+
+/** 风险等级给人看的说法。 */
+const RISK_TEXT = {
+  read: '只读——它只是看，不会动你的东西。',
+  write: '写入——它会改东西，改之前要你点头。',
+  exec: '执行——它会跑命令或启动程序，动手之前要你点头。',
+};
+
+/**
+ * 打开工具抽屉。
+ *
+ * 左边滑出来的那一张卡：介绍、入参、启用开关与审批等级。
+ */
+function openToolDrawer(t) {
+  toolDrawerName.textContent = t.label || t.name;
+  toolDrawerId.textContent = t.name;
+  toolDrawerDesc.textContent = t.description || '（这个工具没有写介绍。）';
+  renderToolParams(t);
+
+  const enabled = !disabledToolNames.has(t.name);
+  toolDrawerEnabled.checked = enabled;
+  toolDrawerApproval.value = allowAlwaysNames.has(t.name) || t.risk === 'read' ? 'always' : 'ask';
+  // 只读的工具本来就不会问，审批等级对它没有意义。
+  const readOnly = t.risk === 'read';
+  toolDrawerApproval.disabled = !enabled || readOnly;
+  toolDrawerRisk.textContent = RISK_TEXT[t.risk] || '这个工具没声明风险等级，按最严格的来。';
+
+  toolDrawer.dataset.toolName = t.name;
+  toolDrawer.dataset.risk = String(t.risk || '');
+  toolDrawerBackdrop.hidden = false;
+  toolDrawer.hidden = false;
+}
+
+/** 抽屉里的入参表：从 JSON Schema 里读出参数名、类型与说明。 */
+function renderToolParams(t) {
+  toolDrawerParams.textContent = '';
+  const schema = t.parameters && typeof t.parameters === 'object' ? t.parameters : null;
+  const props = schema?.properties && typeof schema.properties === 'object' ? schema.properties : {};
+  const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+  const entries = Object.entries(props);
+
+  if (!entries.length) {
+    const li = document.createElement('li');
+    li.className = 'drawer-empty';
+    li.textContent = '这个工具不用参数。';
+    toolDrawerParams.appendChild(li);
+    return;
+  }
+
+  for (const [key, spec] of entries) {
+    const li = document.createElement('li');
+    li.className = 'param-item';
+
+    const name = document.createElement('span');
+    name.className = 'param-name';
+    name.textContent = key;
+    li.appendChild(name);
+
+    const type = document.createElement('span');
+    type.className = 'param-type';
+    type.textContent = String(spec?.type || 'any');
+    li.appendChild(type);
+
+    if (required.has(key)) {
+      const req = document.createElement('span');
+      req.className = 'param-req';
+      req.textContent = '必填';
+      li.appendChild(req);
+    }
+
+    if (spec?.description) {
+      const desc = document.createElement('span');
+      desc.className = 'param-desc';
+      desc.textContent = String(spec.description);
+      li.appendChild(desc);
+    }
+
+    toolDrawerParams.appendChild(li);
+  }
+}
+
+/** 关抽屉。 */
+function closeToolDrawer() {
+  toolDrawer.hidden = true;
+  toolDrawerBackdrop.hidden = true;
 }
 
 /**
@@ -478,6 +857,28 @@ function applyAssistantState(state) {
 
   const llm = state.llm || {};
   llmEnabledBox.checked = Boolean(llm.enabled);
+  // 派单模式：磁盘上的值可能是旧版本留下的，也可能是手改的——
+  // 认不出来就退回默认（主进程已经迁移过了，这里读到的是迁移后的值）。
+  llmDispatchSelect.value = DISPATCH_MODES.includes(state.agent?.dispatch)
+    ? state.agent.dispatch
+    : 'auto';
+  updateDispatchHint();
+
+  // 后台任务。
+  const agent = state.agent || {};
+  agentMaxConcurrentInput.value = String(agent.maxConcurrent ?? 1);
+  agentMaxStepsInput.value = String(agent.maxSteps ?? 20);
+  ensureTimeoutOption(agent.timeoutMs ?? 120000);
+  agentTimeoutSelect.value = String(agent.timeoutMs ?? 120000);
+  agentWorkspaceInput.value = agent.workspace || '';
+  agentPolicySelect.value = APPROVAL_POLICIES.includes(agent.approval?.policy)
+    ? agent.approval.policy
+    : 'graded';
+  updateApprovalHint();
+  allowAlwaysNames = new Set(agent.approval?.allowAlways || []);
+  disabledToolNames = new Set(agent.tools?.disabled || []);
+  renderTools();
+
   llmBaseUrlInput.value = llm.baseUrl || '';
   llmModelInput.value = llm.model || '';
   llmTemperatureInput.value = String(llm.temperature ?? 0.7);
@@ -579,6 +980,24 @@ function assistantPatchFromControls() {
       // 「先应一声」：下拉框一个控件管两件事——关不关、等多久。
       ...ackPrefsFromValue(llmAckDelaySelect.value),
     },
+    agent: {
+      // 派单模式与后台任务的各项上限。
+      dispatch: llmDispatchSelect.value,
+      maxConcurrent: readClampedInt(agentMaxConcurrentInput),
+      maxSteps: readClampedInt(agentMaxStepsInput),
+      timeoutMs: Number(agentTimeoutSelect.value),
+      workspace: agentWorkspaceInput.value.trim(),
+      // 审批：**整段一起带上**。
+      // 合并只深一层，只带 policy 会把永久放行的名单整个换掉。
+      approval: {
+        policy: agentPolicySelect.value,
+        allowAlways: [...allowAlwaysNames],
+      },
+      // 工具开关：记的是「关掉了哪些」。
+      tools: {
+        disabled: [...disabledToolNames],
+      },
+    },
   };
 }
 
@@ -654,6 +1073,10 @@ for (const box of [llmEnabledBox, llmProactiveBox]) {
     persistAssistantPrefs();
   });
 }
+llmDispatchSelect.addEventListener('change', () => {
+  updateDispatchHint();
+  persistAssistantPrefs();
+});
 for (const input of [
   llmBaseUrlInput,
   llmModelInput,
@@ -682,6 +1105,58 @@ llmAckDelaySelect.addEventListener('change', () => {
 llmTemperatureInput.addEventListener('input', () => {
   llmTemperatureVal.textContent = Number(llmTemperatureInput.value).toFixed(1);
   setRangeFill(llmTemperatureInput);
+  persistAssistantPrefs();
+});
+
+// —— 后台任务 ——
+for (const input of [agentMaxConcurrentInput, agentMaxStepsInput]) {
+  input.addEventListener('change', () => {
+    readClampedInt(input);
+    persistAssistantPrefs();
+  });
+}
+agentTimeoutSelect.addEventListener('change', () => {
+  persistAssistantPrefs();
+});
+agentWorkspaceInput.addEventListener('change', () => {
+  persistAssistantPrefs();
+});
+// 审批档位：切过去当场看见后果。
+agentPolicySelect.addEventListener('change', () => {
+  updateApprovalHint();
+  persistAssistantPrefs();
+});
+
+// 「工具」页的分组筛选：只看某一组。
+toolGroupSelect.addEventListener('change', () => {
+  renderTools();
+});
+
+// 抽屉：关掉它的三种方式——按钮、点遮罩、按 Esc。
+toolDrawerClose.addEventListener('click', closeToolDrawer);
+toolDrawerBackdrop.addEventListener('click', closeToolDrawer);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !toolDrawer.hidden) closeToolDrawer();
+});
+
+// 抽屉里的「启用」：关掉的工具桌宠看不见，也不会去调。
+toolDrawerEnabled.addEventListener('change', () => {
+  const name = toolDrawer.dataset.toolName;
+  if (!name) return;
+  if (toolDrawerEnabled.checked) disabledToolNames.delete(name);
+  else disabledToolNames.add(name);
+  toolDrawerApproval.disabled = !toolDrawerEnabled.checked || toolDrawer.dataset.risk === 'read';
+  const row = toolGroupsBox.querySelector(`li[data-tool-name="${name}"]`);
+  row?.classList.toggle('off', !toolDrawerEnabled.checked);
+  persistAssistantPrefs();
+});
+
+// 抽屉里的「审批等级」：以后不问的工具，用它的时候不再弹确认。
+toolDrawerApproval.addEventListener('change', () => {
+  const name = toolDrawer.dataset.toolName;
+  if (!name) return;
+  if (toolDrawerApproval.value === 'always') allowAlwaysNames.add(name);
+  else allowAlwaysNames.delete(name);
   persistAssistantPrefs();
 });
 
@@ -892,6 +1367,7 @@ function renderPlugins(list) {
 
     const box = document.createElement('input');
     box.type = 'checkbox';
+    box.className = 'p-enable';
     box.checked = Boolean(p.enabled);
     box.title = p.enabled ? '关掉它' : '打开它';
     box.addEventListener('change', async () => {
@@ -905,6 +1381,8 @@ function renderPlugins(list) {
         show(box.checked ? `「${p.name}」开起来了` : `「${p.name}」关掉了`);
         // 重画一遍：关掉的插件它的窗口也跟着关了，状态要从主进程重新拉。
         await refreshPlugins();
+        // 插件开不开决定它的工具在不在 agent 的表里。
+        await refreshAgentTools();
       } catch (err) {
         // 没生效就把勾选框拨回去：界面不能显示一个没发生的状态。
         box.checked = !box.checked;
@@ -913,7 +1391,42 @@ function renderPlugins(list) {
       }
     });
 
-    li.append(icon, text, src, box);
+    li.append(icon, text, src);
+
+    // 「注册到 agent」：这个插件的工具与技能接不接给 agent。
+    // 没有工具也没有技能的插件没什么可接的——不给这个开关。
+    if (p.hasAgent) {
+      const agent = document.createElement('label');
+      agent.className = 'p-agent';
+      agent.title = '把这个插件的工具与技能接给 agent';
+      const agentBox = document.createElement('input');
+      agentBox.type = 'checkbox';
+      agentBox.checked = Boolean(p.agentEnabled);
+      agentBox.addEventListener('change', async () => {
+        try {
+          const result = await window.pet.setPluginAgentEnabled(p.id, agentBox.checked);
+          if (!result || result.ok !== true) {
+            throw new Error(result?.message || '主进程拒绝了这次开关');
+          }
+          show(
+            agentBox.checked
+              ? `「${p.name}」接给 agent 了`
+              : `「${p.name}」不再接给 agent`
+          );
+          // 它的工具进出了 agent 的工具表，「工具」页要重画。
+          await refreshAgentTools();
+        } catch (err) {
+          agentBox.checked = !agentBox.checked;
+          show(`开关失败：${err?.message || err}`, 'error');
+        }
+      });
+      const agentText = document.createElement('span');
+      agentText.textContent = '注册到 agent';
+      agent.append(agentBox, agentText);
+      li.append(agent);
+    }
+
+    li.append(box);
     pluginListEl.append(li);
   }
   setSummary('plugins', `${on}/${list.length}`);
@@ -928,7 +1441,27 @@ async function refreshPlugins() {
     console.warn('[desk-pet] 插件清单拉取失败：', err?.message);
     return;
   }
+  // 插件名用来给「工具」页分组取标题。
+  pluginNames = new Map(list.map((p) => [p.id, p.name || p.id]));
   renderPlugins(list);
+  // 插件名变了，工具的分组标题也要跟着重画。
+  renderTools();
+}
+
+/**
+ * 重新拉一次工具清单。
+ *
+ * 插件的开关一拨，它提供的工具就进出 agent 的工具表——
+ * 「工具」页得跟着重画，不然用户看的是一份过期清单。
+ */
+async function refreshAgentTools() {
+  try {
+    agentToolList = ((await window.pet.listAgentTools?.()) || []).filter((t) => t?.name);
+  } catch (err) {
+    console.warn('[desk-pet] 工具清单拉取失败：', err?.message);
+    return;
+  }
+  renderTools();
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1739,7 @@ async function init() {
     refreshNavSummaries();
   });
 
-  const [settings, models, assistantState, tts, llm, systemState] = await Promise.all([
+  const [settings, models, assistantState, tts, llm, systemState, agentTools] = await Promise.all([
     window.pet.getSettings(),
     window.pet.listModels(),
     window.pet.getAssistantState(),
@@ -1218,6 +1751,8 @@ async function init() {
     // 可选调用：preload 日后少了这个 API 时也不能**同步**抛
     // （`undefined.catch` 是 TypeError，正好抵消这里想要的容错）。
     Promise.resolve(window.pet.getSystemState?.()).catch(() => null),
+    // 工具清单：拉不到就当没有可放行的工具，那一栏空着。
+    Promise.resolve(window.pet.listAgentTools?.()).catch(() => []),
   ]);
   // 下拉框照填不误——它所在的分区是不是当前分区，与填充无关。
   // （改成「切到外观分区才填」会让 setModel 的竞态兜底失效，
@@ -1252,6 +1787,8 @@ async function init() {
   setModel(latest.modelId);
   updateScale(latest.scale);
   updateOpacity(latest.opacity);
+  // 工具清单要先到，「工具」页才能按来源分组画出来。
+  agentToolList = (agentTools || []).filter((t) => t?.name);
   applyAssistantState(assistantState);
   // 助理状态拉不到时 applyAssistantState 会直接返回，
   // 音色那一栏就还是初始的样子——「当前生效」得照常显示。

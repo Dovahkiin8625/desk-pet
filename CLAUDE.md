@@ -71,3 +71,4 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - UI 界面中不得出现对代码逻辑的解释性说明。
 - 注释应简洁明了，不啰嗦，不记录历史变动。
 - 插件开发指南在 **`docs/开发说明/插件开发指南.md`**
+- 插件自己的配置放在**插件自身的页面**里管，不放在桌宠的【设置】下。清单的 `settings[]` 声明的控件由宿主追加到该插件自己的页面末尾。

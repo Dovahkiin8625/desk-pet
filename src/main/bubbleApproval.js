@@ -4,7 +4,7 @@ import { APPROVAL_DECISION } from '../shared/assistant.js';
  * 审批气泡的「等答复」这件事。
  *
  * 为什么要单独一个文件：气泡控制器（src/main/bubble.js）引了 electron，
- * 在普通 node 里测不了。而「答复按 id 认」「没人管时要有个交代」
+ * 在普通 node 里测不了。而「答复按 id 认」「谁先答谁算数」
  * 这两件事最容易做错，必须能单测，所以抽出来。
  *
  * ## 用户能给的决议有四种
@@ -15,9 +15,14 @@ import { APPROVAL_DECISION } from '../shared/assistant.js';
  *
  * ## 但「作废」不是「拒绝」
  *
- * 挂着的请求被顶掉了（来了新的审批、或者气泡被别的东西占了），
- * 用户**压根没点过按钮**——那不能记成「用户拒绝」，
- * 所以作废时给的是 `supersede`（没等到确认）。
+ * 挂着的请求被顶掉了（应用退出），用户**压根没点过按钮**——
+ * 那不能记成「用户拒绝」，所以作废时给的是 `supersede`（没等到确认）。
+ *
+ * ## 可以挂着好几个
+ *
+ * 挂着的是一条**队列**（先进先出）：后来的排在后面，
+ * 不打断已经显示出来的那一张。谁先答谁算数——后答的那个
+ * 拿到「这个已经答复过了」，状态一点不动。
  */
 
 /** 合法的决议（用户能点出来的那些）。 */
@@ -29,37 +34,62 @@ const DECISIONS = new Set([
 ]);
 
 export function createApprovalInbox() {
-  /** id → { resolve, request }。 */
+  /** id → { resolve, request }。Map 保持插入顺序：那就是排队顺序。 */
   const waiting = new Map();
+  /** 答复过的 id：用来分辨「已经答复过了」与「压根没有这个审批」。 */
+  const answered = new Set();
 
   return {
     /**
      * 挂一个审批请求，等用户的答复。
      *
-     * @param {object} request { id, title, text, risk }
+     * @param {object} request { id, taskId, title, text, risk }
      * @returns {Promise<'allow'|'deny'|'always'|'cancel'>}
      */
     request(request) {
       const id = String(request?.id || '');
       if (!id) return Promise.resolve(APPROVAL_DECISION.DENY);
       return new Promise((resolve) => {
-        waiting.set(id, { resolve, request });
+        waiting.set(id, { resolve, request: request || {} });
       });
     },
 
     /**
      * 用户答复了。
      *
-     * @returns {boolean} 有没有对上号（对不上就别乱改状态）
+     * **谁先答谁算数**：对不上的（已经答复过、压根没有这个 id）
+     * 都不改任何状态。
+     *
+     * @returns {{ok: boolean, message: string}}
      */
     respond({ id, decision } = {}) {
       const key = String(id || '');
       const item = waiting.get(key);
-      if (!item) return false;
+      if (!item) {
+        return answered.has(key)
+          ? { ok: false, message: '这个已经答复过了' }
+          : { ok: false, message: '没有这个审批' };
+      }
       waiting.delete(key);
+      answered.add(key);
       const d = String(decision || '');
       item.resolve(DECISIONS.has(d) ? d : APPROVAL_DECISION.DENY);
-      return true;
+      return { ok: true, message: '已答复' };
+    },
+
+    /**
+     * 还挂着哪些审批：排队顺序（先进先出）。
+     *
+     * @returns {Array<{id: string, taskId: string, title: string, text: string, risk: string}>}
+     */
+    list() {
+      return [...waiting.values()].map((item) => ({
+        id: String(item.request?.id || ''),
+        taskId: String(item.request?.taskId || ''),
+        title: String(item.request?.title || ''),
+        text: String(item.request?.text || ''),
+        risk: String(item.request?.risk || ''),
+      }));
     },
 
     /** 还有几个在等。 */
@@ -67,7 +97,7 @@ export function createApprovalInbox() {
       return waiting.size;
     },
 
-    /** 全都作废（应用退出、气泡被关掉）：挂着的请求要有交代。 */
+    /** 全都作废（应用退出）：挂着的请求要有交代。 */
     clear() {
       for (const item of waiting.values()) item.resolve(APPROVAL_DECISION.SUPERSEDE);
       waiting.clear();

@@ -307,7 +307,7 @@ test.describe('插件面板', () => {
 
       // 关掉「待办」：状态栏会说出结果——那才是真的生效了，
       // 光看勾选框不行（界面是先动的，IPC 是后到的）。
-      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input[type="checkbox"]');
+      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input.p-enable');
       await settings.waitForFunction(
         () => (document.getElementById('status')?.textContent || '').includes('关掉了'),
         null,
@@ -324,7 +324,7 @@ test.describe('插件面板', () => {
       expect(ids).not.toContain('todos');
 
       // 收拾干净：把它开回去。
-      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input[type="checkbox"]');
+      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input.p-enable');
       await settings.waitForFunction(
         () => (document.getElementById('status')?.textContent || '').includes('开起来了'),
         null,

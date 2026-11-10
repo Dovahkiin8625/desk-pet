@@ -96,6 +96,21 @@ test('提示词：一个工具都没有时，不列工具表', () => {
   assert.doesNotMatch(prompt, /shell\.exec/);
 });
 
+test('提示词：技能只列名字与说明，正文不进提示词', () => {
+  const prompt = buildAgentSystemPrompt({
+    tools: TOOLS,
+    skills: [{ name: 'weather', description: '查当前天气' }],
+  });
+  assert.match(prompt, /weather/);
+  assert.match(prompt, /查当前天气/);
+  assert.match(prompt, /skill\.read/, '要告诉模型有 skill.read 这个工具');
+});
+
+test('提示词：没有技能就不提技能', () => {
+  const prompt = buildAgentSystemPrompt({ tools: TOOLS, skills: [] });
+  assert.doesNotMatch(prompt, /skill\.read/);
+});
+
 test('工具结果超长要截断，而且要留痕', () => {
   const out = truncateToolResult('x'.repeat(MAX_AGENT_TOOL_RESULT_CHARS + 200));
   assert.ok(out.length < MAX_AGENT_TOOL_RESULT_CHARS + 200);

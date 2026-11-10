@@ -10,15 +10,16 @@ import { APPROVAL_DECISION } from '../../src/shared/assistant.js';
  * 抽成不引 electron 的小模块，是为了能单测：
  * 主进程的气泡控制器引了 electron，在普通 node 里测不了。
  *
- * 最要紧的一条：**决议要按 id 认**——
- * 两个任务同时要审批时，第二个的答复不能把第一个的搞混。
+ * 最要紧的两条：**决议要按 id 认**——
+ * 两个任务同时要审批时，第二个的答复不能把第一个的搞混；
+ * **谁先答谁算数**——后答的那个不能改已经定下来的结果。
  */
 
 test('审批：请求之后，答复按 id 兑现', async () => {
   const inbox = createApprovalInbox();
   const p = inbox.request({ id: 'a1', title: '要点头', text: '跑命令？' });
   assert.equal(inbox.pending(), 1);
-  assert.equal(inbox.respond({ id: 'a1', decision: 'allow' }), true);
+  assert.equal(inbox.respond({ id: 'a1', decision: 'allow' }).ok, true);
   assert.equal(await p, 'allow');
   assert.equal(inbox.pending(), 0);
 });
@@ -36,7 +37,8 @@ test('审批：两个请求各归各的', async () => {
 test('审批：不认识的 id 不算数，也不抛错', async () => {
   const inbox = createApprovalInbox();
   const p = inbox.request({ id: 'a1', text: '甲' });
-  assert.equal(inbox.respond({ id: 'nope', decision: 'allow' }), false);
+  const res = inbox.respond({ id: 'nope', decision: 'allow' });
+  assert.equal(res.ok, false);
   inbox.respond({ id: 'a1', decision: 'deny' });
   assert.equal(await p, 'deny');
 });
@@ -59,6 +61,52 @@ test('审批：取消（clear）让挂着的请求都有个交代', async () => 
 test('审批：用户可以点「取消这次任务」', async () => {
   const inbox = createApprovalInbox();
   const p = inbox.request({ id: 'a1', text: '甲' });
-  assert.equal(inbox.respond({ id: 'a1', decision: APPROVAL_DECISION.CANCEL }), true);
+  assert.equal(inbox.respond({ id: 'a1', decision: APPROVAL_DECISION.CANCEL }).ok, true);
   assert.equal(await p, APPROVAL_DECISION.CANCEL);
+});
+
+test('审批：挂着好几个，按先进先出排队', async () => {
+  const inbox = createApprovalInbox();
+  inbox.request({ id: 'a1', taskId: 't1', title: '甲', text: '写文件', risk: 'write' });
+  inbox.request({ id: 'a2', taskId: 't2', title: '乙', text: '跑命令', risk: 'exec' });
+  assert.equal(inbox.pending(), 2);
+  const list = inbox.list();
+  assert.deepEqual(
+    list.map((a) => a.id),
+    ['a1', 'a2']
+  );
+  assert.equal(list[0].taskId, 't1');
+  assert.equal(list[0].text, '写文件');
+  assert.equal(list[0].risk, 'write');
+});
+
+test('审批：答复过的那个从队列里下去，后面的往前挪', async () => {
+  const inbox = createApprovalInbox();
+  inbox.request({ id: 'a1', text: '甲' });
+  inbox.request({ id: 'a2', text: '乙' });
+  inbox.respond({ id: 'a1', decision: 'allow' });
+  assert.equal(inbox.pending(), 1);
+  assert.deepEqual(
+    inbox.list().map((a) => a.id),
+    ['a2']
+  );
+});
+
+test('审批：谁先答谁算数，后答的不改状态', async () => {
+  const inbox = createApprovalInbox();
+  const p = inbox.request({ id: 'a1', text: '甲' });
+  assert.equal(inbox.respond({ id: 'a1', decision: 'allow' }).ok, true);
+  const again = inbox.respond({ id: 'a1', decision: 'deny' });
+  assert.equal(again.ok, false, '第二次答复不算数');
+  assert.match(again.message, /已经答复过了/);
+  assert.equal(await p, 'allow', '结果不能被第二次答复改掉');
+});
+
+test('审批：作废之后答复它，算是不认识这个审批', () => {
+  const inbox = createApprovalInbox();
+  inbox.request({ id: 'a1', text: '甲' });
+  inbox.clear();
+  const res = inbox.respond({ id: 'a1', decision: 'allow' });
+  assert.equal(res.ok, false);
+  assert.match(res.message, /没有这个审批/);
 });

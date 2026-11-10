@@ -39,6 +39,12 @@ export function createAgentBackend({
   fetchImpl = fetch,
   /** agent 的工具表（注册表）。 */
   getTools = () => null,
+  /**
+   * agent 的技能清单（渐进式披露的第一级）。
+   *
+   * 只有「名字：说明」进提示词；正文等模型调 `skill.read` 再取。
+   */
+  getSkills = () => [],
   /** 审批闸门（L3 才接上）。 */
   getGate = () => null,
   getWorkspace = () => '',
@@ -56,7 +62,7 @@ export function createAgentBackend({
     label: 'agent 模式',
 
     async chat(ctx) {
-      const { messages = [], config = {}, onDelta, onEvent, signal } = ctx;
+      const { messages = [], config = {}, onDelta, onEvent, signal, steer, taskId = '' } = ctx;
       // 闸门是**每个任务一个**（「自动」是任务级的），
       // 所以由调用方按任务给；没给就用全局那个。
       const gate = ctx.gate ?? getGate();
@@ -67,6 +73,7 @@ export function createAgentBackend({
         persona: getPersona(),
         facts: getFacts(),
         tools,
+        skills: getSkills(),
         workspace: getWorkspace(),
         approval: { policy: getPolicy(), allowAlways: getAllowAlways() },
         now: getNow(),
@@ -89,6 +96,8 @@ export function createAgentBackend({
         maxSteps: getMaxSteps(),
         onEvent,
         logger,
+        // 追加的要求：绑着这个任务的指令队列。
+        steer: typeof steer === 'function' ? steer : null,
       });
 
       let run;
@@ -98,6 +107,8 @@ export function createAgentBackend({
           messages,
           tools,
           signal,
+          // 任务号：工具要写日志（`agent-logs/<taskId>.log`）时用得上。
+          taskId,
           onDelta: (delta) => {
             const out = splitter.push(delta);
             if (out) onDelta?.(out);

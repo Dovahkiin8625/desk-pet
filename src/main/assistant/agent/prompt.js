@@ -51,6 +51,7 @@ const POLICY_TEXT = {
  * @param {object} [options.persona] 人设 {name, style, backstory}
  * @param {string[]} [options.facts] 长期记忆
  * @param {object[]} [options.tools] 工具描述符
+ * @param {object[]} [options.skills] 技能清单（渐进式披露的第一级：只有名字与说明）
  * @param {string} [options.workspace] 工作目录（空 = 用户主目录）
  * @param {object} [options.approval] {policy, allowAlways}
  * @param {Date} [options.now]
@@ -59,6 +60,7 @@ export function buildAgentSystemPrompt({
   persona = {},
   facts = [],
   tools = [],
+  skills = [],
   workspace = '',
   approval = {},
   now = new Date(),
@@ -69,6 +71,7 @@ export function buildAgentSystemPrompt({
   const list = Array.isArray(facts) ? facts.filter(Boolean) : [];
   const when = now instanceof Date ? now : new Date(now);
   const toolList = Array.isArray(tools) ? tools.filter((t) => t && t.name) : [];
+  const skillList = Array.isArray(skills) ? skills.filter((s) => s && s.name) : [];
   const policy = String(approval?.policy || 'graded');
   const allowAlways = Array.isArray(approval?.allowAlways) ? approval.allowAlways : [];
   const workDir = String(workspace || '').trim();
@@ -97,6 +100,17 @@ export function buildAgentSystemPrompt({
     lines.push('');
   } else {
     lines.push('你现在没有可用的工具，只能用聊天回答。', '');
+  }
+
+  // 技能：**只列名字与说明**，正文不进提示词。
+  // 模型觉得某个技能可能有用时，自己调 skill.read 去读。
+  if (skillList.length) {
+    lines.push('你会用的技能（每个技能是一份怎么用某个插件的说明书）：');
+    for (const skill of skillList) {
+      const desc = String(skill.description || '').trim();
+      lines.push(`- ${skill.name}${desc ? `：${desc}` : ''}`);
+    }
+    lines.push('要用某个技能时，先用 skill.read 读它的说明书，再动手。', '');
   }
 
   lines.push(

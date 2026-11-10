@@ -27,6 +27,7 @@ export function createPomodoroState() {
     remainingMs: DEFAULT_FOCUS_MS,
     durationMs: DEFAULT_FOCUS_MS,
     label: '',
+    pausedPhase: PHASE.IDLE,
   };
 }
 
@@ -39,6 +40,7 @@ export function start(state, phase, durationMs, now = Date.now(), label = '') {
     remainingMs: ms,
     durationMs: ms,
     label,
+    pausedPhase: PHASE.IDLE,
   };
 }
 
@@ -48,6 +50,9 @@ export function pause(state, now = Date.now()) {
   return {
     ...state,
     phase: PHASE.PAUSED,
+    // 暂停的是哪一段：**记下来**，继续时才知道该回到专注还是休息。
+    // 时长不能拿来反推——时长是用户配的，专注 30 分钟与休息 30 分钟长得一样。
+    pausedPhase: state.phase,
     endsAt: null,
     remainingMs: remaining(state, now),
   };
@@ -57,7 +62,7 @@ export function pause(state, now = Date.now()) {
 export function resume(state, now = Date.now()) {
   if (state.phase !== PHASE.PAUSED) return { ...state };
   const ms = state.remainingMs > 0 ? state.remainingMs : state.durationMs;
-  const phase = state.durationMs === DEFAULT_BREAK_MS ? PHASE.BREAK : PHASE.FOCUS;
+  const phase = state.pausedPhase === PHASE.BREAK ? PHASE.BREAK : PHASE.FOCUS;
   return {
     ...state,
     phase,

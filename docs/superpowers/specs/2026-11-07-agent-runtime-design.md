@@ -18,7 +18,7 @@
 |---|---|---|
 | `ctx.tools` / `ctx.runTool()` | `src/main/assistant/chat/backend.js` 的 `ChatContext` 注释 | agent 循环的工具表与执行入口 |
 | `ctx.onEvent` | 同上 | 中间事件（工具调用、步骤、状态） |
-| `DEFAULT_LLM.backend` | `src/shared/assistant.js` | 后端 id 可切换（`'chat'` → `'agent'`） |
+| `DEFAULT_LLM.backend` | `src/shared/assistant.js` | ~~后端 id 可切换~~ → **已退役**，见 [双层 agent 设计](2026-11-08-two-layer-agent-design.md) §10.3 |
 | `plain.js` = 「零工具、一步」 | `src/main/assistant/chat/plain.js` | 普通对话是 agent 的退化形态 |
 | `surface.broadcast(pluginId, 'data', …)` | `src/main/plugins/surface.js` | 宿主实时推数据给插件页面 |
 
@@ -75,7 +75,9 @@
 
 ### 3.1 两种对话后端
 
-普通对话与 agent 是**同一个契约下的两个实现**，用户可以在设置里切换（`llm.backend`）：
+普通对话与 agent 是**同一个契约下的两个实现**。设置里不再切换它们——
+前台恒定是交互层，能否派后台任务由 `agent.dispatch` 决定
+（见 [双层 agent 设计](2026-11-08-two-layer-agent-design.md) §10.3）。
 
 | 后端 | 行为 | 工具 | 步骤 |
 |---|---|---|---|
@@ -469,7 +471,7 @@ export default function createChatHistory(ctx) {
 `assistant.json` 扩展：
 
 ```js
-llm.backend: 'chat' | 'agent'      // 已有字段，取值多一个
+llm.backend: 'chat' | 'agent'      // ~~已有字段~~ → 已退役，改用 agent.dispatch
 
 agent: {
   maxConcurrent: 1,                // 同时跑几个后台任务
@@ -545,7 +547,7 @@ agent: {
 
 | # | 任务 | 涉及 | 依赖 | 验收 |
 |---|---|---|---|---|
-| T7 | agent 后端 | `assistant/chat/agent.js`、`assistant/index.js`（后端注册）、`shared/assistant.js`（`llm.backend` 取值） | T2、T4 | `llm.backend='agent'` 时走多步循环 |
+| T7 | agent 后端 | `assistant/chat/agent.js`、`assistant/index.js`（后端注册）、`shared/assistant.js`（`llm.backend` 取值） | T2、T4 | `llm.backend='agent'` 时走多步循环（**注**：该开关后来退役，见双层 agent 设计 §10.3） |
 | T8 | 系统提示词与上下文管理 | `agent/prompt.js` | T3、T7 | 提示词含工具表/工作区/审批策略；上下文压缩不超限 |
 
 ### L3 · 运行时

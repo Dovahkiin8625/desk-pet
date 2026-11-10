@@ -68,7 +68,7 @@ export function pickTapLine(lines, random = Math.random) {
  * @param {number} opts.lineCount     池子里生成台词的条数
  * @param {number} opts.cooldownMs    冷却时长
  * @param {number} opts.now           当前时刻
- * @param {number|null} opts.lastVoiceAt 上一次念台词的时刻（null = 从来没念过）
+ * @param {number|null} opts.lastVoiceAt 上一次触发念台词的时刻（null = 从来没念过）
  * @param {() => number} opts.random  随机源（测试里换成确定性的）
  * @returns {'voice'|'model'|'none'} 念台词 / 让模型自己出声 / 不出声
  */

@@ -102,6 +102,17 @@ export function createAgentLoop({
    * 它要的是秒级回应，多一次模型往返就慢一倍（规格 §4.2）。
    */
   summarize = true,
+  /**
+   * 取追加的指令（steer）。
+   *
+   * 规格 §5.2：追加的要求在**步骤边界**注入——
+   * 正在执行的工具调用不被打断，下一步开头才进上下文。
+   *
+   * 返回值是一个**数组**（一次可能追加好几条）。
+   * **约定：取走即清空**——留在队列里的会被再读一遍，
+   * 模型会当成新要求重复执行。
+   */
+  steer = null,
 } = {}) {
   /**
    * 跑一次任务。
@@ -113,6 +124,7 @@ export function createAgentLoop({
     messages = [],
     tools = [],
     signal = null,
+    taskId = '',
     onDelta = null,
   } = {}) {
     let convo = Array.isArray(messages) ? messages.slice() : [];
@@ -135,6 +147,19 @@ export function createAgentLoop({
         break;
       }
       steps += 1;
+
+      // 追加的要求：**在步骤边界注入**（规格 §5.2）。
+      // 放在调模型之前——正在执行的那一步已经跑完了，
+      // 正在执行的工具调用不会被它打断。
+      if (typeof steer === 'function') {
+        const notes = steer();
+        if (Array.isArray(notes) && notes.length > 0) {
+          convo.push({
+            role: 'user',
+            content: `（用户追加的要求）\n${notes.map((n) => `- ${n}`).join('\n')}`,
+          });
+        }
+      }
 
       let call;
       try {
@@ -218,7 +243,7 @@ export function createAgentLoop({
           continue;
         }
 
-        const one = await runOne(c, { signal });
+        const one = await runOne(c, { signal, index: toolCallCount, taskId });
 
         // 错误计数：**同一个**错误连着出三次就停——
         // 换个错重试是模型在换路，那该继续；同一个错反复就是死循环。
@@ -310,7 +335,7 @@ export function createAgentLoop({
    * - `text`/`error`：喂给模型的（要说清原因，模型才知道换条路）；
    * - `userError`：给用户看的（气泡里会出现，不能有内部黑话）。
    */
-  async function runOne(call, { signal }) {
+  async function runOne(call, { signal, index = 0, taskId = '' }) {
     const name = String(call?.function?.name || '');
     const tool = resolveTool(name);
     if (!tool) {
@@ -348,7 +373,24 @@ export function createAgentLoop({
     }
 
     try {
-      const out = await tool.run(args, { signal });
+      const out = await tool.run(args, {
+        signal,
+        taskId,
+        // **工具要能异步地往记录里塞东西**（规格 §9）：
+        // 外部 harness 可能跑很久，它不能占着这个循环等到结束。
+        onEvent: (payload) => {
+          onEvent?.({
+            type: 'step',
+            index,
+            tool: String(payload?.tool || name),
+            label: String(payload?.label || ''),
+            args: payload?.args ?? null,
+            result: String(payload?.result ?? ''),
+            error: String(payload?.error ?? ''),
+            data: payload?.data ?? null,
+          });
+        },
+      });
       const text = typeof out?.text === 'string' ? out.text : String(out?.text ?? '');
       return { ok: true, tool: name, args, text, data: out?.data };
     } catch (err) {

@@ -1,0 +1,23 @@
+{
+  "id": "tasks",
+  "name": "后台任务",
+  "icon": "⏳",
+  "description": "看后台任务在跑什么、到哪一步了，顺手停掉它、答它的审批",
+  "keywords": ["task", "tasks", "background", "后台", "后台任务", "任务", "houtai", "renwu", "进度"],
+  "entry": "main.js",
+  "window": {
+    "title": "后台任务",
+    "page": "pages/board.html",
+    "width": 420,
+    "height": 560,
+    "refreshMs": 1000
+  },
+  "widget": {
+    "title": "后台任务",
+    "page": "pages/board.html",
+    "width": 260,
+    "height": 150,
+    "refreshMs": 1000,
+    "alwaysOnTop": true
+  }
+}

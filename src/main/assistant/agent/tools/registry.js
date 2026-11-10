@@ -123,13 +123,28 @@ export function normalizeTool(raw, { source = 'builtin', allowAlways = [] } = {}
  * @param {object} [options]
  * @param {object} [options.logger] 记日志用
  * @param {Function} [options.getAllowAlways] 用户永久放行的工具名（规格 §8.1）
+ * @param {Function} [options.getDisabled] 用户关掉的工具名（设置页的「工具」页）
  *
  * **风险在注册那一刻定下来**：用户后来把某个插件工具加进 allowAlways，
  * 要等下次注册（插件开关一拨、或重启）才生效——不为一个列表重注册整个表。
+ *
+ * **关掉工具则是立刻生效的**：关掉的工具不进 `list()`，
+ * 模型在提示词里看不见它，硬调它也只得到「没有这个工具」。
+ * 所以 `getDisabled` 是**取值函数**，每次问都拿最新的。
  */
-export function createToolRegistry({ logger = console, getAllowAlways = () => [] } = {}) {
+export function createToolRegistry({
+  logger = console,
+  getAllowAlways = () => [],
+  getDisabled = () => [],
+} = {}) {
   /** name → 描述符。 */
   const entries = new Map();
+
+  /** 这个工具是不是被用户关掉了。 */
+  function isDisabled(name) {
+    const list = getDisabled() || [];
+    return Array.isArray(list) && list.includes(name);
+  }
 
   function register(raw, { owner = '', source = '' } = {}) {
     // 有 owner 的就是插件给的：插件来源的工具要按插件的规矩算风险。
@@ -163,13 +178,22 @@ export function createToolRegistry({ logger = console, getAllowAlways = () => []
       return out;
     },
     get(name) {
-      return entries.get(String(name || '')) || null;
+      const key = String(name || '');
+      // **被关掉的工具当不存在**：模型硬调它也拿不到实现，
+      // 只会得到「没有这个工具」——工具表与实际能力必须一致。
+      if (isDisabled(key)) return null;
+      return entries.get(key) || null;
     },
     has(name) {
       return entries.has(String(name || ''));
     },
+    /** 交给模型的工具表：**只有开着的**。 */
     list() {
-      return [...entries.values()];
+      return [...entries.values()].filter((t) => !isDisabled(t.name));
+    },
+    /** 全部工具（含被关掉的），给设置界面用。 */
+    listAll() {
+      return [...entries.values()].map((t) => ({ ...t, enabled: !isDisabled(t.name) }));
     },
     names() {
       return [...entries.keys()];

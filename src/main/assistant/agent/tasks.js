@@ -57,6 +57,7 @@ export function createAgentTasks({
         args: event.args,
         result: event.result,
         error: event.error,
+        label: event.label,
         at: event.at,
       });
     }
@@ -90,7 +91,11 @@ export function createAgentTasks({
     // 记在事件往外走之前：订阅者拿到的事件与这里记的是同一份。
     if (event?.type === AGENT_EVENT.STEP) {
       const name = String(event.tool || '工具');
-      lastSteps.set(event.taskId, event.error ? `${name} 出错` : name);
+      lastSteps.set(event.taskId, {
+        tool: name,
+        index: Number(event.index) || 0,
+        failed: Boolean(event.error),
+      });
     }
     try {
       onEvent?.(event);
@@ -187,6 +192,11 @@ export function createAgentTasks({
             onEvent: (event) => publish({ ...event, taskId: scope.taskId, at: now() }),
             gate,
             signal: scope.signal,
+            // 任务号：工具（外部 harness）要靠它写日志。
+            taskId: scope.taskId,
+            // 追加的要求：执行层在步骤边界取走。
+            // scope.steer 取走即清空（见 runtime.js）。
+            steer: scope.steer,
             trigger: 'user',
           });
         },
@@ -260,14 +270,19 @@ export function createAgentTasks({
      * 它们是实现细节，露出去只会被误用。
      */
     list() {
-      return runtime.list().map((task) => ({
-        taskId: task.id,
-        title: task.title,
-        status: task.status,
-        lastStep: lastSteps.get(task.id) || '',
-        result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
-        elapsedMs: (task.finishedAt || now()) - task.createdAt,
-      }));
+      return runtime.list().map((task) => {
+        const step = lastSteps.get(task.id);
+        return {
+          taskId: task.id,
+          title: task.title,
+          status: task.status,
+          lastStep: step ? (step.failed ? `${step.tool} 出错` : step.tool) : '',
+          stepIndex: step?.index || 0,
+          result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
+          error: task.error ? String(task.error?.message || task.error) : '',
+          elapsedMs: (task.finishedAt || now()) - task.createdAt,
+        };
+      });
     },
 
     /**

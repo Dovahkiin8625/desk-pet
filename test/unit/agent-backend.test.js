@@ -78,7 +78,7 @@ test('agent 后端：回复要过 parseReply，情绪与记忆都拿得到', asy
   assert.equal(result.text, '搞定了');
   assert.equal(result.emotion, 'happy');
   assert.equal(result.mood, 5);
-  assert.deepEqual(result.memories, ['用户喜欢喝美式']);
+  assert.deepEqual(result.memories, [{ text: '用户喜欢喝美式', kind: 'fact' }]);
 });
 
 test('agent 后端：模型不支持工具调用时，要说人话', async () => {
@@ -160,11 +160,9 @@ test('agent 后端：每步的 token 上限要留得下工具参数', async () =
   );
 });
 
-test('后端取值：只认 chat 与 agent，别的当普通对话', () => {
-  assert.equal(sanitizeAssistant({ llm: { backend: 'agent' } }).llm.backend, 'agent');
-  assert.equal(sanitizeAssistant({ llm: { backend: 'chat' } }).llm.backend, 'chat');
-  // 磁盘上的值可能是旧版本留下的，也可能是手改的：认不出来就不能用。
-  assert.equal(sanitizeAssistant({ llm: { backend: 'bogus' } }).llm.backend, 'chat');
-  assert.equal(sanitizeAssistant({ llm: { backend: 123 } }).llm.backend, 'chat');
-  assert.equal(sanitizeAssistant({ llm: {} }).llm.backend, 'chat');
+test('后端取值：llm.backend 已退役，磁盘上的旧值不再被认', () => {
+  // 派单模式搬到了 agent.dispatch（见 dispatch-modes.test.js）。
+  const clean = sanitizeAssistant({ llm: { backend: 'agent' } });
+  assert.equal(clean.llm.backend, undefined);
+  assert.equal(clean.agent.dispatch, 'auto');
 });

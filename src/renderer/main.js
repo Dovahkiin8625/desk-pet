@@ -5,6 +5,7 @@ import { loadPetModel, disposePetModel } from './pet/model.js';
 import { disposeTexturesUnderPath } from './pet/texture.js';
 import { attachInteraction } from './pet/interaction.js';
 import { inDoubleTapWindow } from './pet/doubleTap.js';
+import { createTapVoiceGate } from './pet/tapVoiceGate.js';
 import { createSilhouette } from './pet/silhouette.js';
 import { idleReaction } from './pet/behavior.js';
 import {
@@ -215,6 +216,13 @@ const tapVoice = {
 
 /** 上一次念台词的时刻（null = 从来没念过）。用来做冷却。 */
 let lastVoiceAt = null;
+
+/**
+ * 台词的闸门：押后一个双击窗口，双击来了就作废。
+ *
+ * 双击的第二下由指针层拦下（不进 onTap），所以作废只能在这儿做。
+ */
+const tapVoiceGate = createTapVoiceGate();
 
 /**
  * 临时静音模型自带的声音。
@@ -1036,13 +1044,16 @@ async function boot() {
       // 'voice' = 念一句生成的台词（模型自带的声音让位），
       // 'model' = 让模型自己出声（它自带的声音在随机池里），
       // 'none' = 不出声（两样都没有）。
+      //
+      // 冷却看「上一次念台词的时刻」：押着的那句马上就要念，
+      // 也算刚念过——不然连点两下会排两句，叠在一起听不清。
       const decision = decideTapVoice({
         voiceEnabled: tapVoice.voiceEnabled,
         modelSound: tapVoice.modelSound,
         lineCount: tapVoice.lineCount,
         cooldownMs: tapVoice.cooldownMs,
         now: Date.now(),
-        lastVoiceAt,
+        lastVoiceAt: tapVoiceGate.pendingSince() ?? lastVoiceAt,
       });
       window.__pet.lastTapDecision = decision;
 
@@ -1062,8 +1073,13 @@ async function boot() {
       if (decision === 'voice') {
         // 念台词：音频是主进程**预先**合成好的，报告一声即可，
         // 主进程读缓存播放——不调接口。
-        lastVoiceAt = Date.now();
-        window.pet.reportTap?.();
+        //
+        // 报告**押后一个双击窗口**：第一下落下时还不知道后面有没有第二下，
+        // 双击（打开面板）不该顺带念一句。
+        tapVoiceGate.schedule(() => {
+          lastVoiceAt = Date.now();
+          window.pet.reportTap?.();
+        });
       } else {
         // 触摸反馈音效：角色的台词由模型自带，这里只是「碰了一下」的界面反馈。
         // 念台词的时候不播它——两声叠在一起，台词就听不清了。
@@ -1087,6 +1103,8 @@ async function boot() {
     // 刚才点的像素可能已经不是形象了，判定留在反应层就会被丢掉。
     onDoubleTap: () => {
       window.__pet.doubleTaps += 1;
+      // 双击不算「点一下」：押着的那句台词作废。
+      tapVoiceGate.cancel();
       // invoke 返回 promise：窗口在点击后被拆掉时它会拒绝，
       // 而渲染层没有全局 unhandledrejection 兜底——拒绝必须吃掉。
       window.pet.openPanel?.()?.catch?.(() => {});

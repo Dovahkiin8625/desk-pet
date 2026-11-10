@@ -6,7 +6,8 @@ import {
   DEFAULT_TAP_LINES,
   POMODORO_PRESETS,
   MAX_CHAT_FACTS,
-  LLM_BACKENDS,
+  DISPATCH_MODES,
+  APPROVAL_POLICIES,
   THINK_LEVELS,
   MAX_ACK_DELAY_MS,
   hasChatKind,
@@ -109,6 +110,8 @@ export function sanitizeAssistant(raw) {
       remainingMs: clampNumber(p.remainingMs, 0, 24 * 3600 * 1000, POMODORO_PRESETS.focus),
       durationMs: clampNumber(p.durationMs, 0, 24 * 3600 * 1000, POMODORO_PRESETS.focus),
       label: str(p.label).slice(0, 100),
+      // 暂停的是哪一段：暂停时记下来，继续时才知道回到专注还是休息。
+      pausedPhase: ['focus', 'break'].includes(p.pausedPhase) ? p.pausedPhase : 'idle',
     };
   }
 
@@ -181,9 +184,6 @@ export function sanitizeAssistant(raw) {
         raw.llm.maxTokensField === 'max_completion_tokens'
           ? 'max_completion_tokens'
           : 'max_tokens',
-      // 后端只认 LLM_BACKENDS 里的值：磁盘上的值可能是旧版本留下的，
-      // 也可能被手改过——认不出来的当普通对话（最保险的那个）。
-      backend: LLM_BACKENDS.includes(raw.llm.backend) ? raw.llm.backend : DEFAULT_LLM.backend,
       // think 模式与深度：深度只认三个档位，认不出来当「中」。
       think: Boolean(raw.llm.think),
       thinkLevel: THINK_LEVELS.includes(raw.llm.thinkLevel)
@@ -228,6 +228,7 @@ export function sanitizeAssistant(raw) {
     // agent 的设置：磁盘上的值可能离谱（并发 9999、超时 1 毫秒），
     // 夹一遍——这些值会直接决定「几个任务同时跑」与「工具多久算超时」。
     const approval = isPlainObject(raw.agent.approval) ? raw.agent.approval : {};
+    const tools = isPlainObject(raw.agent.tools) ? raw.agent.tools : {};
     out.agent = {
       maxConcurrent: Math.round(
         clampNumber(raw.agent.maxConcurrent, 1, 8, DEFAULT_AGENT.maxConcurrent)
@@ -241,7 +242,7 @@ export function sanitizeAssistant(raw) {
         clampNumber(raw.agent.maxTokensPerTask, 0, 10_000_000, DEFAULT_AGENT.maxTokensPerTask)
       ),
       approval: {
-        policy: ['auto', 'graded', 'manual'].includes(approval.policy)
+        policy: APPROVAL_POLICIES.includes(approval.policy)
           ? approval.policy
           : DEFAULT_AGENT.approval.policy,
         // 永久放行的工具名：去重、去空。
@@ -253,8 +254,30 @@ export function sanitizeAssistant(raw) {
           ),
         ],
       },
+      tools: {
+        // 被关掉的工具名：去重、去空。
+        disabled: [
+          ...new Set(
+            (Array.isArray(tools.disabled) ? tools.disabled : []).filter(
+              (name) => typeof name === 'string' && name !== ''
+            )
+          ),
+        ],
+      },
     };
   }
+
+  // 派单模式：**放在 agent 那段之外**——
+  // 那一段会整体替换 out.agent，放进去就被覆盖了。
+  // 而且老用户可能压根没有 agent 段（那是 L3 才加的），
+  // 这时候派单模式要从 llm.backend 迁过来。
+  //
+  // **只传 raw**：不传第二参数。
+  // agent 那段刚把 out.agent 整体换掉了，里面并没有 dispatch 这个键，
+  // 所以 out.agent.dispatch 此刻是 undefined——
+  // 拿它当兜底，认不出来时就会写成 undefined（而不是 'auto'）。
+  // migrateDispatch 自己的默认参数就是 DEFAULT_AGENT.dispatch。
+  out.agent.dispatch = migrateDispatch(raw);
 
   if (isPlainObject(raw.chat)) {
     // 聊天记录：磁盘上的文件是用户与旧版本写出来的，形状可能对不上——
@@ -311,6 +334,26 @@ export function mergePatch(state, patch) {
   return next;
 }
 
+/**
+ * 把一份设置补丁合并进状态。
+ *
+ * 与 mergePatch 的区别：**agent.approval 深一层**。
+ * 审批是两组东西——档位与「永久放行的工具名单」，
+ * 浅合并会把名单整个换掉（只改了个档位，名单就没了）。
+ */
+export function mergeAssistantPatch(state, patch) {
+  const next = mergePatch(state, patch || {});
+  if (patch?.agent && typeof patch.agent === 'object') {
+    next.agent = {
+      ...state.agent,
+      ...patch.agent,
+      approval: { ...(state.agent?.approval || {}), ...(patch.agent.approval || {}) },
+      tools: { ...(state.agent?.tools || {}), ...(patch.agent.tools || {}) },
+    };
+  }
+  return next;
+}
+
 export async function loadAssistant(userDataDir) {  const raw = await readJson(userDataDir, FILE_NAME, null, FILE_NAME);
   return sanitizeAssistant(raw);
 }
@@ -319,4 +362,29 @@ export async function saveAssistant(userDataDir, state) {
   const clean = sanitizeAssistant(state);
   await writeJson(userDataDir, FILE_NAME, clean);
   return clean;
+}
+
+/**
+ * 把老配置里的 `llm.backend` 迁成 `agent.dispatch`（规格 §10.3）。
+ *
+ * - `llm.backend === 'agent'` → 'auto'（以前能动手，现在能派单）；
+ * - `llm.backend === 'chat'`  → 'off'（保守：不给老用户平白发一个新能力）；
+ * - 整个文件里没有 llm 段（新装）→ 用默认值 'auto'。
+ *
+ * **已经写过 dispatch 的就认它**——那是用户自己（或新版）写下的。
+ *
+ * @param {object} raw 磁盘上的原始状态
+ * @param {string} fallback 默认值（认不出来时用它）
+ */
+export function migrateDispatch(raw, fallback = DEFAULT_AGENT.dispatch) {
+  if (isPlainObject(raw?.agent) && DISPATCH_MODES.includes(raw.agent.dispatch)) {
+    return raw.agent.dispatch;
+  }
+  if (!isPlainObject(raw?.llm)) return fallback;
+  const backend = raw.llm.backend;
+  // **没有 backend 这个键**：这是新版写出来的文件（后端已退役），
+  // 用户没选过派单模式 → 用默认值。
+  if (backend === undefined) return fallback;
+  // 老配置里只有 agent / chat 两种，认不出来的当 chat（保守）。
+  return backend === 'agent' ? 'auto' : 'off';
 }

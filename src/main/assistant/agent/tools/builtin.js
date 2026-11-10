@@ -4,13 +4,14 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { DEFAULT_AGENT, TOOL_RISK } from '../../../../shared/assistant.js';
+import { permissionModeForPolicy } from '../harness.js';
 
 /**
  * agent 的内置工具集。
  *
- * 七个工具：读文件、列目录、搜文件、写文件、执行命令、启动程序、读剪贴板。
+ * 六个工具：读文件、列目录、搜文件、写文件、执行命令、启动程序。
  *
- * **这一层不 import electron**：剪贴板、程序索引、子进程都靠注入。
+ * **这一层不 import electron**：程序索引、子进程都靠注入。
  * 这么做的理由很实在——它们是本项目里**最危险**的一批能力，
  * 能在普通 node 里测，才谈得上「测试盯着它」。
  *
@@ -252,20 +253,20 @@ function runShell(command, cwd, timeoutMs, spawn, signal) {
  * 所有会碰到「外面」的东西都靠注入：
  * - `getWorkspace()`：工作区目录（空 = 用户主目录）；
  * - `getTimeoutMs()`：单个工具调用的超时；
- * - `readClipboard()`：读剪贴板；
- * - `isClipboardEnabled()`：剪贴板助手开没开（关着就不给读）；
  * - `getAppIndex()`：本机程序索引（用来启动程序）；
- * - `spawn`：起子进程（测试注入假的）。
+ * - `spawn`：起子进程（测试注入假的）；
+ * - `harness`：外部助手运行器（`harness.run` 工具用，没接上就不给这个工具）；
+ * - `getPolicy()`：审批档位（决定外部助手的权限模式）。
  *
  * @returns {Array<object>} 工具描述符数组
  */
 export function createBuiltinTools({
   getWorkspace = () => '',
   getTimeoutMs = () => DEFAULT_AGENT.timeoutMs,
-  readClipboard = null,
-  isClipboardEnabled = () => true,
   getAppIndex = () => null,
   spawn = nodeSpawn,
+  harness = null,
+  getPolicy = () => DEFAULT_AGENT.approval.policy,
 } = {}) {
   /** 工作区目录：没配就用用户主目录（总得有个起点）。 */
   function workspaceDir() {
@@ -525,23 +526,66 @@ export function createBuiltinTools({
     },
 
     {
-      name: 'clipboard.read',
-      label: '读剪贴板',
-      description: '读一次剪贴板里的文字。',
-      parameters: { type: 'object', properties: {}, required: [] },
-      risk: TOOL_RISK.READ,
-      async run() {
-        // 剪贴板助手默认是关的（用户没点头就不该读）——
-        // 工具不能绕过用户这个开关。
-        if (!isClipboardEnabled()) {
-          throw new Error('剪贴板助手没开（去设置里打开它才能读）');
+      name: 'harness.run',
+      label: '外部助手',
+      description:
+        '把一件活儿交给外部助手（claude code）去做。' +
+        '它会自己在你的机器上动手，可能跑很久：工具**立刻返回**，' +
+        '过程与结果会陆续出现在记录里——不要凭空编一个结果出来。',
+      parameters: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', description: '外部助手的名字（现在只有 claude）' },
+          prompt: { type: 'string', description: '要交给它的活儿，写清楚要什么' },
+          cwd: { type: 'string', description: '工作目录，默认是工作区' },
+          timeout: { type: 'number', description: '最多跑多久（毫秒），默认用设置里的上限' },
+        },
+        required: ['prompt'],
+      },
+      // **执行级**：它在用户机器上起一个会自己动手的进程，
+      // 与 `shell.exec` 同档——审批不能把它当成只读放过去。
+      risk: TOOL_RISK.EXEC,
+      async run(args, ctx) {
+        if (!harness || typeof harness.run !== 'function') {
+          throw new Error('外部助手还没接上');
         }
-        if (typeof readClipboard !== 'function') throw new Error('剪贴板读不了');
-        const text = await readClipboard();
-        const content = String(text || '');
+        const agent = String(args?.agent || 'claude').trim();
+        const prompt = String(args?.prompt || '').trim();
+        if (!prompt) throw new Error('要交给它什么活儿？给个 prompt');
+        const cwdArg = String(args?.cwd || '').trim();
+        const cwd = cwdArg
+          ? isAbsolute(cwdArg)
+            ? resolve(cwdArg)
+            : resolve(workspaceDir(), cwdArg)
+          : workspaceDir();
+        // 超时：模型给的优先，没给就用设置里的那个上限。
+        const timeoutMs = Math.max(0, Number(args?.timeout) || Number(getTimeoutMs()) || 0);
+        const started = await harness.run({
+          agent,
+          prompt,
+          cwd,
+          timeoutMs,
+          taskId: String(ctx?.taskId || ''),
+          // 桌宠的审批档位 → CLI 的权限模式（headless 里没人能回答它的提问）。
+          permissionMode: permissionModeForPolicy(getPolicy()),
+          signal: ctx?.signal,
+          // 过程走**异步事件**：工具返回之后它还在跑，输出一条条进记录。
+          onEvent: (event) => {
+            ctx?.onEvent?.({
+              tool: 'harness.run',
+              label: event?.label,
+              args: event?.args ?? null,
+              result: event?.result,
+              error: event?.error,
+              data: event?.data ?? null,
+            });
+          },
+        });
         return {
-          text: truncate(content || '（剪贴板是空的）', MAX_RESULT_TEXT),
-          data: { length: content.length },
+          text:
+            `已启动${started?.label || '外部助手'}，它会自己跑完。` +
+            '过程与结果会陆续出现在记录里，别凭空编结果。',
+          data: { agent, cwd, timeoutMs, logPath: started?.logPath || '' },
         };
       },
     },

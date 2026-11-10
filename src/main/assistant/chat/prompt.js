@@ -1,10 +1,13 @@
 import {
   EMOTIONS,
+  MAX_NEW_MEMORIES,
+  MEMORY_KINDS,
   PROMPT_HISTORY_MESSAGES,
   CHAT_KIND_FOR_LAYER,
   LAYER,
   chatKindOf,
 } from '../../../shared/assistant.js';
+import { normalizeMemory } from './memory.js';
 
 /**
  * 人设、系统提示词与回复解析。
@@ -29,12 +32,6 @@ export const META_MARKER = '<<META>>';
 /** 主动搭话时替用户发的那句话。 */
 export const PROACTIVE_TRIGGER = '（现在是主动搭话的时刻，用户没有说话。找个由头说一句话。）';
 
-/** 一次回复最多带几条新记忆。 */
-const MAX_NEW_MEMORIES = 2;
-
-/** 单条记忆的最长字数。 */
-const MAX_MEMORY_LENGTH = 200;
-
 /** 心情增量的上下限。 */
 const MAX_MOOD = 10;
 
@@ -47,10 +44,14 @@ const MAX_MOOD = 10;
 export function metaContractLines() {
   return [
     '- 回答写完后，另起一行输出 ' + META_MARKER + '，紧跟一个 JSON 对象（不要代码块围栏）：',
-    `  {"emotion":"<情绪>","mood":<整数>,"memories":["<事实>"]}`,
+    `  {"emotion":"<情绪>","mood":<整数>,"memories":[{"text":"<一句话事实>","kind":"<类型>"}]}`,
     `- emotion 只能是 ${EMOTIONS.join(' / ')} 之一。`,
     `- mood 是 -${MAX_MOOD} 到 ${MAX_MOOD} 的整数：正数表示这轮让你更开心，负数表示更闷。`,
-    '- memories 只写「以后还用得上的、用户身上的事实」，最多 2 条；没有就写 []。',
+    `- memories 只记「重要、而且长期有效」的事，最多 ${MAX_NEW_MEMORIES} 条；没有就写 []。`,
+    `- kind 只能是 ${MEMORY_KINDS.join(' / ')} 之一：`,
+    '  explicit=用户明确让你记住的；preference=用户的偏好习惯；fact=用户的稳定事实；plan=长期约定或承诺。',
+    '- 用户说了「记住…」「别忘了…」时，必须记一条，kind 用 explicit。',
+    '- 临时的事不要记：今天、刚才、这次、现在这类过几天就失效的，别写。',
   ];
 }
 
@@ -187,11 +188,12 @@ function readMeta(meta) {
     ? Math.max(-MAX_MOOD, Math.min(MAX_MOOD, Math.round(rawMood)))
     : 0;
   const rawMemories = Array.isArray(meta?.memories) ? meta.memories : [];
-  const memories = rawMemories
-    .filter((m) => typeof m === 'string')
-    .map((m) => m.trim().slice(0, MAX_MEMORY_LENGTH))
-    .filter(Boolean)
-    .slice(0, MAX_NEW_MEMORIES);
+  const memories = [];
+  for (const item of rawMemories) {
+    const entry = normalizeMemory(item);
+    if (entry) memories.push(entry);
+    if (memories.length >= MAX_NEW_MEMORIES) break;
+  }
   return { emotion, mood, memories };
 }
 
