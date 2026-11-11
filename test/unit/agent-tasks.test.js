@@ -264,6 +264,58 @@ test('中枢：任务列表带上了步数与出错原因', async () => {
   assert.equal(row.error, '');
 });
 
+test('任务清单：给的是人话标签（lastStepLabel），工具名照旧留在 lastStep', async () => {
+  // 提示词里不能有工具名——桌宠嘴里说的是「列目录」，不是「fs.list」。
+  // 但看板是排查用的调试面板，lastStep 照旧留工具名。
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({
+          type: 'step',
+          index: 1,
+          tool: 'fs.list',
+          label: '列目录',
+          args: {},
+          result: 'ok',
+          error: '',
+        });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '列个目录', messages: [] });
+  await t.done;
+  const row = tasks.list()[0];
+  assert.equal(row.lastStep, 'fs.list', '看板还要看得见工具名');
+  assert.equal(row.lastStepLabel, '列目录');
+});
+
+test('最近一步失败时 lastStepLabel 是空串（不装作成功）', async () => {
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({
+          type: 'step',
+          index: 1,
+          tool: 'fs.list',
+          label: '列目录',
+          args: {},
+          result: '',
+          error: '目录读不了',
+        });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '列个目录', messages: [] });
+  await t.done;
+  const row = tasks.list()[0];
+  assert.match(row.lastStep, /出错/);
+  assert.equal(row.lastStepLabel, '', '没做成的事不能说成做成了');
+});
+
 test('中枢：看板视图带上了步骤时间线', async () => {
   // 详情页那条竖线要的：每一步说了什么工具、动了什么参数、结果是什么。
   const tasks = createAgentTasks({

@@ -121,6 +121,7 @@ export function createAgentTasks({
       const name = String(event.tool || '工具');
       lastSteps.set(event.taskId, {
         tool: name,
+        label: String(event.label || ''),
         index: Number(event.index) || 0,
         failed: Boolean(event.error),
       });
@@ -165,6 +166,8 @@ export function createAgentTasks({
       title: task.title,
       status: task.status,
       lastStep: step ? (step.failed ? `${step.tool} 出错` : step.tool) : '',
+      // **人话标签**：提示词里不许出现工具名；失败的这一步不算（没做成的事不能说成做成了）。
+      lastStepLabel: step && !step.failed ? String(step.label || '') : '',
       stepIndex: step?.index || 0,
       result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
       error: task.error ? String(task.error?.message || task.error) : '',

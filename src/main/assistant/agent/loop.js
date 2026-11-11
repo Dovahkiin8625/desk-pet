@@ -248,6 +248,7 @@ export function createAgentLoop({
             type: 'step',
             index: toolCallCount,
             tool: String(c?.function?.name || ''),
+            label: '',
             args: null,
             result: '',
             error: SKIPPED_TEXT,
@@ -295,6 +296,7 @@ export function createAgentLoop({
           type: 'step',
           index: toolCallCount,
           tool: one.tool || '',
+          label: one.label || '',
           args: one.args || null,
           result: one.ok ? one.text : '',
           error: one.ok ? '' : one.error || '',
@@ -362,9 +364,11 @@ export function createAgentLoop({
   async function runOne(call, { signal, index = 0, taskId = '' }) {
     const name = String(call?.function?.name || '');
     const tool = resolveTool(name);
+    // 工具的**人话标签**：提示词里不许出现工具名，桌宠嘴里说的是这个。
+    const label = String(tool?.label || '');
     if (!tool) {
       const msg = `没有这个工具：${name}`;
-      return { ok: false, tool: name, args: null, text: msg, error: msg };
+      return { ok: false, tool: name, args: null, text: msg, error: msg, label };
     }
 
     const rawArgs = String(call?.function?.arguments || '').trim();
@@ -374,12 +378,12 @@ export function createAgentLoop({
         args = JSON.parse(rawArgs);
       } catch {
         const msg = `工具「${name}」的参数不是合法的 JSON`;
-        return { ok: false, tool: name, args: null, text: msg, error: msg };
+        return { ok: false, tool: name, args: null, text: msg, error: msg, label };
       }
     }
     if (typeof args !== 'object' || args === null || Array.isArray(args)) {
       const msg = `工具「${name}」的参数必须是一个 JSON 对象`;
-      return { ok: false, tool: name, args: null, text: msg, error: msg };
+      return { ok: false, tool: name, args: null, text: msg, error: msg, label };
     }
 
     const verdict = await askApproval({ tool, args, signal });
@@ -393,6 +397,7 @@ export function createAgentLoop({
         error: msg,
         userError: verdict.userReason || msg,
         denied: true,
+        label,
       };
     }
 
@@ -407,6 +412,7 @@ export function createAgentLoop({
             type: 'step',
             index,
             tool: String(payload?.tool || name),
+            // **外部助手自带的那句说明原样留着**：「claude code 调了 Read」比工具标签更具体。
             label: String(payload?.label || ''),
             args: payload?.args ?? null,
             result: String(payload?.result ?? ''),
@@ -416,10 +422,10 @@ export function createAgentLoop({
         },
       });
       const text = typeof out?.text === 'string' ? out.text : String(out?.text ?? '');
-      return { ok: true, tool: name, args, text, data: out?.data };
+      return { ok: true, tool: name, args, text, data: out?.data, label };
     } catch (err) {
       const msg = `工具「${name}」出错：${err?.message || err}`;
-      return { ok: false, tool: name, args, text: msg, error: msg };
+      return { ok: false, tool: name, args, text: msg, error: msg, label };
     }
   }
 

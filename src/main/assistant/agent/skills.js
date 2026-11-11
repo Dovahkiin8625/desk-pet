@@ -139,7 +139,7 @@ export function createSkillTools({ registry, getDisabledTools = () => [] }) {
   return [
     {
       name: 'skill.read',
-      label: '读技能说明',
+      label: '读文档',
       description:
         '读某个技能的说明书正文。参数 skill 是技能名（提示词里的技能清单里写着）；' +
         '正文里如果提到别的文件，可以再带 path 读那个文件。',

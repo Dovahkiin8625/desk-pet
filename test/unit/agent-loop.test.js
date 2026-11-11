@@ -329,6 +329,61 @@ test('步骤事件：工具调用会发事件', async () => {
   assert.equal(step.tool, 'fs.read');
 });
 
+test('步骤事件：带上工具的人话标签', async () => {
+  // 提示词里不能出现工具名——桌宠嘴上要说的是「列目录」，不是「fs.list」。
+  const events = [];
+  const model = fakeModel([{ toolCalls: [call('fs.list', { path: 'a' })] }, { text: '好了' }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => ({
+      name: 'fs.list',
+      label: '列目录',
+      risk: 'read',
+      run: async () => ({ text: 'a.txt' }),
+    }),
+    onEvent: (e) => events.push(e),
+  });
+  await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  const step = events.find((e) => e.type === 'step');
+  assert.equal(step.label, '列目录');
+});
+
+test('步骤事件：工具没有标签时是空串', async () => {
+  const events = [];
+  const model = fakeModel([{ toolCalls: [call('fs.list', { path: 'a' })] }, { text: '好了' }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => ({ name: 'fs.list', risk: 'read', run: async () => ({ text: 'a.txt' }) }),
+    onEvent: (e) => events.push(e),
+  });
+  await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  const step = events.find((e) => e.type === 'step');
+  assert.equal(step.label, '');
+});
+
+test('步骤事件：外部助手自带的那句说明不被工具标签盖掉', async () => {
+  // 外部助手报的是「claude code 调了 Read」——比工具标签更具体。
+  const events = [];
+  const model = fakeModel([{ toolCalls: [call('harness.run', {})] }, { text: '好了' }]);
+  const l = createAgentLoop({
+    callModel: model.callModel,
+    resolveTool: () => ({
+      name: 'harness.run',
+      label: '外部助手',
+      risk: 'read',
+      async run(args, ctx) {
+        ctx.onEvent?.({ tool: 'harness.run', label: 'claude code 调了 Read', result: 'ok' });
+        return { text: '已启动' };
+      },
+    }),
+    onEvent: (e) => events.push(e),
+  });
+  await l.run({ system: 's', messages: [{ role: 'user', content: 'u' }] });
+  const fromHarness = events.find((e) => e.type === 'step' && e.label.includes('claude code'));
+  assert.ok(fromHarness, '外部助手的那条事件没有转发出来');
+  assert.equal(fromHarness.label, 'claude code 调了 Read');
+});
+
 test('步骤事件：带着工具返回的 data', async () => {
   const events = [];
   const model = fakeModel([{ toolCalls: [call('fs.read', { path: 'a' })] }, { text: '好了' }]);
