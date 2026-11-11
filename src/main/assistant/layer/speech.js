@@ -50,16 +50,18 @@ export function sanitizeSpeech(text, { toolNames = [] } = {}) {
  *
  * @param {object} options
  * @param {string[]} options.toolNames 要一并藏起来的工具名（精确匹配）
- * @returns {{push: (delta: string) => string, finish: () => string, text: string}} `text` 是已经吐出去的那部分
+ * @returns {{push: (delta: string) => string, finish: () => string, text: string}} `text` 是已经吐给上层的那部分
  */
 export function createSpeechFilter({ toolNames = [] } = {}) {
-  const names = (Array.isArray(toolNames) ? toolNames : []).filter(Boolean);
+  const names = normalizeNames(toolNames);
   const words = [...REPLACEMENTS.map(([from]) => from), ...names];
   let raw = '';
   let emitted = '';
+  let done = false;
 
   return {
     push(delta) {
+      if (done) return '';
       raw += String(delta ?? '');
       const stable = raw.slice(0, raw.length - tailHold(raw, words));
       const safe = clean(stable, names);
@@ -68,6 +70,8 @@ export function createSpeechFilter({ toolNames = [] } = {}) {
       return out;
     },
     finish() {
+      if (done) return '';
+      done = true;
       const safe = clean(raw, names);
       if (!safe) {
         emitted = SPEECH_FALLBACK;
@@ -77,6 +81,7 @@ export function createSpeechFilter({ toolNames = [] } = {}) {
       emitted = safe;
       return out;
     },
+    /** 已经吐给上层的文本。 */
     get text() {
       return emitted;
     },
@@ -84,23 +89,44 @@ export function createSpeechFilter({ toolNames = [] } = {}) {
 }
 
 /**
- * 缓冲区末尾有多长的一段是某个禁词的前缀——这一段先按住不吐。
+ * 缓冲区末尾有多长的一段不能吐——先按住，等下一段来了看清了再吐。
  *
- * 禁词已经完整地出现在末尾时不按住（可以马上替换掉），
- * 但它同时是更长禁词的前缀时要按住（「后台」可能是「后台任务」的一半）。
+ * 两种情况要按住：
+ * 1. 末尾像是某个禁词的前缀（「后台任」+「务」）。末尾的空格也算在内：
+ *    空格胶合之后（「后 台任务」→「后台任务」）才形成的禁词，粘住的那一段也得按住。
+ * 2. 末尾有没配上的开括号：括号里的内容可能被删空，删空之后这对括号整个消失，
+ *    已经吐出去的左括号就成了悬空的（「我看了一下（」+「工具）」）。
  */
 function tailHold(raw, words) {
+  const trimmed = raw.replace(/\s+$/, '');
+  const trail = raw.length - trimmed.length;
   let hold = 0;
   for (const word of words) {
-    const max = Math.min(word.length - 1, raw.length);
+    const max = Math.min(word.length - 1, trimmed.length);
     for (let k = max; k > hold; k -= 1) {
-      if (raw.endsWith(word.slice(0, k))) {
+      if (trimmed.endsWith(word.slice(0, k))) {
         hold = k;
         break;
       }
     }
   }
+  hold += trail;
+  const open = firstUnmatchedOpen(raw);
+  if (open >= 0) hold = Math.max(hold, raw.length - open);
   return hold;
+}
+
+/** 第一个没配上右括号的开括号的位置；都配上了就是 -1。 */
+function firstUnmatchedOpen(text) {
+  const stack = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '（' || ch === '(') stack.push(i);
+    else if (ch === '）' || ch === ')') {
+      if (stack.length) stack.pop();
+    }
+  }
+  return stack.length ? stack[0] : -1;
 }
 
 /** 已经吐出去的 `base` 与新算出的 `next` 之间的增量。 */
@@ -113,22 +139,47 @@ function suffixAfter(base, next) {
 
 /** 工具名 → 话术 → 收拾。 */
 function clean(text, toolNames) {
-  const names = (Array.isArray(toolNames) ? toolNames : []).filter(Boolean);
+  const names = normalizeNames(toolNames);
   let out = String(text ?? '');
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
     out = out.split(name).join('这件事');
   }
+  out = replaceTable(out);
+  out = stripEmptyParens(out);
+  out = out.replace(/\s+/g, ' ');
+  out = glueCJK(out);
+  // 胶合（去掉中文之间的空格）会造出新的禁词（「后 台任务」→「后台任务」），所以再替一遍。
+  out = replaceTable(out);
+  out = stripEmptyParens(out);
+  out = out.trim();
+  out = out.replace(/^[\s，,。.、]+/, '').replace(/[\s，,。.、]+$/, '');
+  return PUNCT_ONLY.test(out) ? '' : out;
+}
+
+function normalizeNames(toolNames) {
+  return (Array.isArray(toolNames) ? toolNames : []).filter(Boolean);
+}
+
+function replaceTable(text) {
+  let out = text;
   for (const [from, to] of REPLACEMENTS) {
     out = out.split(from).join(to);
   }
-  out = out.replace(/[（(][ \t]*[）)]/g, '');
-  out = out.replace(/\s+/g, ' ');
+  return out;
+}
+
+/** 删空了的括号对（「（）」「()」）整个去掉。 */
+function stripEmptyParens(text) {
+  return text.replace(/[（(][ \t]*[）)]/g, '');
+}
+
+/** 中文之间的空格是多余的（替换留下的）。 */
+function glueCJK(text) {
+  let out = text;
   let prev;
   do {
     prev = out;
     out = out.replace(CJK_GAP, '$1$2');
   } while (out !== prev);
-  out = out.trim();
-  out = out.replace(/^[\s，,。.、]+/, '').replace(/[\s，,。.、]+$/, '');
-  return PUNCT_ONLY.test(out) ? '' : out;
+  return out;
 }
