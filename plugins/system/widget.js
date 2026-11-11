@@ -12,7 +12,10 @@ const cpuBar = document.getElementById('cpu-bar');
 const cpuVal = document.getElementById('cpu-val');
 const memBar = document.getElementById('mem-bar');
 const memVal = document.getElementById('mem-val');
+const gpuBar = document.getElementById('gpu-bar');
+const gpuVal = document.getElementById('gpu-val');
 const thermalEl = document.getElementById('thermal');
+const vramEl = document.getElementById('vram');
 const powerEl = document.getElementById('power');
 
 /** 把一个百分比画成进度条。 */
@@ -27,6 +30,13 @@ function setBar(bar, val, value) {
   return value >= 85;
 }
 
+/** 显存：多少用了、多少总共。 */
+function vramText(gpu) {
+  if (!gpu || typeof gpu.memUsed !== 'number' || typeof gpu.memTotal !== 'number') return '';
+  const gb = (mb) => `${(mb / 1024).toFixed(1)}G`;
+  return `显存 ${gb(gpu.memUsed)}/${gb(gpu.memTotal)}`;
+}
+
 /** 画一次数据。 */
 function render(data) {
   if (!data) return;
@@ -36,6 +46,15 @@ function render(data) {
   memVal.textContent = typeof data.memory === 'number' ? `${data.memory}%` : '…';
   cpuBar.parentElement.classList.toggle('hot', cpuHot);
   memBar.parentElement.classList.toggle('hot', memHot);
+
+  // GPU 采不到（这台机器没有可读的那块卡）就说不知道，不写 0%。
+  const gpu = data.gpu || null;
+  const gpuUtil = gpu && typeof gpu.util === 'number' ? gpu.util : null;
+  const gpuHot = setBar(gpuBar, gpuVal, gpuUtil);
+  gpuVal.textContent = gpuUtil === null ? '—' : `${gpuUtil}%`;
+  gpuBar.parentElement.classList.toggle('hot', gpuHot);
+  vramEl.textContent = vramText(gpu);
+
   thermalEl.textContent = `温度 ${data.thermalText || '未知'}`;
   powerEl.textContent = data.onBattery === true ? '电池' : data.onBattery === false ? '已接电' : '';
 }

@@ -16,8 +16,12 @@ import { formatElapsed, groupSnapshot, statusText, stepLabel } from './format.js
 
 const surface = bindSurface();
 
+const isWidget = surface.mode === 'widget';
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
-document.body.classList.toggle('dp-widget', surface.mode === 'widget');
+document.body.classList.toggle('dp-widget', isWidget);
+
+// 小部件的头用共享的那份样式（与系统监控的小部件一个样）。
+if (isWidget) document.getElementById('head').classList.add('dp-widget-head');
 
 const wrapEl = document.getElementById('wrap');
 const pendingEl = document.getElementById('pending');
@@ -324,6 +328,15 @@ wrapEl.addEventListener('keydown', (event) => {
   event.preventDefault();
   const row = input.closest('[data-task]');
   void sendSteer(row, row?.dataset.task || '');
+});
+
+// 小部件的两个按钮：变回独立窗口、收起来。
+// （面板与独立窗口里这两个按钮不显示，壳已经有一份了。）
+document.getElementById('widget-expand').addEventListener('click', () => {
+  window.plugin?.window?.setMode?.('window');
+});
+document.getElementById('widget-close').addEventListener('click', () => {
+  window.plugin?.window?.close?.();
 });
 
 // 首份快照：打开时给一次。

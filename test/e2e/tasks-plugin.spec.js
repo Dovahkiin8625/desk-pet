@@ -356,6 +356,12 @@ test.describe('后台任务插件', () => {
       await expect(widget.locator('#running .row[data-task]').first()).toBeVisible({ timeout: 30000 });
       // 小部件是紧凑版：按钮那些不画。
       await expect(widget.locator('#running .row-actions')).toBeHidden();
+
+      // 小部件自己能收起：头上那个 ✕ 就是干这个的。
+      const close = widget.locator('#widget-close');
+      await expect(close).toBeVisible();
+      await close.click();
+      await expect.poll(() => widget.isClosed(), { timeout: 10000 }).toBe(true);
     } finally {
       await app.close();
       await stub.close();

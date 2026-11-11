@@ -18,6 +18,7 @@ import * as todos from './todos.js';
 import * as reminders from './reminders.js';
 import * as pomodoro from './pomodoro.js';
 import * as systemStatus from './systemStatus.js';
+import * as gpu from './gpu.js';
 import * as weather from './weather.js';
 import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
 import { synthesizeCached } from './tts/minimax.js';
@@ -979,13 +980,16 @@ export function createAssistant({  userDataDir,
     const memory = systemStatus.sampleMemoryPercent();
     const thermal = safeThermalState();
     const onBattery = safeOnBattery();
+    // GPU 是异步采的：这里读的是最近一次的结果，采不到就是 null。
+    const gpuInfo = gpu.gpuStatus();
     return {
-      text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery }),
+      text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery, gpu: gpuInfo }),
       cpu,
       memory,
       thermal,
       thermalText: systemStatus.thermalText(thermal),
       onBattery,
+      gpu: gpuInfo,
       hotAlert: Boolean(state.hotAlert.enabled),
     };
   }
@@ -1378,6 +1382,9 @@ export function createAssistant({  userDataDir,
   function tick() {
     const now = Date.now();
 
+    // GPU：自己会限流（两秒一次），这里只是叫醒它。
+    void gpu.refreshGpu();
+
     // 整点报时
     if (state.chime.enabled) {
       const d = new Date(now);
@@ -1463,6 +1470,8 @@ export function createAssistant({  userDataDir,
       // 没有基准就只有一个「不知道」。启动时取一次，
       // 用户第一次看系统状态时就已经有数字了。
       systemStatus.sampleCpuPercent();
+      // GPU 也先采一次：第一次看系统状态就该有 GPU 的数。
+      void gpu.refreshGpu();
       tickTimer = setInterval(tick, TICK_MS);
       // 问候语：等模型加载完再说。
       greetingTimer = setTimeout(() => {

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>系统监控</title>
+  <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
   <style>
     :root { color-scheme: light; }
     html, body {
@@ -13,43 +14,6 @@
       font: 12px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
       color: #2b2a26;
     }
-    /* 卡片：窗口是透明的，小部件得自己带一块底。 */
-    #card {
-      box-sizing: border-box;
-      width: 100%;
-      height: 100%;
-      padding: 8px 10px;
-      background: rgba(255, 253, 248, 0.94);
-      border: 1px solid #d8d2c4;
-      border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(40, 34, 24, 0.18);
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      /* 整块都能拖：桌面小部件要能挪位置。 */
-      -webkit-app-region: drag;
-    }
-    #head {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-weight: 600;
-      font-size: 11px;
-      color: #6d6558;
-    }
-    #head .spacer { flex: 1; }
-    #head button {
-      -webkit-app-region: no-drag;
-      border: none;
-      background: transparent;
-      color: #9a9384;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1;
-      padding: 2px 4px;
-      border-radius: 5px;
-    }
-    #head button:hover { background: #efe6d2; color: #6d6558; }
     .row { display: flex; align-items: center; gap: 6px; }
     .row .name { width: 26px; color: #8a8272; flex: none; }
     .bar {
@@ -80,8 +44,8 @@
   </style>
 </head>
 <body>
-  <div id="card">
-    <div id="head">
+  <div id="card" class="dp-widget-card">
+    <div id="head" class="dp-widget-head">
       <span>系统监控</span>
       <span class="spacer"></span>
       <button id="expand" title="变回独立窗口">▣</button>
@@ -97,9 +61,15 @@
       <span class="bar"><i id="mem-bar"></i></span>
       <span class="val" id="mem-val">—</span>
     </div>
+    <div class="row">
+      <span class="name">GPU</span>
+      <span class="bar"><i id="gpu-bar"></i></span>
+      <span class="val" id="gpu-val">—</span>
+    </div>
     <div id="foot">
       <span id="thermal">温度 —</span>
       <span class="spacer"></span>
+      <span id="vram"></span>
       <span id="power"></span>
     </div>
   </div>

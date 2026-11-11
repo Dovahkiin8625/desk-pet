@@ -1,0 +1,62 @@
+/*
+ * 桌面小部件的样子。
+ *
+ * 小部件的窗口是透明的，界面**自己带一块底**：
+ * 圆角、边、影都在这一份里，所有插件的小部件长一个样。
+ *
+ * 只被小部件的页面链（插件自己的 widget 页面）。
+ */
+
+.dp-widget-card {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid #d8d2c4;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(40, 34, 24, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+  /* 整块都能拖：桌面小部件要能挪位置。 */
+  -webkit-app-region: drag;
+}
+
+/* 卡片的头：标题在左，形态/关闭的按钮在右。 */
+.dp-widget-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 11px;
+  color: #6d6558;
+  flex: none;
+}
+.dp-widget-head .spacer {
+  flex: 1;
+}
+.dp-widget-head button {
+  -webkit-app-region: no-drag;
+  border: none;
+  background: transparent;
+  color: #9a9384;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+.dp-widget-head button:hover {
+  background: #efe6d2;
+  color: #6d6558;
+}
+
+/* 能点的东西不跟着拖：点一下是点一下。 */
+.dp-widget-card button,
+.dp-widget-card input,
+.dp-widget-card summary,
+.dp-widget-card .row {
+  -webkit-app-region: no-drag;
+}

@@ -2,11 +2,11 @@
   "id": "system",
   "name": "系统状态",
   "icon": "📊",
-  "description": "CPU、内存、温度、电源",
-  "keywords": ["system", "status", "cpu", "neicun", "xituan", "状态", "内存", "温度", "电源"],
+  "description": "CPU、内存、GPU、温度、电源",
+  "keywords": ["system", "status", "cpu", "gpu", "neicun", "xituan", "状态", "内存", "显卡", "温度", "电源"],
   "skill": {
     "name": "system",
-    "description": "读本机的运行状况：CPU、内存、温度、电源，以及过热提醒的开关",
+    "description": "读本机的运行状况：CPU、内存、GPU、温度、电源，以及过热提醒的开关",
     "file": "skill.md"
   },
   "tools": [
@@ -38,7 +38,7 @@
   "widget": {
     "title": "系统监控",
     "width": 216,
-    "height": 108,
+    "height": 140,
     "page": "widget.html",
     "refreshMs": 1000,
     "alwaysOnTop": true

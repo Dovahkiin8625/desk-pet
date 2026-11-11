@@ -14,7 +14,7 @@ export default function createSystemPlugin() {
     return ctx.ui.makePage({
       pluginId: 'system',
       title: '系统状态',
-      subtitle: 'CPU · 内存 · 温度 · 电源',
+      subtitle: 'CPU · 内存 · GPU · 温度 · 电源',
       blocks: [
         ctx.ui.textBlock(view.text),
         ctx.ui.toggleBlock('hot-alert', '过热时提醒我', view.hotAlert),
@@ -28,6 +28,8 @@ export default function createSystemPlugin() {
     return {
       cpu: view.cpu,
       memory: view.memory,
+      // GPU 采不到就是 null（小部件画「—」，不画 0%）。
+      gpu: view.gpu,
       // 原始状态（'nominal'…）与中文说法都带上：
       // 画图用原始的，念给用户听用中文的。
       thermal: view.thermal,
@@ -65,6 +67,7 @@ export default function createSystemPlugin() {
               data: {
                 cpu: view.cpu,
                 memory: view.memory,
+                gpu: view.gpu,
                 thermal: view.thermal,
                 onBattery: view.onBattery,
               },

@@ -63,7 +63,7 @@ export function formatMemory(total, free) {
 /**
  * 状态文本（给气泡显示）。
  *
- * @param {object} s { cpu, memory, thermal, onBattery }
+ * @param {object} s { cpu, memory, thermal, onBattery, gpu }
  */
 export function formatStatus(s = {}) {
   const lines = ['系统状态'];
@@ -73,6 +73,10 @@ export function formatStatus(s = {}) {
   else if (s.cpu === null) lines.push('CPU 采样中');
   if (typeof s.memory === 'number') lines.push(`内存 ${s.memory}%`);
   if (s.memoryText) lines.push(s.memoryText);
+  // GPU 采不到就整行不写：宁可少一行，也不写「GPU 0%」。
+  if (s.gpu && typeof s.gpu.util === 'number') {
+    lines.push(`GPU ${s.gpu.util}%${s.gpu.name ? `（${s.gpu.name}）` : ''}`);
+  }
   if (s.thermal) lines.push(`温度 ${thermalText(s.thermal)}`);
   if (typeof s.onBattery === 'boolean') {
     lines.push(s.onBattery ? '电源：电池供电' : '电源：已接电');

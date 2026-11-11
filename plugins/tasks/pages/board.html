@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>后台任务</title>
     <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
     <style>
       body {
         margin: 0;
@@ -44,6 +45,10 @@
         gap: 6px;
       }
       section:empty {
+        display: none;
+      }
+      /* 空了的分节整段藏起来（section 的 display 盖过了 [hidden]）。 */
+      section[hidden] {
         display: none;
       }
       /* 一行任务。 */
@@ -184,12 +189,47 @@
         min-height: 18px;
       }
       /* 小部件：紧凑版。同一个页面文件，靠 body 上的类切。 */
+      /* 卡片只在小部件里出现：面板与独立窗口不需要它。 */
+      #card {
+        display: contents;
+      }
+      body.dp-widget {
+        background: transparent;
+        height: 100vh;
+        overflow: hidden;
+      }
+      body.dp-widget #card {
+        display: flex;
+      }
       body.dp-widget #wrap {
-        padding: 8px;
+        padding: 0;
         gap: 4px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      body.dp-widget #head {
+        align-items: center;
+      }
+      /* 小部件专属的按钮（变回窗口、收起）：别的地方不显示。 */
+      .widget-btn {
+        display: none;
+      }
+      body.dp-widget #head .widget-btn {
+        display: inline-flex;
       }
       body.dp-widget #head h1 {
-        font-size: 13px;
+        font-size: 12px;
+      }
+      body.dp-widget #counts {
+        font-size: 11px;
+      }
+      /* 小部件里不画分节标题：地方小，标题把任务挤没了。 */
+      body.dp-widget .dp-section-title {
+        display: none;
+      }
+      body.dp-widget #empty {
+        padding: 14px 0;
       }
       body.dp-widget .row-step,
       body.dp-widget .row-actions,
@@ -210,26 +250,31 @@
     </style>
   </head>
   <body>
-    <div id="wrap">
-      <div id="head">
-        <h1>后台任务</h1>
-        <span id="counts"></span>
+    <div id="card" class="dp-widget-card">
+      <div id="wrap">
+        <div id="head">
+          <h1>后台任务</h1>
+          <span id="counts"></span>
+          <span class="spacer"></span>
+          <button id="widget-expand" class="widget-btn" title="变回独立窗口">▣</button>
+          <button id="widget-close" class="widget-btn" title="收起来">✕</button>
+        </div>
+        <div id="interrupted" hidden></div>
+        <section id="pending-sec">
+          <h2 class="dp-section-title">待你点头</h2>
+          <div id="pending"></div>
+        </section>
+        <section id="running-sec">
+          <h2 class="dp-section-title">在跑与排队</h2>
+          <div id="running"></div>
+        </section>
+        <section id="finished-sec">
+          <h2 class="dp-section-title">已结束</h2>
+          <div id="finished"></div>
+        </section>
+        <div id="empty">现在没有后台任务</div>
+        <div id="message"></div>
       </div>
-      <div id="interrupted" hidden></div>
-      <section id="pending-sec">
-        <h2 class="dp-section-title">待你点头</h2>
-        <div id="pending"></div>
-      </section>
-      <section id="running-sec">
-        <h2 class="dp-section-title">在跑与排队</h2>
-        <div id="running"></div>
-      </section>
-      <section id="finished-sec">
-        <h2 class="dp-section-title">已结束</h2>
-        <div id="finished"></div>
-      </section>
-      <div id="empty">现在没有后台任务</div>
-      <div id="message"></div>
     </div>
     <script type="module" src="board.js"></script>
   </body>
