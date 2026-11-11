@@ -1,5 +1,5 @@
-import { BrowserWindow, ipcMain } from 'electron';
-import { join } from 'node:path';
+import { BrowserWindow, ipcMain, Menu } from 'electron';
+import { basename, join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { placeBesidePet } from './placement.js';
 import { maxPanelHeight } from './panelHeight.js';
@@ -10,6 +10,8 @@ import {
   FALLBACK_VIEW_HEIGHT,
 } from '../shared/panel.js';
 import { BUILTIN_SETTINGS, builtinFeatures, isBuiltin } from './builtins.js';
+import { SETTINGS_PAGES } from './windowsSettings.js';
+import { resultMenuTemplate } from './resultMenu.js';
 
 /**
  * 插件面板：桌宠的「uTools 式」入口。
@@ -59,6 +61,7 @@ export function createPanelController({
   getDisplays,
   plugins,
   apps,
+  systemSearch,
   openSettings,
   onChat,
   surfaces,
@@ -136,6 +139,59 @@ export function createPanelController({
     return [...builtinFeatures(), ...plugins.list()];
   }
 
+  /**
+   * 系统设置页清单。
+   *
+   * 与插件清单一样是**一次性下发**的：它是一张写死的表，
+   * 页面在本地搜就行，不必每敲一个字都过一趟 IPC。
+   */
+  function settingsList() {
+    return SETTINGS_PAGES.map((page) => ({
+      id: page.id,
+      kind: 'setting',
+      name: page.name,
+      target: page.target,
+      hint: page.hint,
+    }));
+  }
+
+  /**
+   * 右键点的那一条到底是哪个东西。
+   *
+   * 渲染层只认得自己画出来的那一行，主进程得把它还原成条目，
+   * 才知道「打开」该干什么、「打开所在目录」该定位到哪儿。
+   */
+  function resolveItem(payload) {
+    const kind = String(payload?.kind || '');
+    if (kind === 'app') {
+      const entry = apps?.get?.(String(payload?.id || ''));
+      if (!entry) return null;
+      return {
+        kind: 'app',
+        id: entry.id,
+        name: entry.name,
+        path: entry.target,
+        target: entry.target,
+      };
+    }
+    if (kind === 'file') {
+      const path = String(payload?.path || '');
+      if (!path) return null;
+      return {
+        kind: 'file',
+        id: `file:${path.toLowerCase()}`,
+        name: String(payload?.name || '') || basename(path),
+        path,
+        target: path,
+      };
+    }
+    if (kind === 'setting') {
+      const found = settingsList().find((page) => page.id === String(payload?.id || ''));
+      return found || null;
+    }
+    return null;
+  }
+
   /** 把当前视图发给页面。 */
   function sendView(view) {
     send('panel:view', view);
@@ -185,6 +241,9 @@ export function createPanelController({
    * 规则简单才不用猜——用户再点一次就再搜一次。
    */
   function show() {
+    // 搜索助手（PowerShell）：这时候把它拉起来，用户打字时它已经热了。
+    // 不在应用启动时拉——桌宠常年开着，白养一个 PowerShell 不值当。
+    systemSearch?.warm?.();
     if (!win || win.isDestroyed()) {
       createWindow();
       pendingView = makeSearchView();
@@ -349,6 +408,8 @@ export function createPanelController({
     ready = true;
     // 清单要先发：页面要靠它做本地模糊搜索。
     send('panel:plugins', searchList());
+    // 系统设置页也是一张一次性的清单：Win+S 能搜到它，桌宠也得能。
+    send('panel:settings', settingsList());
     sendView(pendingView || makeSearchView());
     pendingView = null;
     reveal();
@@ -379,6 +440,70 @@ export function createPanelController({
       console.warn('[desk-pet] 启动程序失败：', err?.message || err);
       return { ok: false, message: `打不开：${err?.message || err}` };
     }
+  });
+
+  // 查本机文件：走 Windows 搜索索引（Win+S 用的就是它）。
+  //
+  // 文件清单搬不进渲染层（成千上万个），只能现查现给。
+  ipcMain.handle('panel:files', async (event, query) => {
+    if (!win || event.sender !== win.webContents) return [];
+    try {
+      return await systemSearch.searchFiles(String(query || ''));
+    } catch (err) {
+      console.warn('[desk-pet] 查文件失败：', err?.message || err);
+      return [];
+    }
+  });
+
+  // 抽图标：给搜索结果显示程序与文件自己的图标。
+  ipcMain.handle('panel:icons', async (event, paths) => {
+    if (!win || event.sender !== win.webContents) return {};
+    try {
+      return await systemSearch.icons(Array.isArray(paths) ? paths : []);
+    } catch (err) {
+      console.warn('[desk-pet] 抽图标失败：', err?.message || err);
+      return {};
+    }
+  });
+
+  // 打开一个条目（文件、设置页、上网搜）。
+  ipcMain.handle('panel:openItem', async (event, payload) => {
+    if (!win || event.sender !== win.webContents) {
+      return { ok: false, message: '面板不在了' };
+    }
+    try {
+      const result = await systemSearch.open(payload || {});
+      // 结果给页面看一眼：用户得知道自己点的东西打开了没有。
+      send('panel:status', result?.message || '');
+      return result;
+    } catch (err) {
+      console.warn('[desk-pet] 打开失败：', err?.message || err);
+      return { ok: false, message: `打不开：${err?.message || err}` };
+    }
+  });
+
+  // 右键菜单：原生菜单（打开 / 打开所在目录）。
+  //
+  // 用原生菜单而不是在页面里画一个：面板窗口只有 420 宽、380 高，
+  // 页内菜单靠近底部会被窗口裁掉，原生菜单没有这个问题。
+  ipcMain.on('panel:contextMenu', (event, payload) => {
+    if (!win || event.sender !== win.webContents) return;
+    const item = resolveItem(payload);
+    if (!item) return;
+    const template = resultMenuTemplate(item, {
+      open: () => {
+        const action = item.kind === 'app' ? apps.launch(item.id) : systemSearch.open(item);
+        Promise.resolve(action)
+          .then((result) => send('panel:status', result?.message || ''))
+          .catch((err) => send('panel:status', `打不开：${err?.message || err}`));
+      },
+      reveal: () => {
+        Promise.resolve(systemSearch.reveal(item))
+          .then((result) => send('panel:status', result?.message || ''))
+          .catch((err) => send('panel:status', `定位不了：${err?.message || err}`));
+      },
+    });
+    Menu.buildFromTemplate(template).popup({ window: win });
   });
 
   // 索引重建完了：把新清单推给页面（页面本地搜索，不用重扫）。

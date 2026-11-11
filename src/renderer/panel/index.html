@@ -102,7 +102,19 @@
     }
     #results li.active { background: #f1ead8; }
     #results li:hover { background: var(--dp-surface); }
-    #results .icon { width: 20px; text-align: center; font-size: 15px; }
+    /* 结果行左边的图标位：抽得出真图标时放图片，抽不出就放符号。 */
+    #results .icon-box {
+      width: 20px;
+      height: 20px;
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #results .icon { font-size: 15px; line-height: 1; }
+    #results .icon[hidden] { display: none; }
+    #results .icon-img { width: 18px; height: 18px; object-fit: contain; }
+    #results .icon-img[hidden] { display: none; }
     #results .name { font-weight: 600; }
     #results .name mark { background: #f0dfa8; color: inherit; border-radius: 3px; padding: 0 1px; }
     #results .desc {
@@ -204,7 +216,7 @@
     <section id="search">
       <div id="searchbar">
         <span class="icon">✨</span>
-        <input id="query" type="text" placeholder="搜索插件、程序，或跟桌宠说点什么…" autocomplete="off" spellcheck="false" />
+        <input id="query" type="text" placeholder="搜索插件、程序、文件、设置，或跟桌宠说点什么…" autocomplete="off" spellcheck="false" />
       </div>
       <div id="results-wrap">
         <ul id="results"></ul>

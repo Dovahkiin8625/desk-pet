@@ -24,6 +24,8 @@ import { createPluginHost } from './plugins/host.js';
 import { createPluginWindowController } from './plugins/window.js';
 import { createSurfaceController } from './plugins/surface.js';
 import { createAppIndex } from './apps.js';
+import { createPsHost } from './psHost.js';
+import { createSystemSearch } from './systemSearch.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
 import { visibleRectOnScreen } from '../shared/petRect.js';
@@ -62,6 +64,9 @@ let pluginWindows = null;
 let pluginSurfaces = null;
 // 本机程序索引：搜索框里能搜到本机的程序，回车就启动。
 let apps = null;
+// 搜索助手（常驻的 PowerShell）与系统搜索（文件、图标、打开与定位）。
+let psHost = null;
+let systemSearch = null;
 // 最后一次施加到窗口上的透明度：用来避免重复调用原生接口。
 let appliedOpacity = null;
 // 设置窗口全局只有一个：重复打开时聚焦已有的那个，而不是开一堆。
@@ -1260,6 +1265,47 @@ app.whenReady().then(async () => {
   });
   apps.warm();
 
+  // 搜索助手：一个常驻的 PowerShell 进程。
+  //
+  // 它查 **Windows 搜索索引**（Win+S 用的就是它）并抽图标。
+  // 常驻是因为每敲一个字都要查一次：一次一开的代价是每次都付一遍
+  // PowerShell 的启动（~200ms），搜起来会一顿一顿的。
+  //
+  // **不在这里拉起来**：那是用户第一次打开面板时的事（见 panel.js 的 show）。
+  psHost = createPsHost();
+
+  // 系统搜索：文件、图标、打开与定位。
+  systemSearch = createSystemSearch({
+    psHost,
+    // 打开一个文件：shell.openPath 用系统默认程序打开它。
+    // 它的坑：**不抛异常**，失败时 resolve 一个**错误字符串**。
+    openPath: async (target) => {
+      try {
+        const error = await shell.openPath(target);
+        return error || null;
+      } catch (err) {
+        return err?.message || '打开失败';
+      }
+    },
+    // 打开一个地址：ms-settings: 那些系统设置页走这条路。
+    openExternal: async (target) => {
+      await shell.openExternal(target);
+    },
+    // 在资源管理器里定位到某个文件（右键菜单的「打开所在目录」）。
+    showItemInFolder: (target) => {
+      shell.showItemInFolder(target);
+    },
+    // 索引用不了时（服务没开、机器上没索引）改扫这些文件夹。
+    fallbackDirs: [
+      app.getPath('desktop'),
+      app.getPath('documents'),
+      app.getPath('downloads'),
+      app.getPath('pictures'),
+      app.getPath('music'),
+      app.getPath('videos'),
+    ],
+  });
+
   // 插件面板：双击桌宠弹出来的搜索框。**懒创建**——
   // 启动时它不在，E2E 的 app.firstWindow() 才认得出桌宠。
   panel = createPanelController({
@@ -1269,6 +1315,7 @@ app.whenReady().then(async () => {
     getDisplays: () => currentDisplays(),
     plugins,
     apps,
+    systemSearch,
     openSettings,
     // 界面路由：面板工作台里的插件页面，数据经它送进来。
     surfaces: pluginSurfaces,
@@ -1322,6 +1369,8 @@ app.on('before-quit', () => {
   // 不停的话，它们是靠窗口的 `closed` → `detach` 顺带死的——
   // 那是**碰巧**（面板还开着的时候就没有窗口会关）。
   pluginSurfaces?.stopAll?.();
+  // 搜索助手是个子进程：不收掉它，桌宠退了它还在后台跑着。
+  void psHost?.dispose?.();
   // 助理停掉：它管着 agent 的后台任务。
   //
   // **不取消任务的话，跑着的命令会留在用户机器上继续跑**——

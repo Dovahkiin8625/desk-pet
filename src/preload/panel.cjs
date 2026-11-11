@@ -100,6 +100,26 @@ contextBridge.exposeInMainWorld('panel', {
   onApps: (cb) => {
     ipcRenderer.on('panel:appsChanged', (_e, apps) => cb(apps));
   },
+  // 查本机文件：主进程去查 Windows 搜索索引（Win+S 用的就是它）。
+  //
+  // 文件可能有成千上万个，搬不进渲染层，只能现查现给。
+  files: (query) => ipcRenderer.invoke('panel:files', String(query ?? '')),
+  // 抽图标：给搜索结果显示程序与文件自己的图标。
+  //
+  // 传的是路径，回来的是「路径 → data URL」。
+  icons: (paths) => ipcRenderer.invoke('panel:icons', Array.isArray(paths) ? paths : []),
+  // 系统设置页清单：一次性下发，页面本地搜索。
+  onSettings: (cb) => {
+    ipcRenderer.on('panel:settings', (_e, list) => cb(list));
+  },
+  // 打开一个条目（文件、设置页、上网搜）：主进程去调系统的打开动作。
+  openItem: (item) => ipcRenderer.invoke('panel:openItem', item || {}),
+  // 右键菜单：主进程弹原生菜单（打开 / 打开所在目录）。
+  contextMenu: (item) => ipcRenderer.send('panel:contextMenu', item || {}),
+  // 主进程那边做完一件事的结果（显示在搜索视图底部那行）。
+  onStatus: (cb) => {
+    ipcRenderer.on('panel:status', (_e, text) => cb(text));
+  },
   // 和桌宠聊天：文本直接发给主进程。
   //
   // 不走插件动作通道——那条路带「请求序号」，会把后发的插件点击

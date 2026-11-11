@@ -111,6 +111,51 @@ export function fuzzyMatch(query, text, { subsequence = true } = {}) {
 }
 
 /**
+ * 把查询拆成词。
+ *
+ * 空白分开（中文没有空格，整句就是一个词）。
+ * 多个词是**并且**的关系：打「记事本 calc」要两个都命中才算数——
+ * 与 Win+S 的多词行为一致。
+ */
+export function tokenize(query) {
+  return String(query ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * 一组词在文本里的匹配：**所有词都要命中**。
+ *
+ * 分数取**最弱的那个词**：有一个词匹配得很勉强，整条结果就勉强。
+ *
+ * @param {string[]} tokens 词
+ * @param {string[]} texts 候选文本（一个词可以落在不同的文本里）
+ * @param {object} [options]
+ * @param {boolean} [options.strict] 只要整段包含（不认顺序吻合的）
+ * @returns {{score: number, positions: number[]}|null} 不匹配时返回 null
+ */
+function matchTokensIn(tokens, texts, { strict = false } = {}) {
+  const list = (Array.isArray(texts) ? texts : [texts]).map((t) => String(t ?? ''));
+  let worst = null;
+  const positions = [];
+  for (const token of tokens) {
+    let best = null;
+    for (const text of list) {
+      if (!text) continue;
+      const m = fuzzyMatch(token, text, { subsequence: !strict });
+      if (!m) continue;
+      if (!best || m.score > best.score) best = m;
+    }
+    if (!best) return null;
+    if (!worst || best.score < worst.score) worst = best;
+    positions.push(...best.positions);
+  }
+  if (!worst) return null;
+  return { score: worst.score, positions: [...new Set(positions)].sort((a, b) => a - b) };
+}
+
+/**
  * 插件的搜索字段与它们的权重。
  *
  * 名称最重（用户多半直接打名字），关键词次之（英文/拼音），
@@ -132,15 +177,15 @@ const FIELDS = [
  */
 export function searchPlugins(query, plugins) {
   const list = Array.isArray(plugins) ? plugins : [];
-  const q = String(query ?? '').trim();
+  const tokens = tokenize(query);
   // 空查询：全部返回，顺序就是声明顺序（第一个插件排在最上面）。
-  if (!q) {
+  if (!tokens.length) {
     return list.map((plugin) => ({ plugin, score: 0, field: '', positions: [] }));
   }
 
   const out = [];
   for (const plugin of list) {
-    const best = bestFieldMatch(q, plugin);
+    const best = bestFieldMatch(tokens, plugin);
     if (!best) continue;
     out.push({ plugin, score: best.score, field: best.field, positions: best.positions });
   }
@@ -150,24 +195,22 @@ export function searchPlugins(query, plugins) {
 }
 
 /** 在一个插件的所有字段里找分数最高的那次命中。 */
-function bestFieldMatch(query, plugin) {
+function bestFieldMatch(tokens, plugin) {
   let best = null;
   for (const field of FIELDS) {
     const value = plugin?.[field.key];
     if (field.many) {
       if (!Array.isArray(value)) continue;
-      for (const item of value) {
-        const m = fuzzyMatch(query, item);
-        if (!m) continue;
-        const score = m.score * field.weight;
-        if (!best || score > best.score) {
-          best = { score, field: field.key, positions: m.positions };
-        }
+      const m = matchTokensIn(tokens, value);
+      if (!m) continue;
+      const score = m.score * field.weight;
+      if (!best || score > best.score) {
+        best = { score, field: field.key, positions: m.positions };
       }
       continue;
     }
     if (typeof value !== 'string' || value === '') continue;
-    const m = fuzzyMatch(query, value);
+    const m = matchTokensIn(tokens, [value]);
     if (!m) continue;
     const score = m.score * field.weight;
     if (!best || score > best.score) {
@@ -178,9 +221,9 @@ function bestFieldMatch(query, plugin) {
 }
 
 /**
- * 在一批本机程序里做模糊搜索。
+ * 在一批**系统条目**里做模糊搜索（程序、文件、设置页）。
  *
- * 与插件的搜索分开：程序只有**名字**与**路径**，没有关键词与描述。
+ * 条目只有**名字**与**路径/地址**，没有关键词与描述。
  * 命中名字的权重与插件的名字一样（1），两者放在同一个列表里排序时才公平；
  * 路径只作兜底，而且**只认整段包含**——路径很长，
  * 子序列匹配几乎什么都算命中，那不是用户要找的东西。
@@ -190,38 +233,37 @@ function bestFieldMatch(query, plugin) {
  * 顺序吻合很松：打「note」能匹配上「nvcontainer」「conda_auto_activate」——
  * 那种结果会把真正想找的记事本埋掉。有整段包含的结果时就不看它们了。
  *
- * @param {string} query 用户输入（空串表示「不搜程序」）
- * @param {Array<{id: string, name: string, target?: string}>} apps
- * @returns {Array<{app: object, score: number, field: string, positions: number[]}>}
+ * @param {string} query 用户输入（空串表示「不搜」）
+ * @param {Array<{id: string, name: string, target?: string}>} items
+ * @returns {Array<{item: object, score: number, field: string, positions: number[]}>}
  */
-export function searchApps(query, apps) {
-  const list = Array.isArray(apps) ? apps : [];
-  const q = String(query ?? '').trim();
-  // 空查询不列程序：打开面板时还是插件清单（几百个程序会把插件埋掉）。
-  if (!q) return [];
+export function searchItems(query, items) {
+  const list = Array.isArray(items) ? items : [];
+  const tokens = tokenize(query);
+  // 空查询不列条目：打开面板时还是插件清单（几百个程序会把插件埋掉）。
+  if (!tokens.length) return [];
 
-  const qLower = q.toLowerCase();
   // 整段包含的结果（名字或路径里连着几个字）。
   const contains = [];
   // 顺序吻合的结果（只在没有整段包含时才用）。
   const fuzzy = [];
 
-  for (const app of list) {
-    const name = String(app?.name || '');
-    const target = String(app?.target || '');
-    if (name.toLowerCase().includes(qLower)) {
-      const m = fuzzyMatch(q, name);
-      contains.push({ app, score: m.score, field: 'name', positions: m.positions });
+  for (const item of list) {
+    const name = String(item?.name || '');
+    const target = String(item?.target || '');
+    const nameHit = matchTokensIn(tokens, [name], { strict: true });
+    if (nameHit) {
+      contains.push({ item, score: nameHit.score, field: 'name', positions: nameHit.positions });
       continue;
     }
-    if (target.toLowerCase().includes(qLower)) {
-      const m = fuzzyMatch(q, target, { subsequence: false });
+    const targetHit = matchTokensIn(tokens, [target], { strict: true });
+    if (targetHit) {
       // 路径命中要排在名字命中**后面**：打折就是干这个的。
-      contains.push({ app, score: m.score * 0.8, field: 'target', positions: [] });
+      contains.push({ item, score: targetHit.score * 0.8, field: 'target', positions: [] });
       continue;
     }
-    const m = fuzzyMatch(q, name);
-    if (m) fuzzy.push({ app, score: m.score, field: 'name', positions: m.positions });
+    const looseHit = matchTokensIn(tokens, [name]);
+    if (looseHit) fuzzy.push({ item, score: looseHit.score, field: 'name', positions: looseHit.positions });
   }
 
   const out = contains.length ? contains : fuzzy;

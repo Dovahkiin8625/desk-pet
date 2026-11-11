@@ -1,21 +1,36 @@
-import { searchPlugins, searchApps } from '../../shared/fuzzy.js';
+import { searchPlugins, searchItems } from '../../shared/fuzzy.js';
 import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
 import { renderPage } from '../ui/blocks.js';
 
 /**
  * 插件面板的页面。
  *
- * 这里**没有任何业务逻辑**：插件清单与本机程序清单是主进程下发的，
+ * 这里**没有任何业务逻辑**：插件清单、本机程序清单与系统设置页是主进程下发的，
  * 模糊搜索在本地做（每敲一个字不必过一次 IPC——那是这个交互手感的关键），
  * 插件界面是主进程给的「页面描述」，这里只负责照着画。
  *
  * 两种视图：
  * - 搜索视图：输入框 + 模糊匹配出来的插件与程序（↑↓ 选，Enter 打开/启动，Esc 关闭）；
  * - 插件视图：某个插件的界面（Esc 回搜索视图）。
+ *
+ * 唯一的例外是**文件**：本机的文件可能成千上万个，
+ * 清单搬不进渲染层，只能让主进程去查 Windows 搜索索引（Win+S 用的就是它），
+ * 查回来的结果再在本地打分排序。
  */
 
-/** 程序条目的图标：程序没有图标资源，用一个固定的符号代表。 */
+/** 真实图标还没抽出来时的替身符号。 */
 const APP_ICON = '🖥';
+const FILE_ICON = '📄';
+const SETTINGS_ICON = '⚙️';
+const WEB_ICON = '🌐';
+
+/**
+ * 「内容里命中」的文件的分数。
+ *
+ * 文件名里有这个词是最好的结果（~1000），内容里有这个词次之，
+ * 顺序吻合的名字最差（几十）。所以这个数夹在中间。
+ */
+const CONTENT_SCORE = 600;
 
 const searchEl = document.getElementById('search');
 const panelEl = document.getElementById('panel');
@@ -38,17 +53,27 @@ const pluginFrameEl = document.getElementById('plugin-frame');
 let plugins = [];
 /** 本机程序清单（主进程扫好一次性下发）。 */
 let apps = [];
+/** 系统设置页清单（主进程一次性下发）。 */
+let settings = [];
+/** 命中的本机文件（主进程查 Windows 搜索索引得来的）。 */
+let files = [];
 /**
  * 当前搜索出来的结果。
  *
  * 每项要么是插件（`kind: 'plugin'`），要么是本机程序（`kind: 'app'`），
- * 要么是常驻在末尾的「和桌宠聊天」（`kind: 'chat'`）——后者不是插件，是个合成项。
+ * 要么是系统设置页（`kind: 'setting'`），要么是本机文件（`kind: 'file'`），
+ * 要么是常驻在末尾的「和桌宠聊天」（`kind: 'chat'`）与「上网搜」（`kind: 'web'`）
+ * ——后两者不是真的东西，是合成项。
  */
 let results = [];
 /** 选中的那条（搜索视图里高亮的那一行）。 */
 let activeIndex = 0;
 /** 当前打开的插件（空串 = 搜索视图）。 */
 let currentPluginId = '';
+/** 路径 → 图标（data URL）。抽过的图标留在这儿，免得每次重画都去要一遍。 */
+const iconCache = new Map();
+/** 已经问过主进程的路径：抽不出图标的别反复问。 */
+const iconAsked = new Set();
 
 // 诊断面：自动化要能断言「搜索框里打了什么、结果里有哪些插件与程序」。
 window.__panel = {
@@ -56,7 +81,12 @@ window.__panel = {
   resultIds: [],
   appIds: [],
   appCount: 0,
+  fileIds: [],
+  settingIds: [],
   hasChat: false,
+  hasWeb: false,
+  /** 最近一次右键的那条结果（自动化要能断言右键交出去的是什么）。 */
+  contextTarget: null,
   view: PANEL_VIEW.SEARCH,
   pluginId: '',
 };
@@ -215,15 +245,87 @@ function reportHeight() {
   });
 }
 
+/**
+ * 把一条命中变成结果行。
+ *
+ * 四种来源的条目形状不一样（插件有图标符号，程序与文件有路径，
+ * 设置页有地址），这里统一成同一种行，后面的画法就只有一个。
+ */
+function toRow(kind, hit) {
+  const item = hit.item || {};
+  const row = {
+    kind,
+    id: String(item.id || ''),
+    name: String(item.name || ''),
+    desc: String(item.hint || ''),
+    score: hit.score,
+    field: hit.field,
+    positions: hit.positions || [],
+  };
+  if (kind === 'plugin') {
+    const plugin = hit.plugin || {};
+    row.id = String(plugin.id || '');
+    row.name = String(plugin.name || '');
+    row.desc = String(plugin.description || '');
+    row.icon = plugin.icon || '•';
+    return row;
+  }
+  if (kind === 'app') {
+    row.path = String(item.target || '');
+    row.icon = APP_ICON;
+    return row;
+  }
+  if (kind === 'file') {
+    row.path = String(item.target || '');
+    row.icon = FILE_ICON;
+    return row;
+  }
+  if (kind === 'setting') {
+    row.target = String(item.target || '');
+    row.icon = SETTINGS_ICON;
+    return row;
+  }
+  return row;
+}
+
+/**
+ * 文件的命中。
+ *
+ * 分两种：**文件名**里有这个词（正常打分），与文件**内容**里有这个词
+ * （索引告诉我们的，名字里没有——分数低一档，排在名字命中的后面）。
+ */
+function fileHits(query, list) {
+  const byName = searchItems(
+    query,
+    list.filter((file) => file.match !== 'content')
+  ).map((hit) => toRow('file', hit));
+  const byContent = list
+    .filter((file) => file.match === 'content')
+    .map((file, index) => {
+      const row = toRow('file', {
+        item: file,
+        score: CONTENT_SCORE - index,
+        field: 'name',
+        positions: [],
+      });
+      row.desc = `内容匹配 · ${row.desc}`;
+      return row;
+    });
+  return [...byName, ...byContent];
+}
+
 /** 重新搜索并重画结果列表。 */
 function renderResults() {
   const query = queryEl.value;
-  // 程序与插件放在**同一个**列表里，按分数从高到低排。
-  // 两边的分数是同一个尺子（名字命中权重都是 1），混排才公平：
+  const trimmed = query.trim();
+  // 程序、设置页与插件放在**同一个**列表里，按分数从高到低排。
+  // 几边的分数是同一个尺子（名字命中权重都是 1），混排才公平：
   // 用户打「chrome」，出来的就该是 Chrome 而不是某个叫「图片」的插件。
   const hits = [
-    ...searchPlugins(query, plugins).map((hit) => ({ kind: 'plugin', ...hit })),
-    ...searchApps(query, apps).map((hit) => ({ kind: 'app', ...hit })),
+    ...searchPlugins(query, plugins).map((hit) => toRow('plugin', hit)),
+    ...searchItems(query, apps).map((hit) => toRow('app', hit)),
+    ...searchItems(query, settings).map((hit) => toRow('setting', hit)),
+    ...fileHits(query, files),
   ];
   // 稳定排序：分数相同的不换位（sort 在 V8 里是稳定的）。
   //
@@ -233,50 +335,86 @@ function renderResults() {
   results = hits.sort((a, b) => b.score - a.score);
   // 聊天入口**常驻**在列表末尾：搜不到插件时它就是唯一的一项，
   // 回车自然落到它身上；搜到了插件时可以用 ↓ 选中它，或者 Ctrl+Enter 直接发。
-  if (query.trim()) {
+  if (trimmed) {
     results.push({
       kind: 'chat',
+      id: 'chat',
+      name: '和桌宠聊天',
+      desc: '直接对桌宠说话',
+      icon: '💬',
       score: 0,
-      plugin: {
-        id: 'chat',
-        name: '和桌宠聊天',
-        icon: '💬',
-        description: '直接对桌宠说话',
-      },
+      field: '',
+      positions: [],
+    });
+    // 上网搜：Win+S 也会给网页结果，这里给一个兜底的入口。
+    results.push({
+      kind: 'web',
+      id: 'web',
+      name: `上网搜「${trimmed}」`,
+      desc: '用浏览器搜',
+      icon: WEB_ICON,
+      query: trimmed,
+      score: 0,
+      field: '',
+      positions: [],
     });
   }
   if (activeIndex >= results.length) activeIndex = Math.max(0, results.length - 1);
   if (activeIndex < 0) activeIndex = 0;
 
   resultsEl.textContent = '';
-  results.forEach((hit, index) => {
+  results.forEach((row, index) => {
     const li = document.createElement('li');
     if (index === activeIndex) li.classList.add('active');
-    const isApp = hit.kind === 'app';
-    if (!isApp) li.dataset.pluginId = hit.plugin.id;
-    else li.dataset.appId = hit.app.id;
+    if (row.kind === 'plugin') li.dataset.pluginId = row.id;
+    else if (row.kind === 'app') li.dataset.appId = row.id;
+    else li.dataset.itemId = row.id;
 
-    const icon = document.createElement('span');
-    icon.className = 'icon';
-    icon.textContent = isApp ? APP_ICON : hit.plugin.icon || '•';
+    const iconBox = document.createElement('span');
+    iconBox.className = 'icon-box';
+    const fallback = document.createElement('span');
+    fallback.className = 'icon';
+    fallback.textContent = row.icon || '•';
+    iconBox.append(fallback);
+    // 有路径的条目（程序、文件）能抽出真正的图标：先摆占位，图标到了再换。
+    if (row.path) {
+      const img = document.createElement('img');
+      img.className = 'icon-img';
+      img.dataset.path = row.path;
+      img.alt = '';
+      img.hidden = true;
+      const cached = iconCache.get(row.path);
+      if (cached) {
+        img.src = cached;
+        img.hidden = false;
+        fallback.hidden = true;
+      }
+      iconBox.append(img);
+    }
 
     const name = document.createElement('span');
     name.className = 'name';
-    if (hit.kind === 'chat') name.textContent = hit.plugin.name;
-    else if (isApp) {
-      // 命中的是路径时不标：那些位置号指的是路径，标在名字上是错的。
-      appendHighlighted(name, hit.app.name || '', hit.positions, 'name');
-    } else appendHighlighted(name, hit.plugin.name || '', hit.positions, hit.field);
+    appendHighlighted(name, row.name, row.positions, row.field);
 
     const desc = document.createElement('span');
     desc.className = 'desc';
-    desc.textContent = isApp ? hit.app.hint || '' : hit.plugin.description || '';
+    desc.textContent = row.desc || '';
 
-    li.append(icon, name, desc);
-    li.addEventListener('click', () => {
-      if (hit.kind === 'chat') sendChat();
-      else if (isApp) launchApp(hit.app.id);
-      else openPlugin(hit.plugin.id);
+    li.append(iconBox, name, desc);
+    li.addEventListener('click', () => openResult(row));
+    // 右键：打开 / 打开所在目录（原生菜单，由主进程弹）。
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (row.kind === 'plugin' || row.kind === 'chat') return;
+      const target = {
+        kind: row.kind,
+        id: row.id,
+        name: row.name,
+        path: row.path || '',
+        target: row.target || '',
+      };
+      window.__panel.contextTarget = target;
+      window.panel?.contextMenu?.(target);
     });
     resultsEl.append(li);
   });
@@ -284,11 +422,56 @@ function renderResults() {
   emptyEl.hidden = results.length > 0;
   window.__panel.query = queryEl.value;
   // resultIds 只放**插件**的 id（聊天项与程序项都不是插件）。
-  window.__panel.resultIds = results.filter((h) => h.kind === 'plugin').map((h) => h.plugin.id);
+  window.__panel.resultIds = results.filter((h) => h.kind === 'plugin').map((h) => h.id);
   // appIds 放命中的**程序** id（自动化要能断言搜到了哪些程序）。
-  window.__panel.appIds = results.filter((h) => h.kind === 'app').map((h) => h.app.id);
+  window.__panel.appIds = results.filter((h) => h.kind === 'app').map((h) => h.id);
+  // fileIds 与 settingIds 同理：文件与设置页也进了搜索范围。
+  window.__panel.fileIds = results.filter((h) => h.kind === 'file').map((h) => h.id);
+  window.__panel.settingIds = results.filter((h) => h.kind === 'setting').map((h) => h.id);
   window.__panel.hasChat = results.some((h) => h.kind === 'chat');
+  window.__panel.hasWeb = results.some((h) => h.kind === 'web');
   reportHeight();
+  void refreshIcons();
+}
+
+/**
+ * 给屏幕上的结果补图标。
+ *
+ * 一次只问**看得见的那几行**的图标：整份清单的图标全抽一遍要好几秒，
+ * 而用户只看得到最上面几行。抽过的图标缓存在主进程与这里，不会重复抽。
+ */
+async function refreshIcons() {
+  const wanted = [];
+  for (const row of results.slice(0, 16)) {
+    if (!row.path || iconCache.has(row.path) || iconAsked.has(row.path)) continue;
+    if (!wanted.includes(row.path)) wanted.push(row.path);
+  }
+  if (!wanted.length) return;
+  for (const path of wanted) iconAsked.add(path);
+  let map = null;
+  try {
+    map = await window.panel?.icons?.(wanted);
+  } catch (err) {
+    console.warn('[desk-pet] 取图标失败：', err?.message || err);
+    return;
+  }
+  if (!map) return;
+  let changed = false;
+  for (const [path, url] of Object.entries(map)) {
+    if (!url || iconCache.get(path) === url) continue;
+    iconCache.set(path, url);
+    changed = true;
+  }
+  if (!changed) return;
+  // 图标到了：把占位换成真图标（不用重画整个列表，免得选中项跳掉）。
+  for (const img of resultsEl.querySelectorAll('img.icon-img')) {
+    const url = iconCache.get(img.dataset.path || '');
+    if (!url || img.getAttribute('src') === url) continue;
+    img.src = url;
+    img.hidden = false;
+    const fallback = img.parentElement?.querySelector('span.icon');
+    if (fallback) fallback.hidden = true;
+  }
 }
 
 /** 把输入框里的话发给桌宠。 */
@@ -300,6 +483,29 @@ function sendChat() {
   activeIndex = 0;
   // 框里的字清掉了，列表也要跟着重画（诊断面上更不能留着旧查询）。
   renderResults();
+}
+
+/**
+ * 打开一条结果。
+ *
+ * 插件、程序各有各的通道；文件、设置页、上网搜都交给主进程
+ * （它们要调系统的打开动作，渲染层做不了）。
+ */
+function openResult(row) {
+  if (!row) return;
+  if (row.kind === 'chat') {
+    sendChat();
+    return;
+  }
+  if (row.kind === 'plugin') {
+    openPlugin(row.id);
+    return;
+  }
+  if (row.kind === 'app') {
+    launchApp(row.id);
+    return;
+  }
+  void window.panel?.openItem?.(row);
 }
 
 /** 打开一个插件。 */
@@ -454,9 +660,7 @@ document.addEventListener('keydown', (e) => {
     }
     const hit = results[activeIndex];
     if (!hit) return;
-    if (hit.kind === 'chat') sendChat();
-    else if (hit.kind === 'app') launchApp(hit.app.id);
-    else openPlugin(hit.plugin.id);
+    openResult(hit);
   }
 });
 
@@ -464,11 +668,48 @@ document.addEventListener('keydown', (e) => {
 // 与主进程之间
 // ---------------------------------------------------------------------------
 
+/**
+ * 去主进程查文件。
+ *
+ * 文件清单太大，搬不进渲染层，只能让主进程去查 Windows 搜索索引。
+ * **防抖**：每敲一个字都查一次索引是白费力气——
+ * 用户打「记事本」时，中间的「记」「记事」都没意义。
+ */
+let fileSearchTimer = null;
+/** 查询序号：晚回来的旧结果要扔掉（不然结果会跳）。 */
+let fileSearchSeq = 0;
+
+function scheduleFileSearch(query) {
+  if (fileSearchTimer) clearTimeout(fileSearchTimer);
+  const q = String(query || '').trim();
+  if (!q) {
+    files = [];
+    return;
+  }
+  fileSearchTimer = setTimeout(async () => {
+    const seq = ++fileSearchSeq;
+    let list = null;
+    try {
+      list = await window.panel?.files?.(q);
+    } catch (err) {
+      console.warn('[desk-pet] 查文件失败：', err?.message || err);
+      return;
+    }
+    // 期间用户又改了查询：这一份已经过时了。
+    if (seq !== fileSearchSeq) return;
+    files = Array.isArray(list) ? list : [];
+    renderResults();
+  }, 120);
+}
+
 queryEl.addEventListener('input', () => {
   activeIndex = 0;
   // 上一次的启动结果已经过时了：换了个查询，那行字就该清掉。
   setSearchStatus('');
+  // 旧的文件结果也是过时的：先清掉，等新的回来。
+  files = [];
   renderResults();
+  scheduleFileSearch(queryEl.value);
 });
 
 backEl.addEventListener('click', () => window.panel?.back?.());
@@ -496,6 +737,19 @@ function applyApps(list) {
 
 // 索引重建完了：主进程把新清单推过来。
 window.panel?.onApps?.(applyApps);
+
+/** 收到系统设置页清单：换掉旧的，重画结果。 */
+function applySettings(list) {
+  settings = Array.isArray(list) ? list : [];
+  renderResults();
+}
+
+// 设置页清单是一次性的：主进程启动时下发一份。
+window.panel?.onSettings?.(applySettings);
+
+// 主进程那边做的事（右键菜单里的「打开」「打开所在目录」）的结果，
+// 显示在搜索视图底部那行——用户得看得见自己点了什么。
+window.panel?.onStatus?.((text) => setSearchStatus(String(text || '')));
 
 // 页面刚加载时清单可能还没建好：主动要一份（主进程会等索引建完再回）。
 Promise.resolve(window.panel?.apps?.())
