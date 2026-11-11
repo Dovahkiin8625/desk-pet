@@ -515,3 +515,120 @@ test('模型这一轮报错：没有正文，也就不交出去', async () => {
   );
   assert.equal(rounds.length, 0);
 });
+
+test('answerFromTool：工具带回的答复就是最终答复，不再问模型第二遍', async () => {
+  const calls = [];
+  const loop = createAgentLoop({
+    answerFromTool: true,
+    callModel: async ({ messages }) => {
+      calls.push(messages);
+      if (calls.length === 1) {
+        return {
+          text: '',
+          toolCalls: [{ id: 'c1', function: { name: 'do.it', arguments: '{}' } }],
+        };
+      }
+      throw new Error('不该有第二次模型调用');
+    },
+    resolveTool: () => ({
+      name: 'do.it',
+      risk: 'read',
+      run: async () => ({ text: '做完了', data: { answer: '我去办' } }),
+    }),
+  });
+  const run = await loop.run({ system: 's', messages: [{ role: 'user', content: '去办' }] });
+  assert.equal(run.text, '我去办');
+  assert.equal(run.outcome, AGENT_OUTCOME.DONE);
+  assert.equal(calls.length, 1, '工具给了答复就不该再问模型');
+});
+
+test('answerFromTool：默认关闭时行为不变（工具的 data.answer 不算数）', async () => {
+  // 同样的工具，但循环没开 answerFromTool：
+  // 模型得自己再答一次，工具带的 answer 不能顶替它。
+  const calls = [];
+  const loop = createAgentLoop({
+    callModel: async ({ messages }) => {
+      calls.push(messages);
+      if (calls.length === 1) {
+        return {
+          text: '',
+          toolCalls: [{ id: 'c1', function: { name: 'do.it', arguments: '{}' } }],
+        };
+      }
+      return { text: '我自己说的话', toolCalls: [] };
+    },
+    resolveTool: () => ({
+      name: 'do.it',
+      risk: 'read',
+      run: async () => ({ text: '做完了', data: { answer: '我去办' } }),
+    }),
+  });
+  const run = await loop.run({ system: 's', messages: [{ role: 'user', content: '去办' }] });
+  assert.equal(run.text, '我自己说的话');
+  assert.equal(run.outcome, AGENT_OUTCOME.DONE);
+  assert.equal(calls.length, 2, '默认还是要把工具结果喂回模型再问一次');
+});
+
+test('answerFromTool：工具失败时不带答复，循环照常走下一轮', async () => {
+  const calls = [];
+  const loop = createAgentLoop({
+    answerFromTool: true,
+    callModel: async ({ messages }) => {
+      calls.push(messages);
+      if (calls.length === 1) {
+        return {
+          text: '',
+          toolCalls: [{ id: 'c1', function: { name: 'do.it', arguments: '{}' } }],
+        };
+      }
+      return { text: '出了点问题', toolCalls: [] };
+    },
+    resolveTool: () => ({
+      name: 'do.it',
+      risk: 'read',
+      run: async () => {
+        throw new Error('工具炸了');
+      },
+    }),
+  });
+  const run = await loop.run({ system: 's', messages: [{ role: 'user', content: '去办' }] });
+  assert.equal(run.text, '出了点问题');
+  assert.equal(run.outcome, AGENT_OUTCOME.DONE);
+  assert.equal(calls.length, 2, '工具失败就该让模型再想一次');
+});
+
+test('answerFromTool：一个回合里多个工具给了答复：都收，最多取前两条', async () => {
+  // 收集答复不能打断这一轮剩下的调用——
+  // 少一条 tool 消息，接口就会因为「tool_calls 没有对应的结果」报错。
+  const answers = ['甲', '乙', '丙'];
+  let i = 0;
+  const loop = createAgentLoop({
+    answerFromTool: true,
+    callModel: async () => {
+      if (i >= answers.length) throw new Error('不该有第二次模型调用');
+      return {
+        text: '',
+        toolCalls: answers.map((_, k) => ({
+          id: `c${k + 1}`,
+          function: { name: 'do.it', arguments: '{}' },
+        })),
+      };
+    },
+    resolveTool: () => ({
+      name: 'do.it',
+      risk: 'read',
+      run: async () => {
+        const answer = answers[i];
+        i += 1;
+        return { text: '做完了', data: { answer } };
+      },
+    }),
+  });
+  const run = await loop.run({
+    system: 's',
+    messages: [{ role: 'user', content: '去办' }],
+  });
+  assert.equal(run.toolCalls, 3, '这一轮剩下的调用不能被跳过');
+  assert.equal(run.text, '甲 乙');
+  assert.equal(run.outcome, AGENT_OUTCOME.DONE);
+});

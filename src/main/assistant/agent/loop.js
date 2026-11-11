@@ -77,6 +77,7 @@ const SKIPPED_TEXT = '（已跳过：这个工具连着出错，任务已经停�
  *   ({index, text, toolCalls}) —— index 从 1 开始；text 是去掉 `<<META>>` 后的正文
  *   （只调工具的轮次是空串）；toolCalls 是该轮请求的工具名数组
  * @param {boolean} [options.summarize] 步数用尽时要不要再让模型总结一次
+ * @param {boolean} [options.answerFromTool] 工具自己带回的答复算不算这一轮的最终答复
  * @param {object} [options.logger] 日志器 {warn?, error?}——工具出错时留一行，
  *   免得用户只看到「agent 停下了」却不知道卡在哪一步
  */
@@ -102,6 +103,14 @@ export function createAgentLoop({
    * 它要的是秒级回应，多一次模型往返就慢一倍（规格 §4.2）。
    */
   summarize = true,
+  /**
+   * 工具自己带回的答复（`data.answer`）算不算这一轮的最终答复。
+   *
+   * 交互层要的是秒级回应：派一件事出去，一次模型往返就该把话说给用户，
+   * 工具带回来的那句直接交出去，不必再问模型第二遍。
+   * 执行层不用——它要的是完整的结果，工具结果得喂回模型继续干活。
+   */
+  answerFromTool = false,
   /**
    * 取追加的指令（steer）。
    *
@@ -147,6 +156,9 @@ export function createAgentLoop({
         break;
       }
       steps += 1;
+
+      // 这一轮里工具带回的答复（每轮重新收集）。
+      const answers = [];
 
       // 追加的要求：**在步骤边界注入**（规格 §5.2）。
       // 放在调模型之前——正在执行的那一步已经跑完了，
@@ -245,6 +257,12 @@ export function createAgentLoop({
 
         const one = await runOne(c, { signal, index: toolCallCount, taskId });
 
+        // 工具自己带回了一句给用户的话：这句就是这一轮的最终答复。
+        if (answerFromTool && one.ok) {
+          const answer = String(one.data?.answer || '').trim();
+          if (answer) answers.push(answer);
+        }
+
         // 错误计数：**同一个**错误连着出三次就停——
         // 换个错重试是模型在换路，那该继续；同一个错反复就是死循环。
         if (one.ok) {
@@ -287,6 +305,12 @@ export function createAgentLoop({
           outcome = AGENT_OUTCOME.REPEATED_ERRORS;
           stopped = true;
         }
+      }
+      // 工具给了答复：这一轮就是最终答复，不再问模型。
+      if (answerFromTool && answers.length) {
+        finalText = answers.slice(0, 2).join(' ');
+        outcome = AGENT_OUTCOME.DONE;
+        break;
       }
       if (outcome === AGENT_OUTCOME.REPEATED_ERRORS) break;
 
