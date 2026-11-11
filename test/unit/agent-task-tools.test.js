@@ -5,7 +5,7 @@ import { CHAT_KIND } from '../../src/shared/assistant.js';
 import { createTaskTools } from '../../src/main/assistant/layer/taskTools.js';
 
 /**
- * 五个任务管理工具（规格 §4.1、§6.2）。
+ * 四个任务管理工具（规格 §4.1、§6.2）。
  *
  * 派单要带三样东西：**用户原话**、**交互层的理解**、**相关历史**——
  * 只给一样，执行层要么不知道约束，要么细节全丢。
@@ -63,6 +63,52 @@ function makeTools({ tasks = fakeTasks(), dispatchEnabled = true, records = [], 
   return { tools, byName, tasks, records };
 }
 
+test('工具表：只剩四个动作类工具，没有查列表与查状态', () => {
+  const names = createTaskTools({ tasks: fakeTasks() }).map((t) => t.name);
+  assert.deepEqual(names, ['task.submit', 'task.cancel', 'task.steer', 'task.delete']);
+});
+
+test('四个工具都带 reply 参数，且是可选的', () => {
+  const tools = createTaskTools({ tasks: fakeTasks() });
+  for (const t of tools) {
+    assert.ok(t.parameters.properties.reply, `${t.name} 少了 reply 参数`);
+    assert.equal(t.parameters.properties.reply.type, 'string');
+    assert.ok(!t.parameters.required.includes('reply'), `${t.name} 的 reply 不该是必填`);
+  }
+});
+
+test('派单：reply 原样带回 data.answer', async () => {
+  const tools = createTaskTools({ tasks: fakeTasks(), turn: { userText: '查天气' } });
+  const submit = tools.find((t) => t.name === 'task.submit');
+  const out = await submit.run({ title: '查天气', brief: '查一下', reply: ' 我这就去查 ' });
+  assert.equal(out.data.answer, '我这就去查');
+});
+
+test('派单：模型没写 reply 时 answer 是空串（不是 undefined）', async () => {
+  const tools = createTaskTools({ tasks: fakeTasks(), turn: { userText: '查天气' } });
+  const submit = tools.find((t) => t.name === 'task.submit');
+  const out = await submit.run({ title: '查天气', brief: '查一下' });
+  assert.equal(out.data.answer, '');
+});
+
+test('工具描述里不许出现「后台任务」「派单」这类词', () => {
+  const tools = createTaskTools({ tasks: fakeTasks() });
+  for (const t of tools) {
+    assert.ok(!/后台任务|派单|派发/.test(t.description), `${t.name} 的描述漏了内部话术：${t.description}`);
+    assert.ok(!/后台任务|派单|派发/.test(t.parameters.properties.reply?.description || ''));
+  }
+});
+
+test('停掉 / 收起来 / 补要求：reply 也带回 data.answer', async () => {
+  const { byName } = makeTools();
+  const cancel = await byName.get('task.cancel').run({ taskId: 't-9', reply: '好，先放着' });
+  const steer = await byName.get('task.steer').run({ taskId: 't-9', note: '顺便看看 D 盘', reply: '再加一条' });
+  const del = await byName.get('task.delete').run({ taskId: 't-9' });
+  assert.equal(cancel.data.answer, '好，先放着');
+  assert.equal(steer.data.answer, '再加一条');
+  assert.equal(del.data.answer, '', '没写 reply 时也是空串');
+});
+
 test('派单：把用户原话与简报一起交给后台任务', async () => {
   const { byName, tasks } = makeTools();
   const out = await byName.get('task.submit').run({
@@ -87,10 +133,28 @@ test('派单：记一条 dispatch 记录，正文里有任务号', async () => {
   assert.equal(records[0].meta.brief, '看看', '交底要进派单记录：页面要原样显示它');
 });
 
+test('记录里的动作是宠物的说法，不许有内部话术', async () => {
+  const { byName, records } = makeTools();
+  await byName.get('task.submit').run({ title: '查视频', brief: '看看' });
+  await byName.get('task.cancel').run({ taskId: 't-9' });
+  await byName.get('task.delete').run({ taskId: 't-9' });
+  await byName.get('task.steer').run({ taskId: 't-9', note: '顺便看看 D 盘' });
+  const actions = records.map((r) => r.meta.action);
+  assert.deepEqual(actions, [
+    '开始做：查视频',
+    '停掉了：查视频',
+    '收起来了：查视频',
+    '给那件事补了一句要求',
+  ]);
+  for (const rec of records) {
+    assert.ok(!/后台任务|派单|派发|派了个任务/.test(rec.meta.action), `内部话术漏到界面上了：${rec.meta.action}`);
+  }
+});
+
 test('派单：说明太长就让它写短点', async () => {
   const { byName } = makeTools();
   // **为什么要限长**：交互层的 `maxTokens` 按普通对话（默认 800），
-  // 而工具参数与正文**共用**同一个额度——说明被截断，
+  // 而工具参数与正文共用同一个额度——说明被截断，
   // 参数就不是合法 JSON，循环报错，白烧掉 3 步里的 1 步。
   await assert.rejects(
     () => byName.get('task.submit').run({ title: '查视频', brief: '看'.repeat(300) }),
@@ -105,56 +169,6 @@ test('派单关了：不能派，也不该真的派出去', async () => {
     /不能派单/
   );
   assert.equal(tasks.calls.length, 0, '不能派单就不该提交任务');
-});
-
-test('查看：把任务列出来', async () => {
-  const { byName } = makeTools();
-  const out = await byName.get('task.list').run({});
-  assert.match(out.text, /t-9/);
-  assert.match(out.text, /查视频/);
-});
-
-test('查进展：说出任务在干嘛、到哪一步了', async () => {
-  const { byName } = makeTools();
-  const out = await byName.get('task.status').run({});
-  assert.match(out.text, /t-9/);
-  assert.match(out.text, /查视频/);
-  assert.match(out.text, /进行中/);
-  assert.match(out.text, /fs\.list/);
-});
-
-test('查进展：指定任务号就只看那一个', async () => {
-  const tasks = fakeTasks();
-  tasks.list = () => [
-    { taskId: 't-9', title: '查视频', status: 'running', lastStep: 'fs.list', result: '', elapsedMs: 1200 },
-    { taskId: 't-8', title: '别的', status: 'done', lastStep: 'fs.read', result: '找到了', elapsedMs: 5000 },
-  ];
-  const tools = createTaskTools({
-    tasks,
-    dispatchEnabled: true,
-    appendRecord: () => {},
-    now: () => 1,
-    turn: { history: [], userText: 't-9 到哪了', config: {} },
-  });
-  const status = tools.find((t) => t.name === 'task.status');
-  const out = await status.run({ taskId: 't-9' });
-  assert.match(out.text, /t-9/);
-  assert.doesNotMatch(out.text, /t-8/);
-});
-
-test('查进展：没有任务就如实说没有', async () => {
-  const tasks = fakeTasks();
-  tasks.list = () => [];
-  const tools = createTaskTools({
-    tasks,
-    dispatchEnabled: true,
-    appendRecord: () => {},
-    now: () => 1,
-    turn: { history: [], userText: '有任务吗', config: {} },
-  });
-  const status = tools.find((t) => t.name === 'task.status');
-  const out = await status.run({});
-  assert.match(out.text, /现在没有后台任务/);
 });
 
 test('停掉 / 归档 / 追加要求：都转给中枢', async () => {

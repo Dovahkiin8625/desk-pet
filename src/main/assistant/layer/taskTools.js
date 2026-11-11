@@ -1,13 +1,13 @@
-import { LAYER, TASK_STATUS, TOOL_RISK } from '../../../shared/assistant.js';
+import { LAYER, TOOL_RISK } from '../../../shared/assistant.js';
 import { buildHistoryMessages } from '../chat/prompt.js';
 import { dispatchRecord } from '../agent/record.js';
 
 /**
- * 交互层的六个任务管理工具（规格 §4.1）。
+ * 交互层的四个任务管理工具（规格 §4.1）。
  *
  * ## 全部免审批
  *
- * 它们全是 `risk: 'read'`：查状态、派单、停任务都不碰用户的东西。
+ * 它们全是 `risk: 'read'`：交出去、停下、补要求都不碰用户的东西。
  * 审批是给「写文件 / 跑命令」准备的，不是给「管理自己的任务」准备的。
  *
  * ## 派单要带三样东西
@@ -15,18 +15,13 @@ import { dispatchRecord } from '../agent/record.js';
  * 1. **用户原话**（逐字）：执行层要能自纠——简报写歪了还能靠原话找回来；
  * 2. **交互层的理解**（title + brief）：要干什么、要什么结果、有什么约束；
  * 3. **相关历史**：执行层自己再读最近几条 user/reply。
+ *
+ * ## `reply`：要跟用户说的那一句话
+ *
+ * 模型在调工具时把话一次写完，工具跑完直接用它回复用户——
+ * 派单只花一次模型往返（规格 §4.2）。没写就是没写，
+ * 循环照常走第 2 轮，让模型自己组织一句话。
  */
-
-/** 任务状态的中文说法（人看的那份）。 */
-const STATUS_LABEL = Object.freeze({
-  [TASK_STATUS.QUEUED]: '排队中',
-  [TASK_STATUS.RUNNING]: '进行中',
-  [TASK_STATUS.WAITING_APPROVAL]: '等你点头',
-  [TASK_STATUS.DONE]: '已完成',
-  [TASK_STATUS.FAILED]: '失败',
-  [TASK_STATUS.CANCELLED]: '已取消',
-  [TASK_STATUS.INTERRUPTED]: '被中断',
-});
 
 /**
  * 派单说明最多几个字。
@@ -38,13 +33,26 @@ const STATUS_LABEL = Object.freeze({
 const BRIEF_MAX_CHARS = 200;
 
 /**
+ * `reply` 参数：四个工具都有同一份说明。
+ *
+ * **为什么不带「派单」这类词**：模型会把参数说明当成自己说话的口径，
+ * 说明里的话很容易被原样说给用户听。
+ */
+const REPLY_PARAM = Object.freeze({
+  type: 'string',
+  description:
+    '要跟用户说的那一句话：一两句，口语。不要报告结果，不要提任何工具名。' +
+    '后面可以跟一段 <<META>>{...}（情绪与要记住的事），不写也行。',
+});
+
+/**
  * 造这一轮的任务管理工具。
  *
  * **每轮造一份**：派单要用「这一轮的用户原话与历史」，
  * 拿上一轮的东西派单，派出去的是别人家的活。
  *
  * @param {object} options
- * @param {object} options.tasks 任务中枢（提交 / 查看 / 停止 / 归档 / 追加指令）
+ * @param {object} options.tasks 任务中枢（提交 / 停止 / 归档 / 追加指令 / 列表）
  * @param {object} [options.turn] 这一轮的上下文 {history, userText, config}
  * @param {boolean} [options.dispatchEnabled] 能不能派单
  * @param {Function} [options.appendRecord] 写一条分类记录
@@ -66,28 +74,46 @@ export function createTaskTools({
    *
    * **`brief` 只有派单才有**：那是模型写给执行层的说明，
    * 聊天历史页要把它原样显示出来，用户才知道这活儿到底是让谁去干了什么。
-   * 其它四个工具不交底什么，留空串。
+   * 其它三个工具不交底什么，留空串。
+   *
+   * **`action` 是宠物的说法**：记录要进聊天记录页，用户看得见——
+   * 「派了个任务」这种内部话术不该出现在桌宠嘴里。
    */
   function record(tool, { taskId = '', title = '', action = '', brief = '' } = {}) {
     appendRecord(dispatchRecord({ tool, taskId, title, action, brief, at: now() }));
   }
 
+  /**
+   * 这件事叫什么：记录里要写给用户看。
+   *
+   * **为什么要在收起来之前查**：归档之后这件事就不在列表里了，
+   * 那时再查只剩一个编号——编号是内部标识，用户看不懂。
+   */
+  function titleOf(taskId) {
+    const list = tasks?.list?.() || [];
+    const hit = list.find((t) => t?.taskId === taskId);
+    return String(hit?.title || '').trim();
+  }
+
   return [
     {
       name: 'task.submit',
-      label: '派个后台任务',
+      label: '开始做一件事',
       description:
-        '派一个后台任务去做耗时的活（查本机、翻文件、跑命令）。做完会另行通知你。',
+        '把一件事交出去做——你自己干不了、或者要花时间的事都走这里。' +
+        '要什么结果写在 brief 里；要跟用户说的那句话写在 reply 里。做完会另行通知你。',
       parameters: {
         type: 'object',
         properties: {
           title: { type: 'string', description: '一句话说明这个任务要做什么' },
           brief: { type: 'string', description: '任务说明：要干什么、要什么结果、有什么约束（200 字以内）' },
+          reply: REPLY_PARAM,
         },
         required: ['title', 'brief'],
       },
       risk: TOOL_RISK.READ,
       async run(args) {
+        const answer = String(args?.reply || '').trim();
         if (!dispatchEnabled) throw new Error('现在不能派单（对话模式里派单关着）');
         const title = String(args?.title || '').trim() || '一件事';
         const brief = String(args?.brief || '').trim();
@@ -110,126 +136,63 @@ export function createTaskTools({
         record('task.submit', {
           taskId: task.taskId,
           title,
-          action: `派了个任务：${title}`,
+          action: `开始做：${title}`,
           // **交底原文**：模型写给执行层的那段说明，原样记下来。
           brief,
         });
         return {
           text: `已派出任务 ${task.taskId}（${title}）`,
-          data: { taskId: task.taskId, queued: Boolean(task.queued) },
-        };
-      },
-    },
-
-    {
-      name: 'task.list',
-      label: '看后台任务',
-      description: '列出后台任务：每个任务在做什么、到哪一步了。',
-      parameters: { type: 'object', properties: {}, required: [] },
-      risk: TOOL_RISK.READ,
-      async run() {
-        const list = tasks.list();
-        const text = list.length
-          ? list
-              .map((t) => `${t.taskId}｜${t.title}｜${t.status}｜${t.lastStep || ''}`)
-              .join('\n')
-          : '（现在没有后台任务）';
-        record('task.list', { action: `看了看后台任务：${list.length} 个` });
-        return { text, data: { list } };
-      },
-    },
-
-    {
-      name: 'task.status',
-      label: '看任务进展',
-      description:
-        '查后台任务的状态与进展：跑到哪一步了、做完没有、结果是什么。' +
-        '用户问「任务到哪了」「你在干什么」「进展怎么样」时用它。',
-      parameters: {
-        type: 'object',
-        properties: { taskId: { type: 'string', description: '可选：只看这一个任务' } },
-        required: [],
-      },
-      risk: TOOL_RISK.READ,
-      async run(args) {
-        const taskId = String(args?.taskId || '').trim();
-        const all = tasks.list();
-        const list = taskId ? all.filter((t) => t.taskId === taskId) : all;
-        record('task.status', {
-          taskId,
-          action: list.length ? `看了看任务进展：${list.length} 个` : '看了看任务：没有',
-        });
-        if (!list.length) {
-          return {
-            text: taskId ? `没有这个任务：${taskId}` : '现在没有后台任务',
-            data: { tasks: [] },
-          };
-        }
-        return {
-          text: list.map(describeTask).join('\n'),
-          data: { tasks: list },
+          data: { taskId: task.taskId, queued: Boolean(task.queued), answer },
         };
       },
     },
 
     {
       name: 'task.cancel',
-      label: '停掉后台任务',
-      description: '停掉一个正在跑的后台任务。',
+      label: '让一件事停下',
+      description: '让一件正在做的事停下。',
       parameters: {
         type: 'object',
-        properties: { taskId: { type: 'string', description: '任务号' } },
+        properties: {
+          taskId: { type: 'string', description: '任务号' },
+          reply: REPLY_PARAM,
+        },
         required: ['taskId'],
       },
       risk: TOOL_RISK.READ,
       async run(args) {
+        const answer = String(args?.reply || '').trim();
         const taskId = String(args?.taskId || '').trim();
         if (!taskId) throw new Error('要停哪个任务？给个 taskId');
+        const title = titleOf(taskId);
         const res = tasks.cancel(taskId);
         if (!res?.ok) throw new Error(res?.message || '停不下来');
-        record('task.cancel', { taskId, action: `停掉了个任务：${taskId}` });
-        return { text: `已停掉任务 ${taskId}`, data: { taskId } };
-      },
-    },
-
-    {
-      name: 'task.delete',
-      label: '归档后台任务',
-      description: '把一个已经结束的任务从列表里归档（记录仍然留着）。',
-      parameters: {
-        type: 'object',
-        properties: { taskId: { type: 'string', description: '任务号' } },
-        required: ['taskId'],
-      },
-      risk: TOOL_RISK.READ,
-      async run(args) {
-        const taskId = String(args?.taskId || '').trim();
-        if (!taskId) throw new Error('要归档哪个任务？给个 taskId');
-        const res = tasks.archive(taskId);
-        if (!res?.ok) throw new Error(res?.message || '归档不了');
-        record('task.delete', { taskId, action: `归档了个任务：${taskId}` });
-        return { text: `已归档任务 ${taskId}`, data: { taskId } };
+        record('task.cancel', { taskId, title, action: `停掉了：${title || taskId}` });
+        return { text: `已停掉任务 ${taskId}`, data: { taskId, answer } };
       },
     },
 
     {
       name: 'task.steer',
-      label: '给后台任务追加要求',
-      description: '给一个正在跑的任务追加一句要求（不改它原本要做什么）。',
+      label: '给一件事补要求',
+      description: '给一件正在做的事补一句要求（不改它原本要做什么）。',
       parameters: {
         type: 'object',
         properties: {
           taskId: { type: 'string', description: '任务号' },
           note: { type: 'string', description: '要追加的那句话' },
+          reply: REPLY_PARAM,
         },
         required: ['taskId', 'note'],
       },
       risk: TOOL_RISK.READ,
       async run(args) {
+        const answer = String(args?.reply || '').trim();
         const taskId = String(args?.taskId || '').trim();
         const note = String(args?.note || '').trim();
         if (!taskId) throw new Error('要给哪个任务追加要求？给个 taskId');
         if (!note) throw new Error('要追加什么？给个 note');
+        const title = titleOf(taskId);
         const res = tasks.steer(taskId, note);
         if (!res?.ok) throw new Error(res?.message || '追加不了');
         // 任务刚好结束：那句追加没送出去（**不是错误**，是时序问题）。
@@ -237,36 +200,44 @@ export function createTaskTools({
         const dropped = Boolean(res.dropped);
         record('task.steer', {
           taskId,
+          title,
           action: dropped
-            ? '任务已经结束，追加的要求没送出去'
-            : `给任务追加了一句要求：${note}`,
+            ? '那件事已经结束了，这句要求没送出去'
+            : '给那件事补了一句要求',
         });
         return {
           text: dropped
             ? `任务 ${taskId} 已经结束了，这句要求没送出去`
             : `已给任务 ${taskId} 追加要求`,
-          data: { taskId, note },
+          data: { taskId, note, answer },
         };
       },
     },
+
+    {
+      name: 'task.delete',
+      label: '把一件事收起来',
+      description: '把一件已经结束的事收起来（记录仍然留着）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: '任务号' },
+          reply: REPLY_PARAM,
+        },
+        required: ['taskId'],
+      },
+      risk: TOOL_RISK.READ,
+      async run(args) {
+        const answer = String(args?.reply || '').trim();
+        const taskId = String(args?.taskId || '').trim();
+        if (!taskId) throw new Error('要收起来哪个任务？给个 taskId');
+        // **先查名字再收起来**：收起来之后这件事就不在列表里了。
+        const title = titleOf(taskId);
+        const res = tasks.archive(taskId);
+        if (!res?.ok) throw new Error(res?.message || '收不起来');
+        record('task.delete', { taskId, title, action: `收起来了：${title || taskId}` });
+        return { text: `已收起来任务 ${taskId}`, data: { taskId, answer } };
+      },
+    },
   ];
-}
-
-/** 把一个任务说成一行人话：谁、在干嘛、到哪一步了、结果是什么。 */
-function describeTask(task) {
-  const parts = [String(task?.taskId || ''), String(task?.title || '')];
-  parts.push(STATUS_LABEL[task?.status] || String(task?.status || ''));
-  if (task?.lastStep) parts.push(`刚做完 ${task.lastStep}`);
-  if (task?.result) parts.push(`结果：${task.result}`);
-  parts.push(`用了 ${formatElapsed(task?.elapsedMs)}`);
-  return parts.filter(Boolean).join('｜');
-}
-
-/** 把毫秒说成「不到 1 秒」「12 秒」「3 分钟」。 */
-function formatElapsed(ms) {
-  const n = Number(ms);
-  if (!Number.isFinite(n) || n < 0) return '一会儿';
-  if (n < 1000) return '不到 1 秒';
-  if (n < 60_000) return `${Math.round(n / 1000)} 秒`;
-  return `${Math.round(n / 60_000)} 分钟`;
 }
