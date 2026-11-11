@@ -10,6 +10,7 @@
  * 2. **推给谁**：周期数据要送到所有挂着的地方（两处看到的数据必须一致）；
  * 3. **什么时候推**：tick 定时器**第一个 surface 挂上来时起，
  *    最后一个摘掉时停**——界面都没了还按秒推，那是白烧 CPU。
+ *    挂着好几个时按**最快的那个**周期推（面板慢不该拖慢小部件）。
  *
  * 这里**不碰 Electron**：surface 自己知道怎么把数据送出去
  * （`deliver(kind, payload)`），这一层只管「该送给谁」。
@@ -94,6 +95,40 @@ export function createSurfaceController({ host, onChange }) {
     }
   }
 
+  /**
+   * 挂着的界面里，最快的那个刷新周期。
+   *
+   * **取最快的**：面板开着（慢）不该把小部件（快）拖慢——
+   * 它们看的是同一份数据，推给谁都一样快。
+   */
+  function fastestSurface(pluginId, set) {
+    let best = null;
+    for (const surface of set) {
+      // 刷新周期按**这个界面的形态**算：小部件与独立窗口的清单段不一样。
+      const mode = surface.mode || 'window';
+      const ms = refreshMsOf(pluginId, mode);
+      if (ms > 0 && (!best || ms < best.ms)) best = { mode, ms };
+    }
+    return best;
+  }
+
+  /** 按挂着的界面重设定时器。 */
+  function retime(pluginId) {
+    const set = attached.get(pluginId);
+    const best = set?.size ? fastestSurface(pluginId, set) : null;
+    if (!best) {
+      stopTimer(pluginId);
+      return;
+    }
+    const current = timers.get(pluginId);
+    if (current && current.refreshMs === best.ms) return;
+    if (current) clearInterval(current.id);
+    timers.set(pluginId, {
+      id: setInterval(() => void pushTick(pluginId, best.mode), best.ms),
+      refreshMs: best.ms,
+    });
+  }
+
   /** 挂上一个界面。 */
   function attach(pluginId, surface) {
     if (!pluginId || !isSurface(surface)) return;
@@ -101,12 +136,7 @@ export function createSurfaceController({ host, onChange }) {
     const wasEmpty = set.size === 0;
     set.add(surface);
     if (wasEmpty) notify(pluginId, true);
-    // 刷新周期按**这个界面的形态**算：小部件与独立窗口的清单段不一样。
-    const mode = surface.mode || 'window';
-    const refreshMs = refreshMsOf(pluginId, mode);
-    if (refreshMs > 0 && !timers.has(pluginId)) {
-      timers.set(pluginId, { id: setInterval(() => void pushTick(pluginId, mode), refreshMs), mode });
-    }
+    retime(pluginId);
   }
 
   /** 摘下一个界面。 */
@@ -118,7 +148,10 @@ export function createSurfaceController({ host, onChange }) {
       attached.delete(pluginId);
       stopTimer(pluginId);
       notify(pluginId, false);
+      return;
     }
+    // 还有界面挂着：周期按剩下的界面重算（快的那个走了就慢下来）。
+    retime(pluginId);
   }
 
   function stopTimer(pluginId) {

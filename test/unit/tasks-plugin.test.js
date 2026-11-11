@@ -43,7 +43,7 @@ test('任务插件：快照里有任务、审批、计数与中断数', async ()
   const data = await plugin.data();
   assert.equal(data.tasks.length, 1);
   assert.equal(data.approvals[0].id, 't1-1');
-  assert.deepEqual(data.counts, { running: 1, queued: 0 });
+  assert.deepEqual(data.counts, { running: 1, queued: 0, done: 0, failed: 0, cancelled: 0 });
   assert.equal(data.interrupted, 1);
 });
 

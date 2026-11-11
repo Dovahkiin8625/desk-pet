@@ -1,0 +1,122 @@
+{
+  "id": "music-player",
+  "name": "音乐播放器",
+  "icon": "🎵",
+  "description": "播放本地音乐，带桌面小部件与桌面歌词",
+  "keywords": ["music", "player", "yinyue", "gequ", "gq", "ci", "cixiao", "lyrics", "音乐", "播放器", "歌曲", "歌词", "小部件"],
+  "skill": {
+    "name": "music-player",
+    "description": "控制本地音乐播放器：放歌、暂停、切歌、找歌、调音量、开关桌面歌词",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "music.play",
+      "label": "播放音乐",
+      "description": "播放本地音乐。不给歌名就是继续播放当前这首；给了歌名就放曲库里匹配上的那一首。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "song": { "type": "string", "description": "歌名或歌手名，能对上曲库里的歌就行" }
+        }
+      },
+      "risk": "write"
+    },
+    {
+      "name": "music.pause",
+      "label": "暂停音乐",
+      "description": "暂停播放。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "music.next",
+      "label": "下一首",
+      "description": "跳到下一首。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "music.prev",
+      "label": "上一首",
+      "description": "回到上一首。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "write"
+    },
+    {
+      "name": "music.search",
+      "label": "找歌",
+      "description": "在本地曲库里按歌名或歌手找歌，返回匹配到的歌。",
+      "parameters": {
+        "type": "object",
+        "properties": { "song": { "type": "string", "description": "歌名或歌手名" } },
+        "required": ["song"]
+      },
+      "risk": "read"
+    },
+    {
+      "name": "music.status",
+      "label": "看播放状态",
+      "description": "看现在在放哪一首、放到哪里了、音量多少、曲库里有多少歌。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    },
+    {
+      "name": "music.lyrics",
+      "label": "开关桌面歌词",
+      "description": "开关桌面上那块一直浮着的歌词窗。",
+      "parameters": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean", "description": "true 开，false 关" } },
+        "required": ["enabled"]
+      },
+      "risk": "write"
+    }
+  ],
+  "settings": [
+    {
+      "key": "musicFolder",
+      "label": "音乐文件夹",
+      "type": "text",
+      "default": "",
+      "hint": "本地音乐放在哪个文件夹里。插件自己的页面上也有「音乐库」按钮可以直接选。"
+    },
+    {
+      "key": "volume",
+      "label": "音量（0-100）",
+      "type": "number",
+      "default": 80,
+      "hint": "播放器的音量。"
+    },
+    {
+      "key": "playMode",
+      "label": "播放模式",
+      "type": "select",
+      "options": ["顺序播放", "单曲循环", "随机播放"],
+      "default": "顺序播放",
+      "hint": "一首放完之后怎么办。"
+    },
+    {
+      "key": "lyricsOn",
+      "label": "显示桌面歌词",
+      "type": "boolean",
+      "default": false,
+      "hint": "打开时桌面上会一直浮着歌词窗。"
+    }
+  ],
+  "window": {
+    "title": "音乐播放器",
+    "page": "pages/player.html",
+    "width": 380,
+    "height": 520,
+    "refreshMs": 500
+  },
+  "widget": {
+    "title": "音乐播放器",
+    "page": "pages/widget.html",
+    "width": 280,
+    "height": 132,
+    "refreshMs": 500,
+    "alwaysOnTop": true
+  }
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>桌面歌词</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      #viewport {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      #lines {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        padding: 0 18px;
+        text-align: center;
+        /* 换行时先滚一下再翻页：歌词窗窄，句子会折行。 */
+        transition: transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+        will-change: transform;
+      }
+      .line {
+        margin: 0 0 10px;
+        font: 15px/1.5 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        color: rgba(255, 255, 255, 0.45);
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+        transition: color 0.3s ease, font-size 0.3s ease;
+        word-break: break-word;
+      }
+      .line.current {
+        color: #fff;
+        font-size: 21px;
+        font-weight: 600;
+      }
+      #close {
+        position: absolute;
+        top: 2px;
+        right: 6px;
+        border: none;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.35);
+        font-size: 13px;
+        line-height: 1;
+        padding: 4px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+      #stage:hover #close {
+        opacity: 1;
+      }
+      #close:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.12);
+      }
+      /* 整块都能拖：歌词窗要能挪到用户看得顺眼的地方。 */
+      #stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        -webkit-app-region: drag;
+      }
+      #close {
+        -webkit-app-region: no-drag;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div id="viewport"><div id="lines"></div></div>
+      <button id="close" type="button" title="收起">✕</button>
+    </div>
+    <script src="lyrics.js"></script>
+  </body>
+</html>

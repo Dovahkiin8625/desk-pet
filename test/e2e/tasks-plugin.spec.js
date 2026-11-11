@@ -221,9 +221,9 @@ test.describe('后台任务插件', () => {
 
       // 任务界面里看得见这个任务：状态是「等你点头」。
       const frame = await openTasksPlugin(panel);
-      const row = frame.locator('#running .row[data-task]').first();
+      const row = frame.locator('#tasks .row[data-task]').first();
       await expect(row).toBeVisible({ timeout: 30000 });
-      await expect(row.locator('.row-status')).toHaveText('等你点头');
+      await expect(row.locator('.tag')).toHaveText('等你点头');
 
       // 待答的审批也在看板上（它与桌宠气泡是同一份队列）。
       const card = frame.locator('#pending .card').first();
@@ -263,16 +263,16 @@ test.describe('后台任务插件', () => {
       await panel.press('#query', 'Control+Enter');
 
       const frame = await openTasksPlugin(panel);
-      const row = frame.locator('#running .row[data-task]').first();
+      const row = frame.locator('#tasks .row[data-task]').first();
       await expect(row).toBeVisible({ timeout: 30000 });
 
       await row.locator('button[data-act="cancel"]').click();
       await expect(frame.locator('#message')).toHaveText('停掉了');
 
-      // 停掉的任务落到「已结束」那一栏。
-      const finished = frame.locator('#finished .row[data-task]').first();
-      await expect(finished).toBeVisible({ timeout: 10000 });
-      await expect(finished.locator('.row-status')).toHaveText('已取消');
+      // 停掉的任务还在列表里，只是状态变了。
+      const stopped = frame.locator('#tasks .row[data-task]').first();
+      await expect(stopped).toBeVisible({ timeout: 10000 });
+      await expect(stopped.locator('.tag')).toHaveText('已取消');
     } finally {
       await app.close();
       await stub.close();
@@ -304,13 +304,16 @@ test.describe('后台任务插件', () => {
       await panel.press('#query', 'Control+Enter');
 
       const frame = await openTasksPlugin(panel);
-      const finished = frame.locator('#finished .row[data-task]').first();
+      const finished = frame.locator('#tasks .row[data-task]').first();
       await expect(finished).toBeVisible({ timeout: 30000 });
       const taskId = await finished.getAttribute('data-task');
 
-      await finished.locator('button[data-act="archive"]').click();
+      // 归档在详情页里：点开那个任务再归档。
+      await finished.click();
+      await expect(frame.locator('#detail-title')).toBeVisible();
+      await frame.locator('#detail-archive').click();
       await expect(frame.locator('#message')).toHaveText('归档了');
-      await expect(frame.locator('#finished .row[data-task]')).toHaveCount(0);
+      await expect(frame.locator('#tasks .row[data-task]')).toHaveCount(0);
 
       // 记录还留着（归档只是把它从列表里收起来）。
       await new Promise((r) => setTimeout(r, 1000));
@@ -345,7 +348,7 @@ test.describe('后台任务插件', () => {
       await panel.press('#query', 'Control+Enter');
 
       const frame = await openTasksPlugin(panel);
-      await expect(frame.locator('#running .row[data-task]').first()).toBeVisible({ timeout: 30000 });
+      await expect(frame.locator('#tasks .row[data-task]').first()).toBeVisible({ timeout: 30000 });
 
       // 变成桌面小部件：页面原样加载，壳不参与。
       await panel.evaluate(() => document.querySelector('#widget')?.click());
@@ -353,15 +356,105 @@ test.describe('后台任务插件', () => {
       expect(widget, '小部件窗口没有出现').toBeTruthy();
       await widget.waitForLoadState('domcontentloaded');
 
-      await expect(widget.locator('#running .row[data-task]').first()).toBeVisible({ timeout: 30000 });
+      await expect(widget.locator('#tasks .row[data-task]').first()).toBeVisible({ timeout: 30000 });
       // 小部件是紧凑版：按钮那些不画。
-      await expect(widget.locator('#running .row-actions')).toBeHidden();
+      await expect(widget.locator('#tasks .row-actions')).toBeHidden();
 
       // 小部件自己能收起：头上那个 ✕ 就是干这个的。
       const close = widget.locator('#widget-close');
       await expect(close).toBeVisible();
       await close.click();
       await expect.poll(() => widget.isClosed(), { timeout: 10000 }).toBe(true);
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
+  test('小部件实时刷新：开着它派个任务，它自己就看得见', async () => {
+    // 以前小部件只有打开时那一份快照：任务后来派了，它一直不知道。
+    const stub = await startStubLlm({
+      interaction: (body) => {
+        const last = (body.messages || []).at(-1) || {};
+        if (last.role === 'tool') return say('我去看看。');
+        return toolCall('task.submit', { title: '慢慢查', brief: '慢慢查点东西' });
+      },
+      execution: null,
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      // 先把小部件开出来：这时候还没有任务。
+      await openTasksPlugin(panel);
+      await panel.evaluate(() => document.querySelector('#widget')?.click());
+      const widget = await findWindow(app, 'plugins/tasks/pages/board.html');
+      expect(widget, '小部件窗口没有出现').toBeTruthy();
+      await widget.waitForLoadState('domcontentloaded');
+      await expect(widget.locator('#tasks .row[data-task]')).toHaveCount(0);
+
+      // 回到搜索视图：现在只有小部件这一个界面挂着这个插件。
+      await panel.click('#back');
+
+      // 派个任务。
+      await panel.fill('#query', '慢慢查点东西');
+      await panel.press('#query', 'Control+Enter');
+
+      // 小部件自己就更新了——它每秒拿一份新的。
+      await expect(widget.locator('#tasks .row[data-task]').first()).toBeVisible({ timeout: 15000 });
+      await expect(widget.locator('#tasks .row-title').first()).toHaveText('慢慢查');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
+  test('点开任务看得见详情：创建时刻、耗时与步骤时间线', async () => {
+    const stub = await startStubLlm({
+      interaction: (body) => {
+        const last = (body.messages || []).at(-1) || {};
+        if (last.role === 'tool') return say('我去看看。');
+        return toolCall('task.submit', { title: '列个目录', brief: '列一下工作区' });
+      },
+      execution: (body) => {
+        const last = (body.messages || []).at(-1) || {};
+        if (last.role === 'tool') return say('列好了。');
+        // 读文件不用点头：这一步会真的跑掉，步骤时间线上就有了一格。
+        return toolCall('fs.list', { path: '.' });
+      },
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      await panel.fill('#query', '列一下工作区');
+      await panel.press('#query', 'Control+Enter');
+
+      const frame = await openTasksPlugin(panel);
+      const row = frame.locator('#tasks .row[data-task]').first();
+      await expect(row).toBeVisible({ timeout: 30000 });
+
+      // 点开它：进详情。
+      await row.click();
+      await expect(frame.locator('#detail-title')).toHaveText('列个目录');
+      await expect(frame.locator('#detail-meta')).toContainText('创建于');
+      await expect(frame.locator('#detail-meta')).toContainText(/已用|耗时/);
+
+      // 步骤时间线：那一格说的是调了什么工具。
+      await expect(frame.locator('#detail-steps .tl-tool').first()).toHaveText('fs.list', {
+        timeout: 30000,
+      });
+
+      // 回总览。
+      await frame.locator('#detail-back').click();
+      await expect(frame.locator('#overview')).toBeVisible();
+      await expect(frame.locator('#detail')).toBeHidden();
     } finally {
       await app.close();
       await stub.close();

@@ -264,6 +264,81 @@ test('中枢：任务列表带上了步数与出错原因', async () => {
   assert.equal(row.error, '');
 });
 
+test('中枢：看板视图带上了步骤时间线', async () => {
+  // 详情页那条竖线要的：每一步说了什么工具、动了什么参数、结果是什么。
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({
+          type: 'step',
+          index: 1,
+          tool: 'fs.read',
+          args: { path: 'a.md' },
+          result: '读到了 3 行',
+          error: '',
+        });
+        ctx.onEvent?.({
+          type: 'step',
+          index: 2,
+          tool: 'fs.write',
+          args: { path: 'b.md' },
+          result: '',
+          error: '写不了',
+        });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '写个文件', messages: [] });
+  await t.done;
+  const row = tasks.board()[0];
+  assert.equal(row.taskId, t.taskId);
+  assert.equal(row.createdAt > 0, true, '详情页要说得清它是什么时候来的');
+  assert.equal(row.steps.length, 2);
+  assert.equal(row.steps[0].tool, 'fs.read');
+  assert.equal(row.steps[0].args.path, 'a.md');
+  assert.equal(row.steps[0].result, '读到了 3 行');
+  assert.equal(row.steps[1].error, '写不了');
+  assert.equal(row.result, '做完了', '详情页要看到整句话');
+});
+
+test('中枢：给模型看的那份列表不带步骤', async () => {
+  // 模型要的是「到哪一步了」——整条时间线只会撑爆它的上下文。
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({ type: 'step', index: 1, tool: 'fs.read', args: {}, result: 'ok' });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '读个文件', messages: [] });
+  await t.done;
+  const row = tasks.list()[0];
+  assert.equal(row.steps, undefined, '简报里不该有步骤');
+  assert.equal(row.createdAt, undefined, '简报里不该有那些界面才要的字段');
+  assert.equal(row.stepIndex, 1);
+});
+
+test('中枢：归档之后那个任务的步骤清单也不留了', async () => {
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async (ctx) => {
+        ctx.onEvent?.({ type: 'step', index: 1, tool: 'fs.read', args: {}, result: 'ok' });
+        return { text: '做完了', emotion: 'happy', mood: 1, memories: [] };
+      },
+    },
+  });
+  const t = tasks.submit({ prompt: '读个文件', messages: [] });
+  await t.done;
+  assert.equal(tasks.board().length, 1);
+  assert.equal(tasks.archive(t.taskId).ok, true);
+  assert.equal(tasks.board().length, 0, '归档了就不再出现在看板上');
+});
+
 test('中枢：任务失败时，列表里说得清为什么', async () => {
   const tasks = createAgentTasks({
     backend: {

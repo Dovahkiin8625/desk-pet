@@ -48,7 +48,9 @@
         display: none;
       }
       /* 空了的分节整段藏起来（section 的 display 盖过了 [hidden]）。 */
-      section[hidden] {
+      section[hidden],
+      #overview[hidden],
+      #detail[hidden] {
         display: none;
       }
       /* 一行任务。 */
@@ -64,17 +66,42 @@
       .row-head {
         display: flex;
         align-items: baseline;
-        gap: 8px;
-        cursor: pointer;
-        list-style: none;
+        gap: 6px;
       }
-      .row-head::-webkit-details-marker {
-        display: none;
+      .row-title {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 600;
+        font-size: 13px;
       }
-      .row-detail {
+      .row-id {
+        flex: none;
+        font-size: 11px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .row-time {
+        flex: none;
+        font-size: 12px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .row-sub {
         display: flex;
-        flex-direction: column;
-        gap: 4px;
+        align-items: center;
+        gap: 8px;
+      }
+      .row-step {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        color: var(--dp-text-soft);
       }
       .dot {
         flex: none;
@@ -96,60 +123,65 @@
       .dot[data-status='failed'] {
         background: var(--dp-danger);
       }
-      .row-title {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-weight: 600;
-        font-size: 13px;
-      }
-      .row-status {
+      /* 状态标签。 */
+      .tag {
         flex: none;
-        font-size: 12px;
+        font-size: 11px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--dp-border-soft);
         color: var(--dp-text-soft);
+        background: var(--dp-bg);
       }
-      .row-time {
-        flex: none;
-        font-size: 12px;
-        color: var(--dp-text-faint);
-        font-variant-numeric: tabular-nums;
+      .tag[data-status='running'] {
+        color: var(--dp-accent-ink);
+        border-color: var(--dp-accent);
+        background: var(--dp-accent);
       }
-      .row-step {
-        font-size: 12px;
-        color: var(--dp-text-soft);
-      }
-      .row-body {
-        font-size: 12px;
-        color: var(--dp-text-soft);
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .row-error {
+      .tag[data-status='waiting_approval'],
+      .tag[data-status='failed'] {
         color: var(--dp-danger);
+        border-color: var(--dp-danger);
+        background: transparent;
       }
       .row-actions {
         display: flex;
         gap: 6px;
         flex-wrap: wrap;
       }
+      /* 点一行就进详情。 */
+      .row,
+      .current {
+        cursor: pointer;
+      }
       .row-actions button {
         padding: 2px 10px;
         font-size: 12px;
       }
-      /* 追加要求：展开一个输入框。 */
-      .steer-box {
+      /* 当前任务：总览顶上那一栏。 */
+      .current {
+        border: 1px solid var(--dp-accent);
+        border-radius: var(--dp-radius);
+        background: var(--dp-bg);
+        padding: 8px 10px;
         display: flex;
-        gap: 6px;
+        flex-direction: column;
+        gap: 2px;
+        cursor: pointer;
       }
-      .steer-box[hidden] {
-        display: none;
+      .current-title {
+        font-weight: 600;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .steer-box input {
-        flex: 1;
-        min-width: 0;
+      .current-step {
         font-size: 12px;
+        color: var(--dp-text-soft);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       /* 待答审批：一张卡片。 */
       .card {
@@ -187,6 +219,125 @@
         font-size: 12px;
         color: var(--dp-text-soft);
         min-height: 18px;
+      }
+      /* —— 详情层 —— */
+      #detail {
+        display: flex;
+        flex-direction: column;
+        gap: var(--dp-gap);
+      }
+      #detail-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #detail-id {
+        font-size: 11px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      #detail-title {
+        font-weight: 600;
+        font-size: 14px;
+        word-break: break-word;
+      }
+      #detail-meta {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+      }
+      #detail-result {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        white-space: pre-wrap;
+        word-break: break-word;
+        border-left: 2px solid var(--dp-border-soft);
+        padding-left: 8px;
+      }
+      #detail-result.is-error {
+        color: var(--dp-danger);
+        border-left-color: var(--dp-danger);
+      }
+      #detail-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      #detail-steer {
+        display: flex;
+        gap: 6px;
+      }
+      #detail-steer[hidden] {
+        display: none;
+      }
+      #detail-steer input {
+        flex: 1;
+        min-width: 0;
+        font-size: 12px;
+      }
+      /* 步骤时间线：竖着的一条线，一格一步。 */
+      #detail-steps {
+        list-style: none;
+        margin: 0;
+        padding: 0 0 0 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .tl-item {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .tl-item::before {
+        content: '';
+        position: absolute;
+        left: -16px;
+        top: 7px;
+        bottom: -12px;
+        width: 1px;
+        background: var(--dp-border-soft);
+      }
+      .tl-item:last-child::before {
+        display: none;
+      }
+      .tl-item::after {
+        content: '';
+        position: absolute;
+        left: -19px;
+        top: 5px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--dp-accent-strong);
+      }
+      .tl-item[data-failed='true']::after {
+        background: var(--dp-danger);
+      }
+      .tl-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      .tl-time {
+        font-size: 11px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .tl-tool {
+        font-size: 12px;
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .tl-args,
+      .tl-result {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+      .tl-item[data-failed='true'] .tl-result {
+        color: var(--dp-danger);
       }
       /* 小部件：紧凑版。同一个页面文件，靠 body 上的类切。 */
       /* 卡片只在小部件里出现：面板与独立窗口不需要它。 */
@@ -231,21 +382,28 @@
       body.dp-widget #empty {
         padding: 14px 0;
       }
+      /* 小部件里的任务行：只留身份与状态，行内那些藏起来。 */
       body.dp-widget .row-step,
       body.dp-widget .row-actions,
-      body.dp-widget .steer-box,
-      body.dp-widget #finished-sec,
+      body.dp-widget .row-sub,
+      /* 任务号在小部件里把名字挤没了（它还藏在悬停提示里）。 */
+      body.dp-widget .row-id,
       body.dp-widget #message {
         display: none;
       }
       body.dp-widget .row {
         padding: 4px 8px;
+        /* 小部件里点不开详情。 */
+        cursor: default;
       }
       body.dp-widget .card {
         padding: 4px 8px;
       }
       body.dp-widget .card-actions {
         display: none;
+      }
+      body.dp-widget .current {
+        padding: 4px 8px;
       }
     </style>
   </head>
@@ -259,20 +417,46 @@
           <button id="widget-expand" class="widget-btn" title="变回独立窗口">▣</button>
           <button id="widget-close" class="widget-btn" title="收起来">✕</button>
         </div>
-        <div id="interrupted" hidden></div>
-        <section id="pending-sec">
-          <h2 class="dp-section-title">待你点头</h2>
-          <div id="pending"></div>
-        </section>
-        <section id="running-sec">
-          <h2 class="dp-section-title">在跑与排队</h2>
-          <div id="running"></div>
-        </section>
-        <section id="finished-sec">
-          <h2 class="dp-section-title">已结束</h2>
-          <div id="finished"></div>
-        </section>
-        <div id="empty">现在没有后台任务</div>
+
+        <!-- 总览层 -->
+        <div id="overview">
+          <div id="interrupted" hidden></div>
+          <section id="current-sec" hidden>
+            <h2 class="dp-section-title">当前任务</h2>
+            <div id="current"></div>
+          </section>
+          <section id="pending-sec" hidden>
+            <h2 class="dp-section-title">待你点头</h2>
+            <div id="pending"></div>
+          </section>
+          <section id="tasks-sec" hidden>
+            <h2 class="dp-section-title">任务</h2>
+            <div id="tasks"></div>
+          </section>
+          <div id="empty">现在没有后台任务</div>
+        </div>
+
+        <!-- 详情层 -->
+        <div id="detail" hidden>
+          <div id="detail-bar">
+            <button id="detail-back" class="dp-button">← 返回</button>
+            <span id="detail-id"></span>
+          </div>
+          <div id="detail-title"></div>
+          <div id="detail-meta"></div>
+          <div id="detail-result" hidden></div>
+          <div id="detail-actions">
+            <button id="detail-cancel" class="dp-button" data-act="cancel">停掉</button>
+            <button id="detail-archive" class="dp-button" data-act="archive">归档</button>
+          </div>
+          <div id="detail-steer" hidden>
+            <input id="detail-note" class="dp-input" type="text" placeholder="要追加的一句话" />
+            <button id="detail-send" class="dp-button" data-act="steer-send">发送</button>
+          </div>
+          <h2 class="dp-section-title">步骤</h2>
+          <ol id="detail-steps"></ol>
+        </div>
+
         <div id="message"></div>
       </div>
     </div>

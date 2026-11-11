@@ -21,6 +21,20 @@ import { AGENT_EVENT, APPROVAL_DECISION, TASK_STATUS } from '../../../shared/ass
  */
 
 /**
+ * 看板里每个任务最多留几步（详情页那条时间线）。
+ *
+ * 每秒推一份快照，步骤是唯一会长大的部分——留太多，界面会被压垮。
+ */
+const MAX_BOARD_STEPS = 20;
+
+/** 一步的结果最多留多少字。 */
+const MAX_STEP_RESULT_CHARS = 120;
+
+/** 步骤参数最多留几个键、每个值最多留多少字。 */
+const MAX_STEP_ARG_KEYS = 2;
+const MAX_STEP_ARG_CHARS = 60;
+
+/**
  * 造一个任务中枢。
  *
  * @param {object} options
@@ -84,6 +98,20 @@ export function createAgentTasks({
 
   /** 每个任务最近一步的摘要（给「看看任务」用）。 */
   const lastSteps = new Map();
+  /**
+   * 每个任务的步骤清单（给任务看板的详情页用）。
+   *
+   * 只留最近的几步：老步骤没人看，留着白占内存。
+   */
+  const stepLogs = new Map();
+
+  /** 记一步。 */
+  function recordStep(taskId, step) {
+    const list = stepLogs.get(taskId) || [];
+    list.push(step);
+    if (list.length > MAX_BOARD_STEPS) list.splice(0, list.length - MAX_BOARD_STEPS);
+    stepLogs.set(taskId, list);
+  }
 
   /** 事件往外走一份、往记录里落一份。 */
   function publish(event) {
@@ -95,6 +123,16 @@ export function createAgentTasks({
         tool: name,
         index: Number(event.index) || 0,
         failed: Boolean(event.error),
+      });
+      // **记下这一步**：详情页那条竖向时间线从这里来。
+      recordStep(event.taskId, {
+        index: Number(event.index) || 0,
+        tool: name,
+        args: clipArgs(event.args),
+        result: event.error ? '' : clipText(event.result, MAX_STEP_RESULT_CHARS),
+        error: String(event.error || ''),
+        label: String(event.label || ''),
+        at: Number(event.at) || 0,
       });
     }
     try {
@@ -118,6 +156,21 @@ export function createAgentTasks({
     logger,
     now,
   });
+
+  /** 一个任务的简报（给模型看的那份）。 */
+  function brief(task) {
+    const step = lastSteps.get(task.id);
+    return {
+      taskId: task.id,
+      title: task.title,
+      status: task.status,
+      lastStep: step ? (step.failed ? `${step.tool} 出错` : step.tool) : '',
+      stepIndex: step?.index || 0,
+      result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
+      error: task.error ? String(task.error?.message || task.error) : '',
+      elapsedMs: (task.finishedAt || now()) - task.createdAt,
+    };
+  }
 
   return {
     /** 运行时（插件与设置界面要看任务列表时用）。 */
@@ -264,25 +317,33 @@ export function createAgentTasks({
     },
 
     /**
-     * 任务列表：**给人看的精简视图**。
+     * 任务列表：**给模型看的精简视图**。
      *
      * 不给内部字段（run / scope / controller）——
      * 它们是实现细节，露出去只会被误用。
+     *
+     * **不带步骤**：模型要的是「到哪一步了」，
+     * 整条时间线只会撑爆它的上下文（要细节的是界面，见 `board()`）。
      */
     list() {
-      return runtime.list().map((task) => {
-        const step = lastSteps.get(task.id);
-        return {
-          taskId: task.id,
-          title: task.title,
-          status: task.status,
-          lastStep: step ? (step.failed ? `${step.tool} 出错` : step.tool) : '',
-          stepIndex: step?.index || 0,
-          result: task.result?.text ? String(task.result.text).slice(0, 200) : '',
-          error: task.error ? String(task.error?.message || task.error) : '',
-          elapsedMs: (task.finishedAt || now()) - task.createdAt,
-        };
-      });
+      return runtime.list().map(brief);
+    },
+
+    /**
+     * 任务看板的视图：**给人看的完整版**。
+     *
+     * 比 `list()` 多三样：创建时刻、完整结果、步骤时间线——
+     * 那是任务板详情页要的。
+     */
+    board() {
+      return runtime.list().map((task) => ({
+        ...brief(task),
+        // 详情页要看到整句话，不是前 200 字。
+        result: task.result?.text ? String(task.result.text) : '',
+        createdAt: task.createdAt,
+        startedAt: task.startedAt,
+        steps: stepLogs.get(task.id) || [],
+      }));
     },
 
     /**
@@ -311,7 +372,13 @@ export function createAgentTasks({
 
     /** 归档一个已结束的任务。 */
     archive(taskId) {
-      return runtime.archive(taskId);
+      const r = runtime.archive(taskId);
+      // 归档了就不再有人看它：这个任务的步骤清单也别留着。
+      if (r?.ok) {
+        stepLogs.delete(taskId);
+        lastSteps.delete(taskId);
+      }
+      return r;
     },
   };
 }
@@ -320,4 +387,40 @@ export function createAgentTasks({
 function shortTitle(text) {
   const s = String(text || '').replace(/\s+/g, ' ').trim();
   return s.length > 24 ? `${s.slice(0, 24)}…` : s;
+}
+
+/** 一段文字截到多少字。 */
+function clipText(text, limit) {
+  const s = String(text ?? '');
+  return s.length > limit ? `${s.slice(0, limit)}…` : s;
+}
+
+/**
+ * 步骤参数：只留几个键、每个值截一段。
+ *
+ * 参数可能是整个文件的内容（fs.write）——原样留着，
+ * 每秒推一份快照就能把界面压垮。
+ */
+function clipArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+  const out = {};
+  let n = 0;
+  for (const [key, value] of Object.entries(args)) {
+    if (n >= MAX_STEP_ARG_KEYS) break;
+    if (value === undefined || value === null || value === '') continue;
+    const text = typeof value === 'string' ? value : safeJson(value);
+    if (!text) continue;
+    out[key] = clipText(text, MAX_STEP_ARG_CHARS);
+    n += 1;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** JSON.stringify 不炸的那一版。 */
+function safeJson(value) {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value);
+  }
 }

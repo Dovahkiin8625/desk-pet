@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>音乐播放器</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font: var(--dp-font);
+        color: var(--dp-text);
+        background: var(--dp-bg);
+      }
+      /* 面板里窗口是按内容撑开的：不能按视口铺满（会与面板互相卡住）。 */
+      body.dp-panel {
+        min-height: 0;
+      }
+      #wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+      }
+      #head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #head .title {
+        font-weight: 600;
+        font-size: 15px;
+      }
+      #head .spacer {
+        flex: 1;
+      }
+      #folder {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dp-text-faint);
+        font-size: 12px;
+      }
+      #now {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      #np-title {
+        font-size: 16px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #np-sub {
+        color: var(--dp-text-soft);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* 进度条：点一下就跳到那儿。 */
+      #bar {
+        height: 6px;
+        margin-top: 6px;
+        border-radius: 3px;
+        background: var(--dp-surface);
+        cursor: pointer;
+        overflow: hidden;
+      }
+      #bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 3px;
+        background: var(--dp-accent-strong);
+        transition: width 0.25s linear;
+      }
+      #times {
+        display: flex;
+        font-size: 12px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      #times .spacer {
+        flex: 1;
+      }
+      #controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #controls button {
+        font: inherit;
+        width: 34px;
+        height: 30px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        color: var(--dp-text);
+        cursor: pointer;
+        font-size: 14px;
+      }
+      #controls button:hover {
+        background: var(--dp-surface-hover);
+      }
+      #play {
+        width: 42px;
+        background: var(--dp-accent);
+        border-color: var(--dp-accent-strong);
+        color: var(--dp-accent-ink);
+      }
+      #lyrics {
+        width: auto;
+        padding: 0 10px;
+        font-size: 12px;
+      }
+      #lyrics[aria-pressed='true'] {
+        background: var(--dp-accent);
+        border-color: var(--dp-accent-strong);
+        color: var(--dp-accent-ink);
+      }
+      #vol {
+        flex: 1;
+        min-width: 40px;
+        accent-color: var(--dp-accent-strong);
+      }
+      #lib-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--dp-text-soft);
+      }
+      #lib-head .spacer {
+        flex: 1;
+      }
+      #mode {
+        font: inherit;
+        font-size: 12px;
+        padding: 3px 6px;
+        border: 1px solid var(--dp-border);
+        border-radius: 6px;
+        background: var(--dp-surface);
+        color: var(--dp-text);
+      }
+      #list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        max-height: 210px;
+        overflow-y: auto;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+      }
+      #list:empty {
+        display: none;
+      }
+      #list li {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 6px 9px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--dp-border-soft);
+      }
+      #list li:last-child {
+        border-bottom: none;
+      }
+      #list li:hover {
+        background: var(--dp-surface);
+      }
+      #list li.current {
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+      }
+      #list .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+      }
+      #list .artist {
+        color: var(--dp-text-faint);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 40%;
+      }
+      #list li.current .artist {
+        color: var(--dp-accent-ink);
+      }
+      #empty {
+        color: var(--dp-text-soft);
+        font-size: 13px;
+        padding: 10px;
+        border: 1px dashed var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+      }
+      #empty[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="head">
+        <span class="title">音乐播放器</span>
+        <span id="folder" title=""></span>
+        <span class="spacer"></span>
+        <button id="pick" class="dp-button" type="button" title="选一个音乐文件夹">音乐库</button>
+        <button id="scan" class="dp-button" type="button" title="重新扫描这个文件夹">↻</button>
+      </div>
+
+      <div id="now">
+        <div id="np-title">还没在放</div>
+        <div id="np-sub">选一个音乐文件夹开始</div>
+        <div id="bar" title="点一下跳到那儿"><i id="bar-fill"></i></div>
+        <div id="times">
+          <span id="pos">00:00</span>
+          <span class="spacer"></span>
+          <span id="dur">00:00</span>
+        </div>
+      </div>
+
+      <div id="controls">
+        <button id="prev" type="button" title="上一首">⏮</button>
+        <button id="play" type="button" title="播放 / 暂停">▶</button>
+        <button id="next" type="button" title="下一首">⏭</button>
+        <input id="vol" type="range" min="0" max="100" title="音量" />
+        <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
+      </div>
+
+      <div id="lib-head">
+        <span id="lib-count">曲库</span>
+        <span class="spacer"></span>
+        <select id="mode" title="播放模式">
+          <option value="顺序播放">顺序播放</option>
+          <option value="单曲循环">单曲循环</option>
+          <option value="随机播放">随机播放</option>
+        </select>
+      </div>
+      <ul id="list"></ul>
+      <div id="empty">还没有音乐库。点右上角的「音乐库」选一个文件夹。</div>
+    </div>
+    <script type="module" src="player.js"></script>
+  </body>
+</html>

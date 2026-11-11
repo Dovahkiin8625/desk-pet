@@ -2,12 +2,43 @@
   "id": "clipboard",
   "name": "剪贴板",
   "icon": "📋",
-  "description": "最近复制的内容（不落盘）",
+  "description": "剪贴板历史：双击就贴出去，能固定",
   "keywords": ["clipboard", "copy", "jiban", "jb", "剪贴板", "复制"],
   "window": {
     "title": "剪贴板",
-    "width": 340,
-    "height": 240,
+    "page": "pages/history.html",
+    "width": 380,
+    "height": 460,
     "refreshMs": 0
-  }
+  },
+  "settings": [
+    {
+      "key": "record",
+      "label": "记录剪贴板历史",
+      "type": "boolean",
+      "default": true,
+      "hint": "复制什么就记什么（内容会存在本机）"
+    },
+    {
+      "key": "maxEntries",
+      "label": "最多保留多少条",
+      "type": "number",
+      "default": 200,
+      "hint": "固定的那几条不计入"
+    },
+    {
+      "key": "showHotkey",
+      "label": "打开历史的快捷键",
+      "type": "text",
+      "default": "Control+Shift+V",
+      "hint": "Electron 的写法，例如 Control+Shift+V"
+    },
+    {
+      "key": "pasteHotkey",
+      "label": "粘贴最近一条的快捷键",
+      "type": "text",
+      "default": "Control+Shift+B",
+      "hint": "Electron 的写法，例如 Control+Shift+B"
+    }
+  ]
 }

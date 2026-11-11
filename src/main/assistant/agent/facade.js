@@ -78,9 +78,13 @@ export function createAgentFacade({
     /**
      * 现在有哪些后台任务（不含归档）。
      *
+     * 走的是**看板视图**：带步骤时间线与完整结果——
+     * 插件的界面要给人看整个过程，不是给模型看的简报。
+     *
      * @returns {Promise<Array<object>>}
      */
     async tasks() {
+      if (typeof runtime?.board === 'function') return runtime.board() || [];
       if (typeof runtime?.list === 'function') return runtime.list() || [];
       return [];
     },

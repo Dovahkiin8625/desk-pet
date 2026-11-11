@@ -283,7 +283,8 @@ export function createAssistant({  userDataDir,
         return { ok: true, taskId: task.taskId };
       },
       cancel: async (taskId) => agentTasks.cancel(taskId),
-      list: () => agentTasks.list(),
+      // 插件的界面要给人看整个过程：看板视图（带步骤时间线）。
+      board: () => agentTasks.board(),
       steer: (taskId, note) => agentTasks.steer(taskId, note),
       archive: (taskId) => agentTasks.archive(taskId),
       history: () => chatHistoryView().messages,

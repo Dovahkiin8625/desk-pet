@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>音乐播放器</title>
+    <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        font: 12px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+        color: #2b2a26;
+      }
+      #title {
+        font-weight: 600;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #sub {
+        color: #8a8272;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #bar {
+        height: 5px;
+        border-radius: 3px;
+        background: #ece6d8;
+        overflow: hidden;
+        cursor: pointer;
+        /* 进度条要能点（跳到那儿）：别跟着窗口一起拖。 */
+        -webkit-app-region: no-drag;
+      }
+      #bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 3px;
+        background: #c9b98c;
+        transition: width 0.25s linear;
+      }
+      #foot {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #foot .spacer {
+        flex: 1;
+      }
+      #foot button {
+        border: 1px solid #d8d2c4;
+        background: #fffdf8;
+        color: #6d6558;
+        border-radius: 6px;
+        min-width: 26px;
+        height: 22px;
+        padding: 0 6px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #foot button:hover {
+        background: #efe6d2;
+      }
+      #lyrics[aria-pressed='true'] {
+        background: #c9b98c;
+        border-color: #bda87c;
+        color: #4a3f2a;
+      }
+      #time {
+        color: #8a8272;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card" class="dp-widget-card">
+      <div id="head" class="dp-widget-head">
+        <span>音乐播放器</span>
+        <span class="spacer"></span>
+        <button id="expand" title="变回独立窗口">▣</button>
+        <button id="close" title="收起来">✕</button>
+      </div>
+      <div id="title">还没在放</div>
+      <div id="sub">选一个音乐文件夹开始</div>
+      <div id="bar" title="点一下跳到那儿"><i id="fill"></i></div>
+      <div id="foot">
+        <button id="prev" type="button" title="上一首">⏮</button>
+        <button id="play" type="button" title="播放 / 暂停">▶</button>
+        <button id="next" type="button" title="下一首">⏭</button>
+        <span id="time">00:00 / 00:00</span>
+        <span class="spacer"></span>
+        <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
+      </div>
+    </div>
+    <script type="module" src="widget.js"></script>
+  </body>
+</html>

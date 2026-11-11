@@ -1,11 +1,30 @@
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
-import { formatElapsed, groupSnapshot, statusText, stepLabel } from './format.js';
+import {
+  activeTasks,
+  countByStatus,
+  currentTask,
+  formatClock,
+  formatDuration,
+  formatElapsed,
+  isActive,
+  resultText,
+  shortId,
+  sortTasks,
+  statusText,
+  stepLabel,
+  stepNodes,
+} from './format.js';
 
 /**
  * 后台任务板。
  *
  * 同一个页面文件当三处用：面板页、独立窗口、桌面小部件。
  * 靠 `surface.mode` 切布局（`body.dp-widget`）。
+ *
+ * ## 两层
+ *
+ * - **总览**：计数、当前任务、待你点头的审批、任务列表；
+ * - **详情**：点开某一个任务——创建时刻、耗时、结果、竖向的步骤时间线。
  *
  * ## 重画的方式
  *
@@ -24,24 +43,40 @@ document.body.classList.toggle('dp-widget', isWidget);
 if (isWidget) document.getElementById('head').classList.add('dp-widget-head');
 
 const wrapEl = document.getElementById('wrap');
-const pendingEl = document.getElementById('pending');
-const runningEl = document.getElementById('running');
-const finishedEl = document.getElementById('finished');
-const pendingSec = document.getElementById('pending-sec');
-const runningSec = document.getElementById('running-sec');
-const finishedSec = document.getElementById('finished-sec');
+const overviewEl = document.getElementById('overview');
+const detailEl = document.getElementById('detail');
 const countsEl = document.getElementById('counts');
 const interruptedEl = document.getElementById('interrupted');
 const emptyEl = document.getElementById('empty');
 const messageEl = document.getElementById('message');
+const currentSecEl = document.getElementById('current-sec');
+const currentEl = document.getElementById('current');
+const pendingSecEl = document.getElementById('pending-sec');
+const pendingEl = document.getElementById('pending');
+const tasksSecEl = document.getElementById('tasks-sec');
+const tasksEl = document.getElementById('tasks');
+const detailTitleEl = document.getElementById('detail-title');
+const detailIdEl = document.getElementById('detail-id');
+const detailMetaEl = document.getElementById('detail-meta');
+const detailResultEl = document.getElementById('detail-result');
+const detailCancelEl = document.getElementById('detail-cancel');
+const detailArchiveEl = document.getElementById('detail-archive');
+const detailSteerEl = document.getElementById('detail-steer');
+const detailNoteEl = document.getElementById('detail-note');
+const stepsEl = document.getElementById('detail-steps');
 
+/** 现在看哪一层：总览还是详情。 */
+let view = 'overview';
+/** 详情页在看哪个任务。 */
+let selectedId = '';
+/** 最近一份快照。 */
+let lastPayload = null;
 /** taskId → 行（复用，不重画）。 */
-const activeRows = new Map();
-const finishedRows = new Map();
+const rows = new Map();
 /** 审批 id → 卡片。 */
 const cards = new Map();
-/** 展开着的是哪些任务（键是 taskId）。 */
-const expanded = new Set();
+/** 步骤序号 → 节点（复用，不重画）。 */
+const stepViews = new Map();
 /** 刚做过的本地状态：下一秒的快照会覆盖它。 */
 const localStatus = new Map();
 
@@ -58,67 +93,114 @@ function statusOf(task) {
   return localStatus.get(task?.taskId) || task?.status || '';
 }
 
-/** 在跑与排队的一行。 */
-function createActiveRow() {
+/** 计数那一行。 */
+function countsLine(counts, compact) {
+  const parts = [];
+  const add = (n, label) => {
+    if (n) parts.push(`${n} ${label}`);
+  };
+  add(counts.running, '在跑');
+  add(counts.queued, '排队');
+  if (compact) {
+    add(counts.failed, '失败');
+  } else {
+    add(counts.done, '已完成');
+    add(counts.failed, '失败');
+    add(counts.cancelled, '已取消');
+  }
+  return parts.join(' · ');
+}
+
+/** 一行任务。 */
+function createRow() {
   const row = el('div', 'row');
   const head = el('div', 'row-head');
   const dot = el('span', 'dot');
   const title = el('span', 'row-title');
-  const status = el('span', 'row-status');
+  const id = el('span', 'row-id');
+  const tag = el('span', 'tag');
   const time = el('span', 'row-time');
-  head.append(dot, title, status, time);
+  head.append(dot, title, id, tag, time);
 
-  const step = el('div', 'row-step');
+  const sub = el('div', 'row-sub');
+  const step = el('span', 'row-step');
   const actions = el('div', 'row-actions');
   const cancel = el('button', 'dp-button', '停掉');
   cancel.dataset.act = 'cancel';
-  const steer = el('button', 'dp-button', '追加要求');
-  steer.dataset.act = 'steer';
-  actions.append(cancel, steer);
+  actions.append(cancel);
+  sub.append(step, actions);
 
-  const steerBox = el('div', 'steer-box');
-  steerBox.hidden = true;
-  const input = el('input', 'dp-input');
-  input.type = 'text';
-  input.dataset.role = 'steer';
-  input.placeholder = '要追加的一句话';
-  const send = el('button', 'dp-button', '发送');
-  send.dataset.act = 'steer-send';
-  steerBox.append(input, send);
-
-  row.append(head, step, actions, steerBox);
-  return { row, dot, title, status, time, step, steerBox, input };
+  row.append(head, sub);
+  return { row, dot, title, id, tag, time, step, cancel };
 }
 
-/** 已结束的一行（可展开）。 */
-function createFinishedRow(taskId) {
-  const row = el('div', 'row');
-  row.dataset.task = taskId;
-  const detail = el('details', 'row-detail');
-  const head = el('summary', 'row-head');
-  const dot = el('span', 'dot');
-  const title = el('span', 'row-title');
-  const status = el('span', 'row-status');
-  const time = el('span', 'row-time');
-  head.append(dot, title, status, time);
+/** 把一行画成任务现在的样子。 */
+function updateRow(view, task) {
+  const status = statusOf(task);
+  view.row.dataset.task = task.taskId;
+  view.dot.dataset.status = status;
+  view.title.textContent = task.title || task.taskId;
+  view.id.textContent = `#${shortId(task.taskId)}`;
+  view.id.title = task.taskId;
+  view.tag.textContent = statusText(status);
+  view.tag.dataset.status = status;
+  view.time.textContent = formatElapsed(task.elapsedMs);
+  const step = stepLabel(task);
+  view.step.textContent = step;
+  view.step.hidden = !step;
+  // 完了的任务没什么可停的。
+  view.cancel.hidden = !isActive(task);
+}
 
-  const body = el('div', 'row-body');
-  detail.append(head, body);
+/**
+ * 对齐任务列表：复用已有的节点，多的删掉，顺序跟着列表走。
+ *
+ * **顺序会变**：跑着的任务排在前面（它可能是十分钟前派的）。
+ */
+function syncRows(list) {
+  const seen = new Set();
+  let prev = null;
+  for (const task of list) {
+    const id = String(task?.taskId || '');
+    if (!id) continue;
+    seen.add(id);
+    let view = rows.get(id);
+    if (!view) {
+      view = createRow();
+      rows.set(id, view);
+    }
+    updateRow(view, task);
+    // 放在前一个后面：位置不对就挪过去（挪的是节点，状态都还在）。
+    const target = prev ? prev.nextSibling : tasksEl.firstChild;
+    if (view.row !== target) tasksEl.insertBefore(view.row, target);
+    prev = view.row;
+  }
+  for (const [id, view] of [...rows]) {
+    if (seen.has(id)) continue;
+    rows.delete(id);
+    view.row.remove();
+  }
+}
 
-  const actions = el('div', 'row-actions');
-  const archive = el('button', 'dp-button', '归档');
-  archive.dataset.act = 'archive';
-  actions.append(archive);
+/** 当前任务：总览顶上那一栏。 */
+const currentCard = { card: null, title: null, step: null };
 
-  row.append(detail, actions);
-  detail.open = expanded.has(taskId);
-  detail.addEventListener('toggle', () => {
-    const id = row.dataset.task;
-    if (!id) return;
-    if (detail.open) expanded.add(id);
-    else expanded.delete(id);
-  });
-  return { row, detail, dot, title, status, time, body, actions, archive };
+function renderCurrent(task) {
+  if (!currentCard.card) {
+    const card = el('div', 'current');
+    const title = el('div', 'current-title');
+    const step = el('div', 'current-step');
+    card.append(title, step);
+    currentEl.appendChild(card);
+    currentCard.card = card;
+    currentCard.title = title;
+    currentCard.step = step;
+  }
+  currentCard.card.dataset.task = task.taskId;
+  currentCard.title.textContent = task.title || task.taskId;
+  const step = stepLabel(task);
+  currentCard.step.textContent = step;
+  currentCard.step.hidden = !step;
 }
 
 /** 待答审批的一张卡片。 */
@@ -142,89 +224,17 @@ function createCard() {
   return { card, text, task };
 }
 
-/**
- * 对齐一栏的行：复用已有的节点，多的删掉。
- *
- * **顺序不动**：新行接在后面。整栏重排会把用户正在输入的输入框挪走，
- * 焦点就没了。
- */
-function syncRows(container, map, list, create, update) {
-  const seen = new Set();
-  for (const task of list) {
-    const id = String(task?.taskId || '');
-    if (!id) continue;
-    seen.add(id);
-    let view = map.get(id);
-    if (!view) {
-      view = create(id);
-      map.set(id, view);
-      container.appendChild(view.row);
-    }
-    update(view, task);
-  }
-  for (const [id, view] of [...map]) {
-    if (seen.has(id)) continue;
-    map.delete(id);
-    view.row.remove();
-  }
-}
-
-/** 一份快照画上去。 */
-function render(payload) {
-  if (!payload) return;
-  // 快照是真相：本地刚改的状态到这儿就作废了。
-  localStatus.clear();
-
-  const { pending, running, finished } = groupSnapshot(payload);
-  const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+/** 对齐审批卡片：来一张画一张，走了一张收走。 */
+function syncCards(approvals, tasks) {
   const titleOf = (taskId) => {
-    const task = tasks.find((t) => t?.taskId === taskId);
-    return task?.title || taskId || '';
+    const task = tasks.find((t) => String(t?.taskId || '') === String(taskId || ''));
+    return task?.title || '';
   };
-
-  syncRows(
-    runningEl,
-    activeRows,
-    running,
-    () => createActiveRow(),
-    (view, task) => {
-      const status = statusOf(task);
-      view.row.dataset.task = task.taskId;
-      view.dot.dataset.status = status;
-      view.title.textContent = task.title || task.taskId;
-      view.status.textContent = statusText(status);
-      view.time.textContent = formatElapsed(task.elapsedMs);
-      const step = stepLabel(task);
-      view.step.textContent = step;
-      view.step.hidden = !step;
-    }
-  );
-
-  syncRows(
-    finishedEl,
-    finishedRows,
-    finished,
-    (id) => createFinishedRow(id),
-    (view, task) => {
-      const status = statusOf(task);
-      view.row.dataset.task = task.taskId;
-      view.dot.dataset.status = status;
-      view.title.textContent = task.title || task.taskId;
-      view.status.textContent = statusText(status);
-      view.time.textContent = formatElapsed(task.elapsedMs);
-      const body = task.error ? `失败：${task.error}` : String(task.result || '');
-      view.body.textContent = body;
-      view.body.classList.toggle('row-error', Boolean(task.error));
-      view.body.hidden = !body;
-    }
-  );
-
-  // 待答的审批：一张卡片一张。
-  const seenCards = new Set();
-  for (const approval of pending) {
+  const seen = new Set();
+  for (const approval of approvals) {
     const id = String(approval?.id || '');
     if (!id) continue;
-    seenCards.add(id);
+    seen.add(id);
     let view = cards.get(id);
     if (!view) {
       view = createCard();
@@ -236,22 +246,129 @@ function render(payload) {
     view.task.textContent = titleOf(approval.taskId);
   }
   for (const [id, view] of [...cards]) {
-    if (seenCards.has(id)) continue;
+    if (seen.has(id)) continue;
     cards.delete(id);
     view.card.remove();
   }
+}
 
-  const counts = payload.counts || {};
-  countsEl.textContent = `${counts.running || 0} 在跑 · ${counts.queued || 0} 排队`;
+/** 步骤时间线上的一格。 */
+function createStepNode() {
+  const item = el('li', 'tl-item');
+  const head = el('div', 'tl-head');
+  const time = el('span', 'tl-time');
+  const tool = el('span', 'tl-tool');
+  head.append(time, tool);
+  const args = el('div', 'tl-args');
+  const result = el('div', 'tl-result');
+  item.append(head, args, result);
+  return { item, time, tool, args, result };
+}
+
+/** 对齐步骤时间线：新长出来的一格接在后面。 */
+function syncSteps(steps) {
+  const nodes = stepNodes(steps);
+  const seen = new Set();
+  let prev = null;
+  for (const node of nodes) {
+    const key = String(node.index);
+    seen.add(key);
+    let view = stepViews.get(key);
+    if (!view) {
+      view = createStepNode();
+      stepViews.set(key, view);
+    }
+    view.item.dataset.failed = node.failed ? 'true' : 'false';
+    view.time.textContent = node.time;
+    view.tool.textContent = node.label || node.tool;
+    view.args.textContent = node.args;
+    view.args.hidden = !node.args;
+    const body = node.failed ? node.error : node.result;
+    view.result.textContent = body;
+    view.result.hidden = !body;
+    const target = prev ? prev.nextSibling : stepsEl.firstChild;
+    if (view.item !== target) stepsEl.insertBefore(view.item, target);
+    prev = view.item;
+  }
+  for (const [key, view] of [...stepViews]) {
+    if (seen.has(key)) continue;
+    stepViews.delete(key);
+    view.item.remove();
+  }
+}
+
+/** 总览层。 */
+function renderOverview(payload, tasks) {
+  countsEl.textContent = countsLine(countByStatus(tasks), isWidget);
+
+  const current = currentTask(tasks);
+  currentSecEl.hidden = !current;
+  if (current) renderCurrent(current);
+
+  const approvals = Array.isArray(payload.approvals) ? payload.approvals : [];
+  syncCards(approvals, tasks);
+  pendingSecEl.hidden = !approvals.length;
+
+  // 小部件地方小：只看在跑的。
+  const list = sortTasks(isWidget ? activeTasks(tasks) : tasks);
+  syncRows(list);
+  tasksSecEl.hidden = !list.length;
+
   const interrupted = Number(payload.interrupted) || 0;
   interruptedEl.hidden = !interrupted;
   interruptedEl.textContent = interrupted ? `上次有 ${interrupted} 个任务被中断` : '';
 
-  pendingSec.hidden = !pending.length;
-  runningSec.hidden = !running.length;
-  finishedSec.hidden = !finished.length;
-  emptyEl.hidden = Boolean(tasks.length || pending.length);
+  emptyEl.hidden = isWidget ? list.length > 0 : Boolean(tasks.length || approvals.length);
+}
 
+/** 详情层。 */
+function renderDetail(tasks) {
+  const task = tasks.find((t) => String(t?.taskId || '') === selectedId);
+  if (!task) return;
+  const status = statusOf(task);
+  const active = isActive(task);
+
+  detailTitleEl.textContent = task.title || task.taskId;
+  detailIdEl.textContent = `#${shortId(task.taskId)}`;
+  detailIdEl.title = task.taskId;
+
+  const parts = [statusText(status)];
+  const created = formatClock(task.createdAt);
+  if (created) parts.push(`创建于 ${created}`);
+  parts.push(active ? `已用 ${formatDuration(task.elapsedMs)}` : `耗时 ${formatDuration(task.elapsedMs)}`);
+  detailMetaEl.textContent = parts.join(' · ');
+
+  const result = resultText(task);
+  detailResultEl.textContent = result;
+  detailResultEl.hidden = !result;
+  detailResultEl.classList.toggle('is-error', Boolean(task.error));
+
+  detailCancelEl.hidden = !active;
+  detailArchiveEl.hidden = active;
+  detailSteerEl.hidden = !active;
+
+  syncSteps(task.steps || []);
+}
+
+/** 一份快照画上去。 */
+function render(payload) {
+  if (!payload) return;
+  lastPayload = payload;
+  const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+
+  // 详情页看的那个任务没了（归档了）：回总览。
+  if (view === 'detail' && !tasks.some((t) => String(t?.taskId || '') === selectedId)) {
+    view = 'overview';
+    selectedId = '';
+  }
+  overviewEl.hidden = view !== 'overview';
+  detailEl.hidden = view !== 'detail';
+
+  if (view === 'detail') renderDetail(tasks);
+  else renderOverview(payload, tasks);
+
+  // 本地刚改的状态这一轮用完了：作废，下一秒听快照的。
+  localStatus.clear();
   reportHeight();
 }
 
@@ -269,14 +386,17 @@ async function act(actionId, payload) {
   const ok = Boolean(res?.ok);
   if (ok && actionId === 'cancel') localStatus.set(payload.taskId, 'cancelled');
   if (ok && actionId === 'archive') {
-    const view = activeRows.get(payload.taskId) || finishedRows.get(payload.taskId);
-    view?.row.remove();
-    activeRows.delete(payload.taskId);
-    finishedRows.delete(payload.taskId);
+    const row = rows.get(payload.taskId);
+    row?.row.remove();
+    rows.delete(payload.taskId);
+    if (selectedId === payload.taskId) {
+      view = 'overview';
+      selectedId = '';
+    }
   }
   if (ok && actionId === 'answer') {
-    const view = cards.get(payload.id);
-    view?.card.remove();
+    const card = cards.get(payload.id);
+    card?.card.remove();
     cards.delete(payload.id);
   }
   messageEl.textContent = String(res?.message || '');
@@ -284,50 +404,71 @@ async function act(actionId, payload) {
 }
 
 /** 追加要求：把那句话送出去。 */
-async function sendSteer(row, taskId) {
-  const input = row.querySelector('input[data-role="steer"]');
-  const note = String(input?.value || '').trim();
-  if (!note) return;
-  input.value = '';
+async function sendSteer(taskId) {
+  const note = String(detailNoteEl.value || '').trim();
+  if (!note || !taskId) return;
+  detailNoteEl.value = '';
   await act('steer', { taskId, note });
 }
 
+/** 进详情。 */
+function openDetail(taskId) {
+  if (!taskId || !lastPayload) return;
+  if (selectedId !== taskId) {
+    selectedId = taskId;
+    detailNoteEl.value = '';
+  }
+  view = 'detail';
+  render(lastPayload);
+}
+
+/** 回总览。 */
+function backToOverview() {
+  view = 'overview';
+  selectedId = '';
+  if (lastPayload) render(lastPayload);
+}
+
+document.getElementById('detail-back').addEventListener('click', () => {
+  backToOverview();
+});
+
 wrapEl.addEventListener('click', (event) => {
   const button = event.target.closest?.('button[data-act]');
-  if (!button) return;
-  const row = button.closest('[data-task]');
-  const taskId = row?.dataset.task || '';
-  const actionId = button.dataset.act;
-  if (actionId === 'cancel') {
-    void act('cancel', { taskId });
+  if (button) {
+    const actionId = button.dataset.act;
+    if (actionId === 'answer') {
+      const card = button.closest('[data-approval]');
+      void act('answer', { id: card?.dataset.approval || '', decision: button.dataset.decision || '' });
+      return;
+    }
+    if (actionId === 'steer-send') {
+      void sendSteer(selectedId);
+      return;
+    }
+    // 停掉与归档：总览的行上有点，详情层里也有。
+    const row = button.closest('[data-task]');
+    const taskId = row?.dataset.task || selectedId;
+    if (actionId === 'cancel') {
+      void act('cancel', { taskId });
+      return;
+    }
+    if (actionId === 'archive') {
+      void act('archive', { taskId });
+    }
     return;
   }
-  if (actionId === 'archive') {
-    void act('archive', { taskId });
-    return;
-  }
-  if (actionId === 'steer') {
-    const view = activeRows.get(taskId);
-    if (view) view.steerBox.hidden = !view.steerBox.hidden;
-    return;
-  }
-  if (actionId === 'steer-send') {
-    void sendSteer(row, taskId);
-    return;
-  }
-  if (actionId === 'answer') {
-    const card = button.closest('[data-approval]');
-    void act('answer', { id: card?.dataset.approval || '', decision: button.dataset.decision || '' });
-  }
+  // 点一行：进详情（小部件太小，只看总览）。
+  const row = event.target.closest?.('[data-task]');
+  if (!row || isWidget) return;
+  openDetail(row.dataset.task || '');
 });
 
 wrapEl.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter') return;
-  const input = event.target.closest?.('input[data-role="steer"]');
-  if (!input) return;
+  if (event.target !== detailNoteEl) return;
   event.preventDefault();
-  const row = input.closest('[data-task]');
-  void sendSteer(row, row?.dataset.task || '');
+  void sendSteer(selectedId);
 });
 
 // 小部件的两个按钮：变回独立窗口、收起来。
@@ -338,6 +479,9 @@ document.getElementById('widget-expand').addEventListener('click', () => {
 document.getElementById('widget-close').addEventListener('click', () => {
   window.plugin?.window?.close?.();
 });
+
+// 小部件里没有任务列表可点：空的时候说的是另一句话。
+if (isWidget) emptyEl.textContent = '现在没有在跑的任务';
 
 // 首份快照：打开时给一次。
 void surface.data().then((payload) => render(payload));

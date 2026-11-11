@@ -168,6 +168,31 @@ export function createPluginWindowController({
     windows.set(pluginId, entry);
     byContents.set(contentsId, pluginId);
 
+    // 界面落点：**窗口开着就该有落点**（宿主按 refreshMs 往它推数据）。
+    //
+    // 不等页面报到：小部件是插件的页面原样加载的，没有壳替它报到——
+    // 等报到的结果是它永远拿不到周期数据，只剩打开时那一份快照。
+    entry.surface = {
+      kind: 'window',
+      // 形态：小部件与独立窗口的清单段不一样，刷新周期按各自的算。
+      mode,
+      deliver(kind, payload) {
+        const win = entryOf(pluginId)?.win;
+        if (!win || win.isDestroyed()) return;
+        const channel = kind === 'data' ? 'plugin:data'
+          : kind === 'tick' ? 'plugin:tick'
+          : 'plugin:page';
+        // **不拆包**：宿主推来的统一是 `{ pluginId, data }`，
+        // 拆包的是壳（plugin-window/main.js）与插件页面助手。
+        //
+        // 小部件是**例外**：它的页面是插件自己写的，按 window.plugin 的约定
+        // 收**裸数据**。
+        const body = mode === PLUGIN_WINDOW_MODE.WIDGET ? payload?.data : payload;
+        win.webContents.send(channel, body);
+      },
+    };
+    surfaces?.attach(pluginId, entry.surface);
+
     win.on('closed', () => {
       byContents.delete(contentsId);
       // 窗口没了：这个界面落点也不能留着——tick 会一直推。
@@ -270,40 +295,17 @@ export function createPluginWindowController({
    * 自定义页面拿的是插件自己的数据（`data()`）；
    * 通用声明式界面拿的是插件的页面（`page()`）。
    *
-   * 窗口这个界面落点**挂到 surface 路由上**：数据由路由推过来，
-   * 面板工作台那边开着同一个插件时，两处看到的是同一份。
-   *
    * **首份数据走 broadcast**：它要送到**所有**挂着这个插件的界面，
    * 只送窗口这一份的话，面板那边就少了一份。
+   *
+   * 界面落点在窗口建好时就挂上了（见 createWindow）——
+   * 这里只管补第一份数据。
    */
   async function onReady(pluginId) {
     const entry = entryOf(pluginId);
     if (!entry) return;
     const record = host.get(pluginId);
     if (!record) return;
-
-    // 窗口这个界面落点：数据由 surface 路由推过来。
-    const windowSurface = {
-      kind: 'window',
-      // 形态：小部件与独立窗口的清单段不一样，刷新周期按各自的算。
-      mode: entry.mode,
-      deliver(kind, payload) {
-        const win = entryOf(pluginId)?.win;
-        if (!win || win.isDestroyed()) return;
-        const channel = kind === 'data' ? 'plugin:data'
-          : kind === 'tick' ? 'plugin:tick'
-          : 'plugin:page';
-        // **不拆包**：宿主推来的统一是 `{ pluginId, data }`，
-        // 拆包的是壳（plugin-window/main.js）与插件页面助手。
-        //
-        // 小部件是**例外**：它的页面是插件自己写的，按 window.plugin 的约定
-        // 收**裸数据**（这一轮不改小部件）。
-        const body = entry.mode === PLUGIN_WINDOW_MODE.WIDGET ? payload?.data : payload;
-        win.webContents.send(channel, body);
-      },
-    };
-    entry.surface = windowSurface;
-    surfaces?.attach(pluginId, windowSurface);
 
     if (entry.ownPage) {
       // 自定义页面：插件自己管界面，宿主只负责喂数据。
@@ -399,9 +401,14 @@ export function createPluginWindowController({
      * 退出时不需要保留任何界面，所以直接 destroy() 绕开那条流程。
      */
     destroyAll,
-    /** 桌宠动了：插件窗口跟着动。 */
+    /**
+     * 桌宠动了：独立窗口跟着动。
+     *
+     * 小部件不跟：它常驻桌面，用户拖到哪儿就待在哪儿。
+     */
     reposition: () => {
       for (const entry of windows.values()) {
+        if (entry.mode === PLUGIN_WINDOW_MODE.WIDGET) continue;
         if (entry.win && !entry.win.isDestroyed() && entry.win.isVisible()) place(entry.win);
       }
     },
