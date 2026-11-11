@@ -38,3 +38,4 @@ minimax-api-key
 # 以后再加预制模型，不必回来改这个文件。
 assets/live2d/models/*/*
 !assets/live2d/models/*/pet.json
+.VSCodeCounter
