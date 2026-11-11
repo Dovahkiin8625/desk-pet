@@ -251,6 +251,26 @@ test('步骤记录带着是哪一层的', () => {
   assert.equal(stepRecord({ taskId: '', tool: 'fs.list', layer: 'interaction' }).meta.layer, 'interaction');
 });
 
+test('步骤失败时：可见文字里必须带错误原因（不装作成功）', () => {
+  // 有人话标签时也不能把错误原因吃掉：
+  // 聊天记录页只看得到 text，看不到 meta.error。
+  const entry = stepRecord({ taskId: 't-1', tool: 'fs.read', label: '读文件', error: '文件不存在' });
+  assert.ok(entry.text.includes('文件不存在'), `错误原因不能从可见文字里消失：${entry.text}`);
+  assert.ok(entry.text.includes('读文件'), `人话标签要留着：${entry.text}`);
+  assert.ok(entry.text.includes('出错'), `失败要看得出来：${entry.text}`);
+});
+
+test('步骤失败时：没有标签也要带错误原因', () => {
+  const entry = stepRecord({ taskId: 't-1', tool: 'fs.read', error: '文件不存在' });
+  assert.ok(entry.text.includes('文件不存在'), `错误原因不能丢：${entry.text}`);
+  assert.ok(entry.text.includes('fs.read'), `没有标签时用工具名：${entry.text}`);
+});
+
+test('步骤成功时：只显示人话标签，不带「出错」', () => {
+  const entry = stepRecord({ taskId: 't-1', tool: 'fs.list', label: '列目录', result: 'a.txt' });
+  assert.equal(entry.text, '列目录');
+});
+
 test('磁盘：meta 太大了要截断，别让一条记录把文件撑爆', () => {
   const huge = 'x'.repeat(50000);
   const raw = {
