@@ -2,11 +2,14 @@
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 
+/** 认得的音频格式（给文件对话框用：不带点）。 */
+export const AUDIO_EXTENSIONS = [
+  'mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'oga', 'opus',
+  'wma', 'ape', 'aif', 'aiff', 'alac',
+];
+
 /** 认得的音频格式。 */
-const AUDIO_EXT = new Set([
-  '.mp3', '.m4a', '.aac', '.flac', '.wav', '.ogg', '.oga', '.opus',
-  '.wma', '.ape', '.aif', '.aiff', '.alac',
-]);
+const AUDIO_EXT = new Set(AUDIO_EXTENSIONS.map((ext) => `.${ext}`));
 
 /** 扫到这么深就停。 */
 const MAX_DEPTH = 4;
@@ -20,7 +23,7 @@ const MAX_TRACKS = 5000;
  * 歌名与歌手从**文件名**里认：「歌手 - 歌名.mp3」。
  * 认不出就整个文件名当歌名——总比空着强。
  */
-function makeTrack(file) {
+export function makeTrack(file) {
   const base = basename(file, extname(file));
   // 开头的曲号（"01 - "、"03."）不是歌名的一部分。
   const cleaned = base.replace(/^\s*\d{1,3}\s*[-_.]\s*/, '');
@@ -37,7 +40,7 @@ function makeTrack(file) {
 }
 
 /**
- * 扫一个文件夹，把音频文件收成曲库。
+ * 扫一个文件夹，把音频文件收成一份歌单用的清单。
  *
  * @param {string} folder 音乐文件夹
  * @returns {Promise<{tracks: object[], truncated: boolean}>}
@@ -92,11 +95,11 @@ export function lyricPathsFor(track) {
 }
 
 /**
- * 在曲库里找歌。
+ * 在一串歌里找歌。
  *
  * `song` 按**歌名**过滤，`artist` 按**歌手**过滤；两个都给就都要对上。
  *
- * @param {object[]} tracks 曲库里的歌
+ * @param {object[]} tracks 要找的那一串歌
  * @param {{song?: string, artist?: string}} filter
  * @returns {object[]} 对得上的那些歌
  */

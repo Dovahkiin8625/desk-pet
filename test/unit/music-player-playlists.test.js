@@ -11,11 +11,13 @@ import { join } from 'node:path';
 import {
   addPlaylist,
   addTracksToPlaylist,
+  ensureDefaultPlaylist,
   normalizePlaylists,
   playlistsPath,
   readPlaylists,
   removePlaylist,
   removeTrackFromPlaylist,
+  setPlaylistCover,
   writePlaylists,
 } from '../../plugins/music-player/lib/playlists.js';
 
@@ -116,4 +118,36 @@ test('歌单文件写坏了也当作空的', async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('默认列表永远在第一个', () => {
+  const out = ensureDefaultPlaylist(addPlaylist([], '通勤'));
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, 'default');
+  assert.equal(out[0].name, '默认列表');
+  assert.equal(out[1].name, '通勤');
+});
+
+test('默认列表已经有了就别补第二个', () => {
+  const list = ensureDefaultPlaylist(ensureDefaultPlaylist([]));
+  assert.equal(list.length, 1);
+  assert.equal(list[0].id, 'default');
+});
+
+test('默认列表里的歌要留着（补默认列表时别清空）', () => {
+  const withTracks = addTracksToPlaylist(
+    ensureDefaultPlaylist([]),
+    'default',
+    [TRACK]
+  ).playlists;
+  const out = ensureDefaultPlaylist(withTracks);
+  assert.equal(out[0].tracks.length, 1);
+});
+
+test('换个封面：空字符串就是用回第一首歌的图', () => {
+  const list = ensureDefaultPlaylist([]);
+  const withCover = setPlaylistCover(list, 'default', 'C:/pic/a.png');
+  assert.equal(withCover[0].cover, 'C:/pic/a.png');
+  const reset = setPlaylistCover(withCover, 'default', '');
+  assert.equal(reset[0].cover, '');
 });

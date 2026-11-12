@@ -182,7 +182,7 @@ test.describe('宽版与窄版', () => {
 
   // 自带页面的插件：窄版是默认（面板里、小部件里），宽版在媒体查询里。
   const CASES = [
-    { id: 'music-player', query: 'yinyue', sel: '#wrap' },
+    { id: 'music-player', query: 'yinyue', sel: '#body' },
     { id: 'chat-history', query: 'jl', sel: '#list' },
     { id: 'clipboard', query: 'jiban', sel: '.clip-list' },
     { id: 'tasks', query: 'houtai', sel: '#overview' },

@@ -39,3 +39,4 @@ minimax-api-key
 assets/live2d/models/*/*
 !assets/live2d/models/*/pet.json
 .VSCodeCounter
+.tmp*

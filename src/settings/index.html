@@ -246,6 +246,26 @@
     .tool-row.off { opacity: 0.62; }
     /* 行尾的箭头：提示这行能点开。 */
     .tool-arrow { flex: none; color: var(--muted-3); font-size: 12px; }
+    /* 行首的选择框：勾上它，这个工具就是批量操作的对象。 */
+    .tool-select { flex: none; width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+    /* 选中的行染个色：光看勾选框容易看漏。 */
+    .tool-row.selected { background: var(--surface-active); border-color: var(--accent-soft); }
+    /* ---------- 工具的批量操作 ---------- */
+    .tool-batch {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .tool-batch-all {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; user-select: none;
+    }
+    .tool-batch-all input { flex: none; width: 15px; height: 15px; accent-color: var(--accent); }
+    .tool-batch-count { color: var(--muted-2); font-size: 12px; }
+    .tool-batch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tool-batch-actions select { width: auto; }
+    /* 没选工具时批量按钮是灰的：点了没反应比点了报错好。 */
+    .tool-batch-actions .btn[disabled],
+    .tool-batch-actions select[disabled] { opacity: 0.5; cursor: default; }
     /* 工具分组：内置一组，插件各一组。 */
     .tool-group { margin-bottom: 16px; }
     .tool-group-title {
@@ -855,6 +875,25 @@
               </div>
             </div>
 
+            <!-- 批量操作：勾选左边的框选中工具，再一次性开关或设审批等级。 -->
+            <div class="tool-batch">
+              <label class="tool-batch-all">
+                <input type="checkbox" id="toolSelectAll">
+                <span>全选</span>
+              </label>
+              <span class="tool-batch-count" id="toolSelectedCount">还没选工具</span>
+              <div class="tool-batch-actions">
+                <button type="button" class="btn" id="toolBatchEnable" disabled>批量开启</button>
+                <button type="button" class="btn" id="toolBatchDisable" disabled>批量关闭</button>
+                <select id="toolBatchApproval" disabled>
+                  <option value="">批量设等级…</option>
+                  <option value="ask">每次询问</option>
+                  <option value="always">以后不问</option>
+                </select>
+              </div>
+            </div>
+            <p class="hint">「全选」选的是当前筛选下看得见的那些工具。</p>
+
             <div id="toolGroups"></div>
           </div>
         </section>
@@ -983,6 +1022,7 @@
             <option value="ask">每次询问</option>
             <option value="always">以后不问</option>
           </select>
+          <p class="drawer-empty" id="toolDrawerApprovalHint"></p>
         </div>
         <p class="drawer-empty" id="toolDrawerRisk"></p>
       </section>

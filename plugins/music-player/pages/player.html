@@ -5,164 +5,232 @@
     <title>音乐播放器</title>
     <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
     <style>
+      html {
+        height: 100%;
+      }
       body {
         margin: 0;
-        min-height: 100vh;
+        height: 100%;
+        overflow: hidden;
         font: var(--dp-font);
         color: var(--dp-text);
         background: var(--dp-bg);
       }
-      /* 面板里窗口是按内容撑开的：不能按视口铺满（会与面板互相卡住）。 */
+      /* 面板里高度是定值（页面报一个定高），页面正好铺满 iframe。 */
       body.dp-panel {
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
         min-height: 0;
       }
-      #wrap {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 12px;
+      body.dp-panel #app {
+        height: 100%;
       }
-      #head {
+      button {
+        font: inherit;
+      }
+      .spacer {
+        flex: 1;
+      }
+      /* ---------------- 顶栏 ---------------- */
+      #topbar {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--dp-border-soft);
       }
-      #head .title {
+      #brand {
+        font-size: 17px;
+        line-height: 1;
+      }
+      #title {
         font-weight: 600;
         font-size: 15px;
-      }
-      #head .spacer {
-        flex: 1;
-      }
-      #folder {
-        max-width: 150px;
-        overflow: hidden;
-        text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      /* 回到歌单：只有窄版用得上（宽版两栏都在）。 */
+      #back {
+        display: none;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        font-size: 18px;
+        line-height: 1;
+        color: var(--dp-text-soft);
+        background: transparent;
+        border: none;
+        border-radius: 7px;
+        cursor: pointer;
+      }
+      #back:hover {
+        background: var(--dp-surface-hover);
+        color: var(--dp-text);
+      }
+      #search {
+        position: relative;
+        flex: 1;
+        max-width: 300px;
+        margin-left: auto;
+      }
+      #search .ico {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
         color: var(--dp-text-faint);
         font-size: 12px;
+        pointer-events: none;
       }
-      #now {
+      #filter {
+        width: 100%;
+        padding: 6px 10px 6px 28px;
+        font: inherit;
+        font-size: 13px;
+        color: inherit;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: 999px;
+        background: var(--dp-surface);
+      }
+      #filter:focus {
+        outline: 2px solid var(--dp-accent);
+        outline-offset: 1px;
+      }
+      /* ---------------- 歌单 + 歌曲 ---------------- */
+      #body {
         display: flex;
         flex-direction: column;
-        gap: 4px;
-      }
-      #np-title {
-        font-size: 16px;
-        font-weight: 600;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #np-sub {
-        color: var(--dp-text-soft);
-        font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      /* 进度条：点一下就跳到那儿。 */
-      #bar {
-        height: 6px;
-        margin-top: 6px;
-        border-radius: 3px;
-        background: var(--dp-surface);
-        cursor: pointer;
-        overflow: hidden;
-      }
-      #bar i {
-        display: block;
-        height: 100%;
-        width: 0;
-        border-radius: 3px;
-        background: var(--dp-accent-strong);
-        transition: width 0.25s linear;
-      }
-      #times {
-        display: flex;
-        font-size: 12px;
-        color: var(--dp-text-faint);
-        font-variant-numeric: tabular-nums;
-      }
-      #times .spacer {
         flex: 1;
+        min-height: 0;
       }
-      #controls {
+      /* 歌单那一列 */
+      #side {
         display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      #controls button {
-        font: inherit;
-        width: 34px;
-        height: 30px;
-        border: 1px solid var(--dp-border);
-        border-radius: var(--dp-radius);
-        background: var(--dp-surface);
-        color: var(--dp-text);
-        cursor: pointer;
-        font-size: 14px;
-      }
-      #controls button:hover {
-        background: var(--dp-surface-hover);
-      }
-      #play {
-        width: 42px;
-        background: var(--dp-accent);
-        border-color: var(--dp-accent-strong);
-        color: var(--dp-accent-ink);
-      }
-      #lyrics {
-        width: auto;
-        padding: 0 10px;
-        font-size: 12px;
-      }
-      #lyrics[aria-pressed='true'] {
-        background: var(--dp-accent);
-        border-color: var(--dp-accent-strong);
-        color: var(--dp-accent-ink);
-      }
-      #vol {
+        flex-direction: column;
         flex: 1;
-        min-width: 40px;
-        accent-color: var(--dp-accent-strong);
+        min-height: 0;
+        border-bottom: 1px solid var(--dp-border-soft);
       }
-      /* 播放列表那一排 */
-      #pl-bar {
+      #side-head {
         display: flex;
         align-items: center;
         gap: 6px;
-      }
-      #pl-select {
-        flex: 1;
-        min-width: 0;
-        font: inherit;
+        padding: 10px 14px 4px;
         font-size: 12px;
-        padding: 4px 6px;
-        border: 1px solid var(--dp-border);
-        border-radius: var(--dp-radius);
-        background: var(--dp-surface);
+        color: var(--dp-text-soft);
+        letter-spacing: 0.04em;
+      }
+      #side-head .spacer {
+        flex: 1;
+      }
+      #side-head button {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        font-size: 15px;
+        line-height: 1;
+        color: var(--dp-text-soft);
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #side-head button:hover {
+        background: var(--dp-surface-hover);
         color: var(--dp-text);
       }
-      #pl-bar button {
-        font: inherit;
-        font-size: 12px;
-        padding: 4px 8px;
+      #playlists {
+        list-style: none;
+        margin: 0;
+        padding: 0 8px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      #playlists li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 8px;
+        border-radius: var(--dp-radius);
+        cursor: pointer;
+      }
+      #playlists li:hover {
+        background: var(--dp-surface);
+      }
+      #playlists li.on {
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+      }
+      #playlists .cover {
+        flex: none;
+        width: 36px;
+        height: 36px;
+        border-radius: 7px;
+        overflow: hidden;
+        background: var(--dp-surface-hover);
+        color: var(--dp-text-faint);
+        display: grid;
+        place-items: center;
+        font-size: 15px;
+      }
+      #playlists .cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #playlists .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
+        font-size: 13px;
       }
-      #pl-bar button[disabled] {
-        opacity: 0.45;
-        cursor: default;
+      #playlists .count {
+        flex: none;
+        font-size: 12px;
+        color: var(--dp-text-faint);
       }
-      #pl-del.confirm {
-        background: var(--dp-danger);
-        border-color: var(--dp-danger);
-        color: #fff;
+      #playlists li.on .count {
+        color: var(--dp-accent-ink);
+        opacity: 0.75;
+      }
+      #playlists .rm {
+        flex: none;
+        /* 悬停才显出来，但**一直占着位**：忽然出现会把行里的名字挤一下。 */
+        opacity: 0;
+        transition: opacity 0.12s;
+        padding: 0 6px;
+        font-size: 14px;
+        line-height: 1;
+        color: var(--dp-text-faint);
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #playlists li:hover .rm {
+        opacity: 1;
+      }
+      #playlists .rm:hover {
+        background: var(--dp-surface-hover);
+        color: var(--dp-danger);
+      }
+      #playlists li.on .rm:hover {
+        background: rgba(0, 0, 0, 0.08);
+        color: var(--dp-accent-ink);
       }
       #pl-new-row {
         display: flex;
-        align-items: center;
         gap: 6px;
+        padding: 4px 12px 8px;
       }
       #pl-new-row[hidden] {
         display: none;
@@ -170,67 +238,180 @@
       #pl-name {
         flex: 1;
         min-width: 0;
+        padding: 5px 8px;
         font: inherit;
         font-size: 12px;
+        color: inherit;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+      }
+      #pl-new-row button {
         padding: 4px 8px;
+        font-size: 12px;
         border: 1px solid var(--dp-border);
         border-radius: var(--dp-radius);
         background: var(--dp-surface);
         color: var(--dp-text);
+        cursor: pointer;
       }
-      #pl-new-row button {
-        font: inherit;
-        font-size: 12px;
-        padding: 4px 8px;
+      /* 歌曲那一列 */
+      #main {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
       }
-      #lib-head {
+      #main-head {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 12px;
-        color: var(--dp-text-soft);
+        gap: 12px;
+        padding: 12px 16px 8px;
       }
-      #lib-head .spacer {
+      #main-cover {
+        flex: none;
+        width: 50px;
+        height: 50px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--dp-surface-hover);
+        color: var(--dp-text-faint);
+        display: grid;
+        place-items: center;
+        font-size: 20px;
+        cursor: pointer;
+      }
+      #main-cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #main-text {
         flex: 1;
+        min-width: 0;
       }
-      #mode {
-        font: inherit;
+      #main-name {
+        font-size: 16px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #main-count {
         font-size: 12px;
-        padding: 3px 6px;
-        border: 1px solid var(--dp-border);
-        border-radius: 6px;
-        background: var(--dp-surface);
+        color: var(--dp-text-faint);
+      }
+      #play-all {
+        padding: 6px 14px;
+        font-size: 13px;
+        border: 1px solid var(--dp-accent-strong);
+        border-radius: 999px;
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      #play-all:hover {
+        background: var(--dp-accent-strong);
+      }
+      #play-all[disabled] {
+        opacity: 0.45;
+        cursor: default;
+      }
+      /* 加歌的两个按钮：图标，作用域是当前这个歌单。 */
+      #main-head .add {
+        flex: none;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        font-size: 15px;
+        line-height: 1;
+        color: var(--dp-text-soft);
+        background: transparent;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      #main-head .add:hover {
         color: var(--dp-text);
+        background: var(--dp-surface);
       }
       #list {
         list-style: none;
         margin: 0;
-        padding: 0;
-        max-height: 210px;
+        padding: 0 8px 10px;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
-        border: 1px solid var(--dp-border-soft);
-        border-radius: var(--dp-radius);
-      }
-      #list:empty {
-        display: none;
       }
       #list li {
         display: flex;
-        align-items: baseline;
-        gap: 8px;
-        padding: 6px 9px;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        border-radius: var(--dp-radius);
         cursor: pointer;
-        border-bottom: 1px solid var(--dp-border-soft);
-      }
-      #list li:last-child {
-        border-bottom: none;
       }
       #list li:hover {
         background: var(--dp-surface);
       }
-      #list li.current {
+      #list li.on {
         background: var(--dp-accent);
         color: var(--dp-accent-ink);
+      }
+      #list .idx {
+        flex: none;
+        width: 22px;
+        text-align: right;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--dp-text-faint);
+      }
+      #list li.on .idx {
+        color: var(--dp-accent-ink);
+      }
+      #list .bars {
+        flex: none;
+        display: none;
+        align-items: flex-end;
+        justify-content: flex-end;
+        gap: 2px;
+        width: 22px;
+        height: 13px;
+      }
+      #list li.on .bars {
+        display: flex;
+      }
+      #list li.on .idx {
+        display: none;
+      }
+      #list .bars i {
+        width: 3px;
+        height: 35%;
+        border-radius: 1px;
+        background: var(--dp-accent-strong);
+      }
+      #list li.on .bars i {
+        background: var(--dp-accent-ink);
+      }
+      #list li.on.playing .bars i {
+        animation: mp-eq 0.9s ease-in-out infinite;
+      }
+      #list li.on.playing .bars i:nth-child(2) {
+        animation-delay: 0.18s;
+      }
+      #list li.on.playing .bars i:nth-child(3) {
+        animation-delay: 0.36s;
+      }
+      @keyframes mp-eq {
+        0%,
+        100% {
+          height: 30%;
+        }
+        50% {
+          height: 100%;
+        }
       }
       #list .label {
         flex: 1;
@@ -241,249 +422,518 @@
         font-size: 13px;
       }
       #list .artist {
-        color: var(--dp-text-faint);
-        font-size: 12px;
+        flex: none;
+        max-width: 42%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-width: 40%;
+        font-size: 12px;
+        color: var(--dp-text-faint);
       }
-      #list li.current .artist {
+      #list li.on .artist {
         color: var(--dp-accent-ink);
+        opacity: 0.8;
       }
       #list .rm {
-        font: inherit;
-        font-size: 13px;
+        flex: none;
+        opacity: 0;
+        transition: opacity 0.12s;
+        padding: 0 7px;
+        font-size: 14px;
         line-height: 1;
-        padding: 2px 6px;
-        border: 1px solid transparent;
-        border-radius: 6px;
-        background: transparent;
         color: var(--dp-text-faint);
+        background: transparent;
+        border: none;
+        border-radius: 6px;
         cursor: pointer;
+      }
+      #list li:hover .rm {
+        opacity: 1;
       }
       #list .rm:hover {
         background: var(--dp-surface-hover);
-        color: var(--dp-text);
+        color: var(--dp-danger);
+      }
+      #list li.on .rm:hover {
+        background: rgba(0, 0, 0, 0.08);
+        color: var(--dp-accent-ink);
       }
       #empty {
-        color: var(--dp-text-soft);
+        margin: 4px 16px 12px;
+        padding: 14px;
         font-size: 13px;
-        padding: 10px;
+        color: var(--dp-text-soft);
+        text-align: center;
         border: 1px dashed var(--dp-border-soft);
         border-radius: var(--dp-radius);
       }
       #empty[hidden] {
         display: none;
       }
-      /* 挑歌的那块浮层 */
-      #picker {
+      /* ---------------- 底部控制条 ---------------- */
+      #bar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 9px 14px;
+        border-top: 1px solid var(--dp-border-soft);
+        background: var(--dp-surface);
+      }
+      body.dp-panel #bar {
+        position: sticky;
+        bottom: 0;
+      }
+      #now {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 210px;
+        min-width: 0;
+        padding: 3px 6px;
+        margin: -3px -6px;
+        border-radius: var(--dp-radius);
+        cursor: pointer;
+      }
+      #now:hover {
+        background: var(--dp-surface-hover);
+      }
+      #now-cover {
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+        display: grid;
+        place-items: center;
+        font-size: 16px;
+      }
+      #now-cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #now-text {
+        min-width: 0;
+      }
+      #np-title {
+        font-size: 13px;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #np-sub {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #progress {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        flex: 1;
+        min-width: 0;
+      }
+      #track {
+        height: 5px;
+        border-radius: 3px;
+        background: var(--dp-border);
+        overflow: hidden;
+        cursor: pointer;
+      }
+      #track i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 3px;
+        background: var(--dp-accent-strong);
+        transition: width 0.25s linear;
+      }
+      #times {
+        display: flex;
+        font-size: 11px;
+        color: var(--dp-text-faint);
+        font-variant-numeric: tabular-nums;
+      }
+      #controls {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      #controls button {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+        color: var(--dp-text);
+        background: transparent;
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      #controls button:hover {
+        background: var(--dp-surface-hover);
+      }
+      #play {
+        width: 38px;
+        height: 38px;
+        font-size: 15px;
+        background: var(--dp-accent);
+        border: 1px solid var(--dp-accent-strong);
+        color: var(--dp-accent-ink);
+      }
+      #play:hover {
+        background: var(--dp-accent-strong);
+      }
+      #lyrics {
+        font-size: 12px;
+      }
+      #mode {
+        width: auto;
+        padding: 0 8px;
+        font-size: 12px;
+      }
+      #lyrics[aria-pressed='true'] {
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+      }
+      #vol {
+        width: 84px;
+        accent-color: var(--dp-accent-strong);
+      }
+      /* ---------------- 浮层 ---------------- */
+      #menu {
+        position: fixed;
+        z-index: 20;
+        min-width: 132px;
+        padding: 4px;
+        background: var(--dp-bg);
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        box-shadow: 0 8px 24px rgba(40, 34, 24, 0.18);
+      }
+      #menu[hidden] {
+        display: none;
+      }
+      #menu button {
+        display: block;
+        width: 100%;
+        padding: 6px 10px;
+        font-size: 12px;
+        text-align: left;
+        color: var(--dp-text);
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      #menu button:hover {
+        background: var(--dp-surface);
+      }
+      /* ---------------- 播放页面（正在放的那一首） ---------------- */
+      #song-page {
         position: fixed;
         inset: 0;
+        z-index: 30;
         display: flex;
         align-items: center;
         justify-content: center;
         padding: 12px;
-        background: rgba(0, 0, 0, 0.35);
-        z-index: 10;
+        background: rgba(38, 33, 25, 0.45);
       }
-      #picker[hidden] {
+      #song-page[hidden] {
         display: none;
       }
-      #picker-card {
+      #song-card {
+        position: relative;
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        width: 100%;
-        max-width: 420px;
-        max-height: 100%;
-        padding: 10px;
-        border: 1px solid var(--dp-border);
-        border-radius: var(--dp-radius);
-        background: var(--dp-bg);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-      }
-      #picker-head {
-        display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        font-weight: 600;
-      }
-      #picker-head .spacer {
-        flex: 1;
-      }
-      #picker-head button {
-        font: inherit;
-        font-size: 12px;
-        padding: 4px 10px;
-      }
-      #picker-filter {
-        font: inherit;
-        font-size: 13px;
-        padding: 5px 8px;
+        gap: 10px;
+        width: 100%;
+        max-width: 460px;
+        max-height: 100%;
+        padding: 16px 16px 12px;
+        background: var(--dp-bg);
         border: 1px solid var(--dp-border);
-        border-radius: var(--dp-radius);
-        background: var(--dp-surface);
+        border-radius: var(--dp-radius-lg);
+        box-shadow: 0 14px 36px rgba(40, 34, 24, 0.3);
+      }
+      #song-close {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+        color: var(--dp-text-soft);
+        background: transparent;
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      #song-close:hover {
+        background: var(--dp-surface-hover);
         color: var(--dp-text);
       }
-      #picker-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        border: 1px solid var(--dp-border-soft);
-        border-radius: var(--dp-radius);
+      #song-cover {
+        flex: none;
+        width: 148px;
+        height: 148px;
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--dp-surface-hover);
+        color: var(--dp-text-faint);
+        display: grid;
+        place-items: center;
+        font-size: 40px;
       }
-      #picker-list:empty {
+      #song-cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #song-name {
+        font-size: 15px;
+        font-weight: 600;
+        text-align: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+      }
+      #song-artist {
+        font-size: 12px;
+        color: var(--dp-text-soft);
+        text-align: center;
+      }
+      #song-lyrics {
+        position: relative;
+        width: 100%;
+        min-height: 0;
+        max-height: 190px;
+        overflow-y: auto;
+        padding: 4px 6px;
+        text-align: center;
+        scrollbar-width: none;
+      }
+      #song-lyrics::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+      #song-lyrics .line {
+        padding: 3px 0;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--dp-text-faint);
+      }
+      #song-lyrics .line.on {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--dp-accent-strong);
+      }
+      #song-lyrics .none {
+        padding: 14px 0;
+        font-size: 12px;
+        color: var(--dp-text-faint);
+      }
+      /* 上面给 img 写了 display: block，会盖掉 hidden 属性的 display: none。 */
+      #main-cover img[hidden],
+      #now-cover img[hidden],
+      #song-cover img[hidden] {
         display: none;
       }
-      #picker-list li {
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-        padding: 6px 9px;
-        cursor: pointer;
-        border-bottom: 1px solid var(--dp-border-soft);
-      }
-      #picker-list li:last-child {
-        border-bottom: none;
-      }
-      #picker-list li:hover {
-        background: var(--dp-surface);
-      }
-      #picker-list li.added {
-        opacity: 0.5;
-        cursor: default;
-      }
-      #picker-list li.none {
-        color: var(--dp-text-faint);
-        font-size: 12px;
-        cursor: default;
-      }
-      #picker-list .label {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 13px;
-      }
-      #picker-list .artist {
-        color: var(--dp-text-faint);
-        font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        max-width: 40%;
-      }
-      #picker-list .mark {
-        color: var(--dp-accent-strong);
-        font-size: 12px;
-      }
-      /* 窄版（面板里）：两个分组是透明的——排版与从前一模一样。 */
-      #player,
-      #library {
-        display: contents;
-      }
-      /* 宽版（独立窗口）：左边播放器，右边歌单与曲库。 */
-      @media (min-width: 560px) {
-        #wrap {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          gap: 10px 18px;
-          align-items: start;
+      /* ---------------- 窄版（面板里） ---------------- */
+      @media (max-width: 559px) {
+        #title {
+          display: none;
         }
-        #head {
-          grid-column: 1 / -1;
+        #search {
+          max-width: none;
         }
-        #player,
-        #library {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
+        /* 窄版一次只显示一样：默认是歌单列表，点开歌单才看歌。 */
+        body[data-view='playlists'] #main {
+          display: none;
         }
+        body[data-view='songs'] #side {
+          display: none;
+        }
+        body[data-view='songs'] #back {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        body[data-view='playlists'] #search {
+          display: none;
+        }
+        /* 窄版不留滚动条：内容照旧能滚，条子本身藏起来。 */
+        html,
+        #playlists,
         #list {
-          max-height: 50vh;
+          scrollbar-width: none;
+        }
+        html::-webkit-scrollbar,
+        #playlists::-webkit-scrollbar,
+        #list::-webkit-scrollbar {
+          width: 0;
+          height: 0;
+        }
+        #bar {
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        #now {
+          flex: 1 1 110px;
+          width: auto;
+          min-width: 0;
+        }
+        #progress {
+          order: 2;
+          flex: 0 0 100%;
+        }
+        #controls {
+          order: 3;
+          flex: none;
+          margin-left: 0;
+        }
+        #vol {
+          width: 56px;
+        }
+        #song-cover {
+          width: 104px;
+          height: 104px;
+          font-size: 30px;
+        }
+        #song-lyrics {
+          max-height: 140px;
+        }
+      }
+      /* ---------------- 宽版（独立窗口） ---------------- */
+      @media (min-width: 560px) {
+        #body {
+          display: grid;
+          grid-template-columns: 210px minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr);
+        }
+        #side {
+          grid-column: 1;
+          grid-row: 1;
+          border-bottom: none;
+          border-right: 1px solid var(--dp-border-soft);
+        }
+        #main {
+          grid-column: 2;
+          grid-row: 1;
+          min-width: 0;
         }
       }
     </style>
   </head>
-  <body>
-    <div id="wrap">
-      <div id="head">
-        <span class="title">音乐播放器</span>
-        <span id="folder" title=""></span>
-        <span class="spacer"></span>
-        <button id="pick" class="dp-button" type="button" title="选一个音乐文件夹">音乐库</button>
-        <button id="scan" class="dp-button" type="button" title="重新扫描这个文件夹">↻</button>
+  <body data-view="playlists">
+    <div id="app">
+      <header id="topbar">
+        <button id="back" type="button" title="回到歌单">‹</button>
+        <span id="brand">🎵</span>
+        <span id="title">音乐播放器</span>
+        <div id="search">
+          <span class="ico">🔍</span>
+          <input id="filter" type="text" placeholder="搜歌名或歌手" autocomplete="off" />
+        </div>
+      </header>
+
+      <div id="body">
+        <nav id="side">
+          <div id="side-head">
+            <span>播放列表</span>
+            <span class="spacer"></span>
+            <button id="pl-new" type="button" title="新建歌单">＋</button>
+          </div>
+          <div id="pl-new-row" hidden>
+            <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
+            <button id="pl-name-ok" type="button">确定</button>
+            <button id="pl-name-cancel" type="button">取消</button>
+          </div>
+          <ul id="playlists"></ul>
+        </nav>
+
+        <main id="main">
+          <div id="main-head">
+            <div id="main-cover" title="换封面">
+              <span id="main-cover-fallback">♪</span>
+              <img id="main-cover-img" alt="" hidden />
+            </div>
+            <div id="main-text">
+              <div id="main-name">默认列表</div>
+              <div id="main-count">0 首</div>
+            </div>
+            <button id="play-all" type="button" disabled>▶ 播放全部</button>
+            <button id="pl-song" class="add" type="button" title="从本地选歌加进这个歌单">♫</button>
+            <button id="pl-folder" class="add" type="button" title="把一个文件夹里的歌加进这个歌单">
+              📁
+            </button>
+          </div>
+          <ul id="list"></ul>
+          <div id="empty">这个列表还没有歌。用上面的按钮把歌加进来。</div>
+        </main>
       </div>
 
-      <div id="player">
-        <div id="now">
-          <div id="np-title">还没在放</div>
-          <div id="np-sub">选一个音乐文件夹开始</div>
-          <div id="bar" title="点一下跳到那儿"><i id="bar-fill"></i></div>
+      <footer id="bar">
+        <div id="now" title="点开看这一首">
+          <div id="now-cover">
+            <span id="now-cover-fallback">♪</span>
+            <img id="now-cover-img" alt="" hidden />
+          </div>
+          <div id="now-text">
+            <div id="np-title">还没在放</div>
+            <div id="np-sub">默认列表 0 首</div>
+          </div>
+        </div>
+        <div id="progress">
+          <div id="track" title="点一下跳到那儿"><i id="track-fill"></i></div>
           <div id="times">
             <span id="pos">00:00</span>
             <span class="spacer"></span>
             <span id="dur">00:00</span>
           </div>
         </div>
-
         <div id="controls">
+          <button id="mode" type="button" title="播放模式：顺序播放">⇄</button>
           <button id="prev" type="button" title="上一首">⏮</button>
           <button id="play" type="button" title="播放 / 暂停">▶</button>
           <button id="next" type="button" title="下一首">⏭</button>
-          <input id="vol" type="range" min="0" max="100" title="音量" />
           <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
+          <input id="vol" type="range" min="0" max="100" title="音量" />
         </div>
-      </div>
+      </footer>
+    </div>
 
-      <div id="library">
-        <div id="pl-bar">
-          <select id="pl-select" title="播放列表"></select>
-          <button id="pl-new" class="dp-button" type="button" title="新建歌单">新建</button>
-          <button id="pl-del" class="dp-button" type="button" title="删掉这个歌单">删除</button>
-          <button id="pl-folder" class="dp-button" type="button" title="把一个文件夹里的歌加进歌单">
-            ＋文件夹
-          </button>
-          <button id="pl-song" class="dp-button" type="button" title="从曲库里挑歌加进歌单">
-            ＋歌曲
-          </button>
-        </div>
+    <div id="menu" hidden>
+      <button id="menu-cover" type="button">换封面…</button>
+      <button id="menu-cover-reset" type="button">用第一首歌的图</button>
+    </div>
 
-        <div id="pl-new-row" hidden>
-          <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
-          <button id="pl-name-ok" class="dp-button" type="button">确定</button>
-          <button id="pl-name-cancel" class="dp-button" type="button">取消</button>
+    <div id="song-page" hidden>
+      <div id="song-card">
+        <button id="song-close" type="button" title="关掉">✕</button>
+        <div id="song-cover">
+          <span id="song-cover-fallback">♪</span>
+          <img id="song-cover-img" alt="" hidden />
         </div>
-
-        <div id="lib-head">
-          <span id="lib-count">曲库</span>
-          <span class="spacer"></span>
-          <select id="mode" title="播放模式">
-            <option value="顺序播放">顺序播放</option>
-            <option value="单曲循环">单曲循环</option>
-            <option value="随机播放">随机播放</option>
-          </select>
-        </div>
-        <ul id="list"></ul>
-        <div id="empty">还没有音乐库。点右上角的「音乐库」选一个文件夹。</div>
+        <div id="song-name">还没在放</div>
+        <div id="song-artist"></div>
+        <div id="song-lyrics"></div>
       </div>
     </div>
 
-    <div id="picker" hidden>
-      <div id="picker-card">
-        <div id="picker-head">
-          <span id="picker-title">从曲库里挑歌</span>
-          <span class="spacer"></span>
-          <button id="picker-close" class="dp-button" type="button">完成</button>
-        </div>
-        <input id="picker-filter" type="text" placeholder="按歌名或歌手过滤" />
-        <ul id="picker-list"></ul>
-      </div>
-    </div>
     <script type="module" src="player.js"></script>
   </body>
 </html>

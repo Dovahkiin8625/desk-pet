@@ -22,7 +22,7 @@ async function readManifest() {
 function fakePlayer(overrides = {}) {
   const state = {
     trackCount: 2,
-    libraryCount: 2,
+    totalCount: 2,
     current: { title: '稻香', artist: '周杰伦' },
     playing: true,
     position: 12,
@@ -88,10 +88,10 @@ test('工具出错要抛出去（模型才能换个参数再试）', async () =>
   const impls = createTools(fakePlayer());
   const play = impls.find((t) => t.name === 'music.play');
   const failing = createTools(
-    fakePlayer({ playMatch: async () => ({ ok: false, message: '曲库里没有「不存在」' }) })
+    fakePlayer({ playMatch: async () => ({ ok: false, message: '没有找到「不存在」' }) })
   );
   const bad = failing.find((t) => t.name === 'music.play');
-  await assert.rejects(() => bad.run({ song: '不存在' }), /曲库里没有/);
+  await assert.rejects(() => bad.run({ song: '不存在' }), /没有找到/);
   const ok = await play.run({ song: '稻香' });
   assert.ok(ok.text, '成功时要给模型一句话');
 });

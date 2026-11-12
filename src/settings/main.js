@@ -12,6 +12,12 @@ import {
   ackPrefsFromValue,
   ackValueFromPrefs,
 } from '../shared/assistant.js';
+import {
+  TOOL_APPROVAL,
+  applyBatchEnabled,
+  applyBatchApproval,
+  selectAllState,
+} from './toolBatch.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
@@ -92,6 +98,11 @@ const agentPolicyHint = document.getElementById('agentPolicyHint');
 // 工具
 const toolGroupSelect = document.getElementById('toolGroup');
 const toolGroupsBox = document.getElementById('toolGroups');
+const toolSelectAll = document.getElementById('toolSelectAll');
+const toolSelectedCount = document.getElementById('toolSelectedCount');
+const toolBatchEnable = document.getElementById('toolBatchEnable');
+const toolBatchDisable = document.getElementById('toolBatchDisable');
+const toolBatchApproval = document.getElementById('toolBatchApproval');
 const toolDrawer = document.getElementById('toolDrawer');
 const toolDrawerBackdrop = document.getElementById('toolDrawerBackdrop');
 const toolDrawerClose = document.getElementById('toolDrawerClose');
@@ -101,6 +112,7 @@ const toolDrawerDesc = document.getElementById('toolDrawerDesc');
 const toolDrawerParams = document.getElementById('toolDrawerParams');
 const toolDrawerEnabled = document.getElementById('toolDrawerEnabled');
 const toolDrawerApproval = document.getElementById('toolDrawerApproval');
+const toolDrawerApprovalHint = document.getElementById('toolDrawerApprovalHint');
 const toolDrawerRisk = document.getElementById('toolDrawerRisk');
 
 // 系统
@@ -610,6 +622,14 @@ let allowAlwaysNames = new Set();
 /** 被关掉的工具名。 */
 let disabledToolNames = new Set();
 
+/**
+ * 选中的工具名（批量操作的对象）。
+ *
+ * 选中状态**记在名字上**，不记在 DOM 上：清单会重画
+ * （插件开关一拨就重画），记在 DOM 上的选中会跟着一起没。
+ */
+let selectedToolNames = new Set();
+
 /** 插件 id → 插件名（分组标题用）。 */
 let pluginNames = new Map();
 
@@ -632,6 +652,12 @@ function toolGroups() {
 /** 画「工具」这一页：按来源分组，每组一个下拉框能筛。 */
 function renderTools() {
   toolGroupsBox.textContent = '';
+
+  // 工具没了（插件被卸了），选中的那个也就没意义了——从选中里剔掉。
+  const alive = new Set(agentToolList.map((t) => t.name));
+  for (const name of [...selectedToolNames]) {
+    if (!alive.has(name)) selectedToolNames.delete(name);
+  }
 
   // 分组下拉框：全部 / 内置 / 每个插件。
   const groups = toolGroups();
@@ -709,17 +735,36 @@ function renderTools() {
     section.appendChild(ul);
     toolGroupsBox.appendChild(section);
   }
+
+  updateToolBatchBar();
 }
 
 /**
  * 一个工具的一行。
  *
  * 行里只有名字：开关与介绍都在**抽屉**里。
+ * 左边的勾选框只做一件事：把这个工具选进批量操作的范围。
  */
 function toolRow(t) {
+  const selected = selectedToolNames.has(t.name);
   const li = document.createElement('li');
-  li.className = disabledToolNames.has(t.name) ? 'tool-row off' : 'tool-row';
+  li.className = `tool-row${disabledToolNames.has(t.name) ? ' off' : ''}${selected ? ' selected' : ''}`;
   li.dataset.toolName = t.name;
+
+  const select = document.createElement('input');
+  select.type = 'checkbox';
+  select.className = 'tool-select';
+  select.checked = selected;
+  select.title = '选中它，好批量改';
+  select.setAttribute('aria-label', `选中 ${t.label || t.name}`);
+  // 勾选框**不打开抽屉**：整行才是抽屉的入口，勾选框是另一件事。
+  select.addEventListener('click', (e) => e.stopPropagation());
+  select.addEventListener('change', () => {
+    if (select.checked) selectedToolNames.add(t.name);
+    else selectedToolNames.delete(t.name);
+    li.classList.toggle('selected', select.checked);
+    updateToolBatchBar();
+  });
 
   const text = document.createElement('span');
   text.className = 'tool-text';
@@ -735,9 +780,45 @@ function toolRow(t) {
   arrow.className = 'tool-arrow';
   arrow.textContent = '›';
 
-  li.append(text, arrow);
+  li.append(select, text, arrow);
   li.addEventListener('click', () => openToolDrawer(t));
   return li;
+}
+
+/**
+ * 当前**看得见**的工具名（受「只看」那个筛选影响）。
+ *
+ * 「全选」选的就是这些：用户看不见的工具不该被顺手改掉。
+ */
+function visibleToolNames() {
+  const key = toolGroupSelect.value;
+  return toolGroups()
+    .filter((g) => !key || g.key === key)
+    .flatMap((g) => g.tools.map((t) => t.name));
+}
+
+/**
+ * 刷新批量操作那一条：选中几个、按钮能不能点、「全选」是什么状态。
+ *
+ * **两个数不是一回事**：选中的是**所有**选中的工具（哪怕它现在被筛选藏起来了），
+ * 而「全选」那个勾选框只管**当前看得见的**那些。
+ */
+function updateToolBatchBar() {
+  const names = visibleToolNames();
+  const state = selectAllState(names, selectedToolNames);
+  const picked = selectedToolNames.size;
+
+  toolSelectAll.checked = state.all;
+  // 选了一部分时打半勾：只显示成「没勾」的话，
+  // 用户不知道自己已经选了几个。
+  toolSelectAll.indeterminate = state.some;
+
+  toolSelectedCount.textContent = picked ? `已选 ${picked} 个` : '还没选工具';
+
+  const has = picked > 0;
+  toolBatchEnable.disabled = !has;
+  toolBatchDisable.disabled = !has;
+  toolBatchApproval.disabled = !has;
 }
 
 /** 风险等级给人看的说法。 */
@@ -746,6 +827,18 @@ const RISK_TEXT = {
   write: '写入——它会改东西，改之前要你点头。',
   exec: '执行——它会跑命令或启动程序，动手之前要你点头。',
 };
+
+/**
+ * 抽屉里「审批等级」那一栏底下的话。
+ *
+ * 只读的工具在「问一声」档位下直接做，但档位改成「每件事都问」
+ * 时它也会问——所以这句话得看**当前档位**怎么说，不能写死。
+ */
+function toolApprovalHint(readOnly) {
+  if (!readOnly) return '「以后不问」= 用它的时候不再弹确认。';
+  if (agentPolicySelect.value === 'manual') return '现在是「每件事都问」：只读的工具也会问一声。';
+  return '只读的工具不改这一栏：「问一声」档位下它直接做，不会弹确认。';
+}
 
 /**
  * 打开工具抽屉。
@@ -760,10 +853,12 @@ function openToolDrawer(t) {
 
   const enabled = !disabledToolNames.has(t.name);
   toolDrawerEnabled.checked = enabled;
-  toolDrawerApproval.value = allowAlwaysNames.has(t.name) || t.risk === 'read' ? 'always' : 'ask';
-  // 只读的工具本来就不会问，审批等级对它没有意义。
+  // 显示的是**真存下来的那份名单**：在「以后不问」里就是「以后不问」。
+  toolDrawerApproval.value = allowAlwaysNames.has(t.name) ? 'always' : 'ask';
+  // 只读的工具：审批等级改不了——它在「问一声」档位下本来就不会问你。
   const readOnly = t.risk === 'read';
   toolDrawerApproval.disabled = !enabled || readOnly;
+  toolDrawerApprovalHint.textContent = toolApprovalHint(readOnly);
   toolDrawerRisk.textContent = RISK_TEXT[t.risk] || '这个工具没声明风险等级，按最严格的来。';
 
   toolDrawer.dataset.toolName = t.name;
@@ -1139,12 +1234,78 @@ agentWorkspaceInput.addEventListener('change', () => {
 // 审批档位：切过去当场看见后果。
 agentPolicySelect.addEventListener('change', () => {
   updateApprovalHint();
+  // 抽屉开着的话，它那一句也得跟着换——只读的工具问不问，取决于档位。
+  if (!toolDrawer.hidden) {
+    toolDrawerApprovalHint.textContent = toolApprovalHint(toolDrawer.dataset.risk === 'read');
+  }
   persistAssistantPrefs();
 });
 
 // 「工具」页的分组筛选：只看某一组。
 toolGroupSelect.addEventListener('change', () => {
   renderTools();
+});
+
+// —— 「工具」页的批量操作 ——
+
+/**
+ * 把一次批量改动落到界面上：重画清单（开关状态变了）并存盘。
+ *
+ * @param {'enabled'|'approval'} kind 改哪一项
+ * @param {boolean|string} value 开关用布尔，审批等级用 'always' / 'ask'
+ */
+function applyToolBatch(kind, value) {
+  const selected = [...selectedToolNames];
+  if (!selected.length) return 0;
+  if (kind === 'enabled') {
+    disabledToolNames = applyBatchEnabled(selected, value, disabledToolNames);
+  } else {
+    allowAlwaysNames = applyBatchApproval(selected, value, allowAlwaysNames);
+  }
+  renderTools();
+  persistAssistantPrefs();
+  return selected.length;
+}
+
+// 「全选」：勾上就是选中当前筛选下看得见的那些，取消勾就是取消选中。
+toolSelectAll.addEventListener('change', () => {
+  const names = visibleToolNames();
+  if (toolSelectAll.checked) for (const n of names) selectedToolNames.add(n);
+  else for (const n of names) selectedToolNames.delete(n);
+  // 行里的勾选框得跟着变，所以清单要重画一遍。
+  renderTools();
+  show(
+    toolSelectAll.checked
+      ? `已选中看得见的 ${names.length} 个工具`
+      : `已取消选中看得见的 ${names.length} 个工具`
+  );
+});
+
+// 批量开启：选中的工具重新回到 agent 的工具表里。
+toolBatchEnable.addEventListener('click', () => {
+  const n = applyToolBatch('enabled', true);
+  if (n) show(`已开启 ${n} 个工具`);
+});
+
+// 批量关闭：关掉的工具桌宠看不见，也不会去调。
+toolBatchDisable.addEventListener('click', () => {
+  const n = applyToolBatch('enabled', false);
+  if (n) show(`已关闭 ${n} 个工具`);
+});
+
+// 批量审批等级：选中的工具要么进「以后不问」的名单，要么从名单里去掉。
+toolBatchApproval.addEventListener('change', () => {
+  const value = toolBatchApproval.value;
+  if (!value) return;
+  const n = applyToolBatch('approval', value);
+  // 下拉框回到「批量设等级…」：不然同一个选项没法再选第二次。
+  toolBatchApproval.value = '';
+  if (!n) return;
+  show(
+    value === TOOL_APPROVAL.ALWAYS
+      ? `已把 ${n} 个工具设成「以后不问」`
+      : `已把 ${n} 个工具设成「每次询问」`
+  );
 });
 
 // 抽屉：关掉它的三种方式——按钮、点遮罩、按 Esc。

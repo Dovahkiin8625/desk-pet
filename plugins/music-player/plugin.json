@@ -13,11 +13,11 @@
     {
       "name": "music.play",
       "label": "播放音乐",
-      "description": "播放本地音乐。不给歌名就是继续播放当前这首；给了歌名就放曲库里匹配上的那一首。",
+      "description": "播放本地音乐。不给歌名就是继续播放当前这首；给了歌名就放列表里匹配上的那一首。",
       "parameters": {
         "type": "object",
         "properties": {
-          "song": { "type": "string", "description": "歌名或歌手名，能对上曲库里的歌就行" }
+          "song": { "type": "string", "description": "歌名或歌手名，能对上列表里的歌就行" }
         }
       },
       "risk": "write"
@@ -46,7 +46,7 @@
     {
       "name": "music.search",
       "label": "找歌",
-      "description": "在本地曲库里找歌。可以按歌名过滤（song），也可以按歌手过滤（artist）；两个都给就都要对上。",
+      "description": "在列表里找歌。可以按歌名过滤（song），也可以按歌手过滤（artist）；两个都给就都要对上。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -59,7 +59,7 @@
     {
       "name": "music.status",
       "label": "看播放状态",
-      "description": "看现在在放哪一首、放到哪里了、音量多少、曲库里有多少歌。",
+      "description": "看现在在放哪一首、放到哪里了、音量多少、列表里有多少歌。",
       "parameters": { "type": "object", "properties": {} },
       "risk": "read"
     },
@@ -76,13 +76,6 @@
     }
   ],
   "settings": [
-    {
-      "key": "musicFolder",
-      "label": "音乐文件夹",
-      "type": "text",
-      "default": "",
-      "hint": "本地音乐放在哪个文件夹里。插件自己的页面上也有「音乐库」按钮可以直接选。"
-    },
     {
       "key": "volume",
       "label": "音量（0-100）",
@@ -109,8 +102,8 @@
   "window": {
     "title": "音乐播放器",
     "page": "pages/player.html",
-    "width": 780,
-    "height": 620,
+    "width": 900,
+    "height": 640,
     "refreshMs": 500
   },
   "widget": {

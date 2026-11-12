@@ -10,7 +10,7 @@ import { formatTime } from './format.js';
  * 报错要**抛出去**：错误会喂回模型，模型能换个参数再试。
  */
 export function createTools(player) {
-  /** 每个工具开跑前先把曲库备好。 */
+  /** 每个工具开跑前先把歌单备好。 */
   const ready = () => player.ensureStarted();
 
   return [
@@ -79,12 +79,12 @@ export function createTools(player) {
               .map((t) => (t.artist ? `${t.title} — ${t.artist}` : t.title))
               .join('；');
             return {
-              text: `曲库里一共 ${s.libraryCount} 首。没有${what}的歌，但有这些歌手对得上：${names}`,
+              text: `一共 ${s.totalCount} 首。没有${what}的歌，但有这些歌手对得上：${names}`,
               data: { found: [], byArtist },
             };
           }
           return {
-            text: `曲库里一共 ${s.libraryCount} 首。没有${what}的歌。`,
+            text: `一共 ${s.totalCount} 首。没有${what}的歌。`,
             data: { found: [] },
           };
         }
@@ -92,7 +92,7 @@ export function createTools(player) {
           .map((t) => (t.artist ? `${t.title} — ${t.artist}` : t.title))
           .join('；');
         return {
-          text: `曲库里一共 ${s.libraryCount} 首。${what}的歌有：${names}`,
+          text: `一共 ${s.totalCount} 首。${what}的歌有：${names}`,
           data: { found },
         };
       },
@@ -107,14 +107,14 @@ export function createTools(player) {
           : '还没在放';
         const text = `${cur}，${formatTime(s.position)} / ${formatTime(s.duration)}，${
           s.playing ? '在放' : '暂停了'
-        }。音量 ${Math.round(s.volume * 100)}，曲库里 ${s.libraryCount} 首，${s.modeLabel}。`;
+        }。音量 ${Math.round(s.volume * 100)}，列表里一共 ${s.totalCount} 首，${s.modeLabel}。`;
         return {
           text,
           data: {
             playing: s.playing,
             position: s.position,
             duration: s.duration,
-            trackCount: s.libraryCount,
+            trackCount: s.totalCount,
             volume: s.volume,
             mode: s.mode,
           },

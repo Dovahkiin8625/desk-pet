@@ -5,8 +5,8 @@
  * 歌单存在 `userData/music-playlists.json`——不放插件目录里
  * （插件目录在安装目录下，多半没有写权限）。
  *
- * 歌单里存的是**整首歌**（路径、歌名、歌手），不是曲库里的下标：
- * 曲库重新扫一遍下标就变了，歌单却不该跟着变。
+ * 歌单里存的是**整首歌**（路径、歌名、歌手），不是别处的下标：
+ * 下标会变，歌单却不该跟着变。
  *
  * 这里的函数都是**纯的**：给一份歌单，返回一份新的。
  */
@@ -15,6 +15,12 @@ import { basename, extname, join } from 'node:path';
 
 /** 歌单文件的名字。 */
 export const PLAYLISTS_FILE = 'music-playlists.json';
+
+/** 默认列表：永远在第一个，删不掉。 */
+export const DEFAULT_PLAYLIST_ID = 'default';
+
+/** 默认列表的名字。 */
+export const DEFAULT_PLAYLIST_NAME = '默认列表';
 
 /** 歌单文件的位置。 */
 export function playlistsPath(userDataDir) {
@@ -69,10 +75,38 @@ export function normalizePlaylists(raw) {
     out.push({
       id: String(item.id || '').trim() || makeId(),
       name,
+      cover: String(item.cover || '').trim(),
       tracks,
     });
   }
   return out;
+}
+
+/**
+ * 默认列表永远在第一个。
+ *
+ * 没有就补一个空的；名字固定（默认列表是内置的，不给改）。
+ *
+ * @param {Array} playlists
+ * @returns {Array}
+ */
+export function ensureDefaultPlaylist(playlists) {
+  const list = Array.isArray(playlists) ? playlists : [];
+  const base = list.find((p) => p.id === DEFAULT_PLAYLIST_ID);
+  const head = {
+    ...(base || {}),
+    id: DEFAULT_PLAYLIST_ID,
+    name: DEFAULT_PLAYLIST_NAME,
+    cover: String(base?.cover || ''),
+    tracks: Array.isArray(base?.tracks) ? base.tracks : [],
+  };
+  return [head, ...list.filter((p) => p.id !== DEFAULT_PLAYLIST_ID)];
+}
+
+/** 换个封面（空字符串 = 用第一首歌的图）。 */
+export function setPlaylistCover(playlists, id, cover) {
+  const want = String(cover || '').trim();
+  return playlists.map((p) => (p.id === id ? { ...p, cover: want } : p));
 }
 
 /** 加一个歌单（放最后）。 */

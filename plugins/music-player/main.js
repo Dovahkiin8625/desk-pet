@@ -8,7 +8,7 @@ import { createTools } from './lib/tools.js';
  *
  * 三处界面，一份状态：
  *
- * - **面板 / 独立窗口**（`pages/player.html`）：曲库、歌单、进度、音量；
+ * - **面板 / 独立窗口**（`pages/player.html`）：歌单、歌曲、进度、音量；
  * - **桌面小部件**（`pages/widget.html`）：挂在桌面上的迷你播放器；
  * - **桌面歌词**（`pages/lyrics.html`）：一直浮在桌面上的歌词。
  *
@@ -56,12 +56,6 @@ export default function createMusicPlayerPlugin(ctx) {
           payload.enabled === undefined ? !player.snapshot().lyricsOpen : payload.enabled
         );
         break;
-      case 'scan':
-        r = await player.scan();
-        break;
-      case 'choose-folder':
-        r = await player.chooseFolder();
-        break;
       case 'playlist-select':
         r = player.selectPlaylist(payload.id);
         break;
@@ -74,11 +68,17 @@ export default function createMusicPlayerPlugin(ctx) {
       case 'playlist-add-folder':
         r = await player.addFolderToPlaylist(payload.id || player.snapshot().activePlaylistId);
         break;
-      case 'playlist-add-song':
-        r = await player.addSongToPlaylist(payload.id, payload.file);
+      case 'playlist-add-files':
+        r = await player.addFilesToPlaylist(payload.id || player.snapshot().activePlaylistId);
         break;
       case 'playlist-remove-song':
         r = await player.removeSongFromPlaylist(payload.id, payload.file);
+        break;
+      case 'playlist-cover':
+        r = await player.setPlaylistCoverImage(payload.id, payload.cover);
+        break;
+      case 'playlist-cover-pick':
+        r = await player.choosePlaylistCover(payload.id);
         break;
       default:
         r = { ok: false, message: '不认识的作' };
@@ -86,7 +86,7 @@ export default function createMusicPlayerPlugin(ctx) {
     return {
       ok: Boolean(r?.ok),
       message: String(r?.message || ''),
-      state: player.snapshot(true),
+      state: player.snapshot(true, true),
     };
   }
 
@@ -94,29 +94,23 @@ export default function createMusicPlayerPlugin(ctx) {
   function page(ctx2) {
     const s = player.snapshot(true);
     const blocks = [];
-    if (!s.trackCount) {
+    const cur = s.current;
+    blocks.push(
+      ctx2.ui.textBlock(
+        cur ? `《${cur.title}》${cur.artist ? ` — ${cur.artist}` : ''}` : '还没在放'
+      ),
+      ctx2.ui.textBlock(
+        `${formatTime(s.position)} / ${formatTime(s.duration)}${s.playing ? '' : '（暂停）'}`
+      ),
+      ctx2.ui.buttonsBlock([
+        { id: 'prev', label: '⏮' },
+        { id: 'toggle', label: s.playing ? '⏸' : '▶', primary: true },
+        { id: 'next', label: '⏭' },
+        { id: 'lyrics', label: s.lyricsOpen ? '关掉桌面歌词' : '桌面歌词' },
+      ])
+    );
+    if (s.trackCount) {
       blocks.push(
-        ctx2.ui.emptyBlock(
-          s.activePlaylistId
-            ? '这个歌单还没有歌。用下面的「往歌单里加文件夹」往里加。'
-            : '还没有音乐库。点下面的「选择音乐文件夹」挑一个文件夹。'
-        )
-      );
-    } else {
-      const cur = s.current;
-      blocks.push(
-        ctx2.ui.textBlock(
-          cur ? `《${cur.title}》${cur.artist ? ` — ${cur.artist}` : ''}` : '还没在放'
-        ),
-        ctx2.ui.textBlock(
-          `${formatTime(s.position)} / ${formatTime(s.duration)}${s.playing ? '' : '（暂停）'}`
-        ),
-        ctx2.ui.buttonsBlock([
-          { id: 'prev', label: '⏮' },
-          { id: 'toggle', label: s.playing ? '⏸' : '▶', primary: true },
-          { id: 'next', label: '⏭' },
-          { id: 'lyrics', label: s.lyricsOpen ? '关掉桌面歌词' : '桌面歌词' },
-        ]),
         ctx2.ui.listBlock(
           s.tracks.slice(0, 100).map((t, i) => ({
             id: String(i),
@@ -126,40 +120,29 @@ export default function createMusicPlayerPlugin(ctx) {
           }))
         )
       );
+    } else {
+      blocks.push(ctx2.ui.emptyBlock('这个列表还没有歌。用下面的按钮把歌加进来。'));
     }
     blocks.push(
       ctx2.ui.listBlock(
-        [
-          {
-            id: '',
-            label: `曲库（${s.libraryCount} 首）`,
-            hint: s.activePlaylistId ? '' : '在放',
-            actionId: 'playlist-select',
-          },
-          ...s.playlists.map((p) => ({
-            id: p.id,
-            label: `${p.name}（${p.count} 首）`,
-            hint: p.id === s.activePlaylistId ? '在放' : '',
-            actionId: 'playlist-select',
-            removeId: 'playlist-delete',
-          })),
-        ]
+        s.playlists.map((p) => ({
+          id: p.id,
+          label: `${p.name}（${p.count} 首）`,
+          hint: p.id === s.activePlaylistId ? '在放' : '',
+          actionId: 'playlist-select',
+          removeId: p.id === s.defaultPlaylistId ? '' : 'playlist-delete',
+        }))
       ),
       ctx2.ui.inputBlock('playlist-create', '新歌单的名字', '新建歌单'),
       ctx2.ui.buttonsBlock([
-        { id: 'playlist-add-folder', label: '往歌单里加文件夹' },
-      ])
-    );
-    blocks.push(
-      ctx2.ui.buttonsBlock([
-        { id: 'choose-folder', label: '选择音乐文件夹' },
-        { id: 'scan', label: '重新扫描' },
+        { id: 'playlist-add-files', label: '♫ 添加歌曲' },
+        { id: 'playlist-add-folder', label: '📁 添加文件夹' },
       ])
     );
     return ctx2.ui.makePage({
       pluginId: 'music-player',
       title: '音乐播放器',
-      subtitle: s.folder || '还没有音乐库',
+      subtitle: s.sourceLabel,
       status: s.status,
       blocks,
     });
@@ -173,21 +156,21 @@ export default function createMusicPlayerPlugin(ctx) {
         title: '音乐播放器',
         subtitle: s.current
           ? `《${s.current.title}》${s.current.artist ? ` — ${s.current.artist}` : ''}`
-          : s.trackCount || s.activePlaylistId
+          : s.trackCount
             ? `${s.sourceLabel} ${s.trackCount} 首`
-            : '还没有音乐库',
+            : '还没有歌',
       };
     },
 
     page,
 
-    /** 打开时给的第一份（带整份曲库）。 */
+    /** 打开时给的第一份（带整份列表与歌词）。 */
     async data() {
       await player.ensureStarted();
-      return player.snapshot(true);
+      return player.snapshot(true, true);
     },
 
-    /** 周期刷新（不带曲库：列表不变，不必每回都重发一遍）。 */
+    /** 周期刷新（不带列表：列表不变，不必每回都重发一遍）。 */
     async tick() {
       await player.ensureStarted();
       return player.snapshot(false);
@@ -207,7 +190,7 @@ export default function createMusicPlayerPlugin(ctx) {
         payload.id = String(value || '');
       } else if (actionId === 'playlist-create') {
         payload.name = String(value || '');
-      } else if (actionId === 'playlist-add-folder') {
+      } else if (actionId === 'playlist-add-folder' || actionId === 'playlist-add-files') {
         payload.id = player.snapshot().activePlaylistId;
       }
       const r = await runAction(actionId, payload);
