@@ -164,9 +164,14 @@ test('派单：说明太长就让它写短点', async () => {
 
 test('派单关了：不能派，也不该真的派出去', async () => {
   const { byName, tasks } = makeTools({ dispatchEnabled: false });
+  // **报错文案里不许有内部话术**：这句话会喂回模型，模型会照着说给用户听。
   await assert.rejects(
     () => byName.get('task.submit').run({ title: '查视频', brief: '看看' }),
-    /不能派单/
+    (err) => {
+      assert.match(err.message, /不能把事交出去/);
+      assert.ok(!/派单|后台任务/.test(err.message), err.message);
+      return true;
+    }
   );
   assert.equal(tasks.calls.length, 0, '不能派单就不该提交任务');
 });

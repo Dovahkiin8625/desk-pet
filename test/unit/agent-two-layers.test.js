@@ -125,7 +125,7 @@ function wire({ interactionFetch, executionFetch }) {
         appendRecord: (entry) => records.push(entry),
         now: () => 1,
       }),
-    getTaskCounts: () => tasks.counts(),
+    getTaskStates: () => tasks.list(),
   });
 
   return { tasks, interaction, records, notices };

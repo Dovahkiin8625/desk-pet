@@ -397,10 +397,12 @@ export function createAssistant({  userDataDir,
   const interactionBackend = createInteractionBackend({
     fetchImpl,
     getRegistry: () => toolRegistry,
-    // 能力清单：技能表、插件清单、工具表。
-    getSkills: () => skillRegistry.list(),
-    // **只给开着的插件**：用户关掉的插件不该被报成「我有」。
-    getPlugins: () => (getPlugins?.() || []).filter((p) => p && p.enabled !== false),
+    // **只给开着、且接给后台任务的插件**，而且只要名字：
+    // 提示词里要的是「这类活儿有人能干」，不是整条插件记录。
+    getPlugins: () =>
+      (getPlugins?.() || [])
+        .filter((p) => p && p.enabled !== false && p.agentEnabled !== false)
+        .map((p) => p.name),
     // 任务管理工具**每轮新建**：它们绑着这一轮的历史与配置。
     getTaskTools: (turn) =>
       createTaskTools({
@@ -414,7 +416,9 @@ export function createAssistant({  userDataDir,
     getPersona: () => state?.llm?.persona || {},
     getFacts: () => state?.chat?.facts || [],
     getNow: () => new Date(),
-    getTaskCounts: () => agentTasks.counts(),
+    // **状态写进提示词**：用户问「某某怎么样了」，模型看一眼就能答，
+    // 一次工具往返都不用花（规格 §4.4）。
+    getTaskStates: () => agentTasks.list(),
     getMaxSteps: () => INTERACTION_MAX_STEPS,
     // **这一回合的过程要落盘**：模型说了什么、调了什么快工具——
     // 聊天历史页靠它们还原过程。不接这一行，交互层在生产上一条记录都不写。

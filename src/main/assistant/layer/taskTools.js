@@ -105,8 +105,8 @@ export function createTaskTools({
       parameters: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: '一句话说明这个任务要做什么' },
-          brief: { type: 'string', description: '任务说明：要干什么、要什么结果、有什么约束（200 字以内）' },
+          title: { type: 'string', description: '一句话说明要做什么' },
+          brief: { type: 'string', description: '说明：要干什么、要什么结果、有什么约束（200 字以内）' },
           reply: REPLY_PARAM,
         },
         required: ['title', 'brief'],
@@ -114,17 +114,17 @@ export function createTaskTools({
       risk: TOOL_RISK.READ,
       async run(args) {
         const answer = String(args?.reply || '').trim();
-        if (!dispatchEnabled) throw new Error('现在不能派单（对话模式里派单关着）');
+        if (!dispatchEnabled) throw new Error('现在不能把事交出去（只聊天模式里关着）');
         const title = String(args?.title || '').trim() || '一件事';
         const brief = String(args?.brief || '').trim();
-        if (!brief) throw new Error('任务说明还没写：要说清要干什么');
+        if (!brief) throw new Error('说明还没写：要说清要干什么');
         // **限长**：交互层的 `maxTokens` 按普通对话（默认 800），
         // 而工具参数与正文共用同一个额度——说明被截断，
         // 参数就不是合法 JSON，循环报错，白烧掉 3 步里的 1 步。
         // 超了就让模型写短点：用户的完整原话本来也会一起传过去，不会丢信息。
         if (brief.length > BRIEF_MAX_CHARS) {
           throw new Error(
-            `任务说明太长了（${brief.length} 字）：请写到 ${BRIEF_MAX_CHARS} 字以内`,
+            `说明太长了（${brief.length} 字）：请写到 ${BRIEF_MAX_CHARS} 字以内`,
           );
         }
         const messages = [
@@ -132,7 +132,7 @@ export function createTaskTools({
           { role: 'user', content: `${brief}\n\n用户原话：${userText}` },
         ];
         const task = tasks.submit({ prompt: brief, title, messages, config });
-        if (!task?.ok) throw new Error('派不出去：运行时没有收下这个任务');
+        if (!task?.ok) throw new Error('交不出去：运行时没有收下这件事');
         record('task.submit', {
           taskId: task.taskId,
           title,
@@ -141,7 +141,7 @@ export function createTaskTools({
           brief,
         });
         return {
-          text: `已派出任务 ${task.taskId}（${title}）`,
+          text: '交出去了，做完了会告诉你。',
           data: { taskId: task.taskId, queued: Boolean(task.queued), answer },
         };
       },
@@ -154,7 +154,7 @@ export function createTaskTools({
       parameters: {
         type: 'object',
         properties: {
-          taskId: { type: 'string', description: '任务号' },
+          taskId: { type: 'string', description: '那件事的编号' },
           reply: REPLY_PARAM,
         },
         required: ['taskId'],
@@ -163,12 +163,12 @@ export function createTaskTools({
       async run(args) {
         const answer = String(args?.reply || '').trim();
         const taskId = String(args?.taskId || '').trim();
-        if (!taskId) throw new Error('要停哪个任务？给个 taskId');
+        if (!taskId) throw new Error('要停哪一件？给个编号');
         const title = titleOf(taskId);
         const res = tasks.cancel(taskId);
         if (!res?.ok) throw new Error(res?.message || '停不下来');
         record('task.cancel', { taskId, title, action: `停掉了：${title || taskId}` });
-        return { text: `已停掉任务 ${taskId}`, data: { taskId, answer } };
+        return { text: '停掉了。', data: { taskId, answer } };
       },
     },
 
@@ -179,7 +179,7 @@ export function createTaskTools({
       parameters: {
         type: 'object',
         properties: {
-          taskId: { type: 'string', description: '任务号' },
+          taskId: { type: 'string', description: '那件事的编号' },
           note: { type: 'string', description: '要追加的那句话' },
           reply: REPLY_PARAM,
         },
@@ -190,8 +190,8 @@ export function createTaskTools({
         const answer = String(args?.reply || '').trim();
         const taskId = String(args?.taskId || '').trim();
         const note = String(args?.note || '').trim();
-        if (!taskId) throw new Error('要给哪个任务追加要求？给个 taskId');
-        if (!note) throw new Error('要追加什么？给个 note');
+        if (!taskId) throw new Error('要给哪一件追加要求？给个编号');
+        if (!note) throw new Error('要追加什么？给句话。');
         const title = titleOf(taskId);
         const res = tasks.steer(taskId, note);
         if (!res?.ok) throw new Error(res?.message || '追加不了');
@@ -207,8 +207,8 @@ export function createTaskTools({
         });
         return {
           text: dropped
-            ? `任务 ${taskId} 已经结束了，这句要求没送出去`
-            : `已给任务 ${taskId} 追加要求`,
+            ? '那件事已经结束了，这句要求没送出去'
+            : '要求送到了。',
           data: { taskId, note, answer },
         };
       },
@@ -221,7 +221,7 @@ export function createTaskTools({
       parameters: {
         type: 'object',
         properties: {
-          taskId: { type: 'string', description: '任务号' },
+          taskId: { type: 'string', description: '那件事的编号' },
           reply: REPLY_PARAM,
         },
         required: ['taskId'],
@@ -230,13 +230,13 @@ export function createTaskTools({
       async run(args) {
         const answer = String(args?.reply || '').trim();
         const taskId = String(args?.taskId || '').trim();
-        if (!taskId) throw new Error('要收起来哪个任务？给个 taskId');
+        if (!taskId) throw new Error('要收起来哪一件？给个编号');
         // **先查名字再收起来**：收起来之后这件事就不在列表里了。
         const title = titleOf(taskId);
         const res = tasks.archive(taskId);
         if (!res?.ok) throw new Error(res?.message || '收不起来');
         record('task.delete', { taskId, title, action: `收起来了：${title || taskId}` });
-        return { text: `已收起来任务 ${taskId}`, data: { taskId, answer } };
+        return { text: '收起来了。', data: { taskId, answer } };
       },
     },
   ];

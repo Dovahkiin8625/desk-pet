@@ -170,7 +170,8 @@ function clean(text, rules) {
     if (out === before) break;
   }
   out = out.trim();
-  out = out.replace(/^[\s，,。.、]+/, '').replace(/[\s，,。.、]+$/, '');
+  // **句末的句号留着**：那是句子的标点，不是替换留下的渣。
+  out = out.replace(/^[\s，,。.、]+/, '').replace(/[\s，,、.]+$/, '');
   if (PUNCT_ONLY.test(out)) return '';
   // 兜底：清不干净就不说话——宁可少说一句，也不让禁词漏出去。
   return hasForbidden(out, rules) ? '' : out;

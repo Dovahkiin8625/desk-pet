@@ -8,12 +8,9 @@ import { TOOL_RISK } from '../../src/shared/assistant.js';
 /**
  * 交互层（规格 §4）。
  *
- * 三件事最容易做错：
- * 1. **快工具整轮只有一次**——不靠提示词自觉，靠执行器强制；
- * 2. **配额按尝试计数**——失败的快工具也算用掉了，
- *    失败之后的唯一出路是转派后台任务，不是重试；
- * 3. **实时状态写在提示词里**——「现在几点」「还有几个任务在跑」
- *    不该花一次工具调用。
+ * 这一层只做三件事：**说话**（一次往返）、**知道自己在忙什么**（状态块）、
+ * **不漏内部话术**（过滤器）。外部能力一件不留——
+ * 外部能力都在后台任务那边，交互层一个工具都不给。
  */
 
 const CONFIG = {
@@ -67,7 +64,7 @@ function fakeRegistry(tools = []) {
   return { get: (n) => map.get(n) || null, list: () => [...map.values()] };
 }
 
-/** 一个能列目录的假工具。 */
+/** 一个能列目录的假工具（交互层现在不该有它，但注册表里还在）。 */
 function listTool(overrides = {}) {
   return {
     name: 'fs.list',
@@ -80,227 +77,48 @@ function listTool(overrides = {}) {
   };
 }
 
-test('快工具：整轮只能用一次，第二次被拒', async () => {
+/** 一个假的「把一件事交出去」工具。 */
+function submitTool(overrides = {}) {
+  return {
+    name: 'task.submit',
+    label: '开始做一件事',
+    description: '把一件事交出去做',
+    parameters: { type: 'object', properties: {} },
+    risk: TOOL_RISK.READ,
+    run: async (args) => ({
+      text: '交出去了',
+      data: { taskId: 't-1', answer: String(args?.reply || '').trim() },
+    }),
+    ...overrides,
+  };
+}
+
+test('工具表：外部能力一件不给，只剩动作类工具', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getTaskTools: () => [],
+  });
+  await backend.chat({ messages: [{ role: 'user', content: '你好' }], config: CONFIG });
+  const names = (calls[0].body.tools || []).map((t) => t.function.name);
+  assert.deepEqual(names, [], `交互层不该拿外部能力：${names.join(' / ')}`);
+});
+
+test('派单只走一次模型往返：工具带回的 reply 就是答复', async () => {
   const { calls, fetchImpl } = fakeFetch([
-    toolCall('clock.now'),
-    toolCall('fs.list'),
-    say('现在十点。'),
+    toolCall('task.submit', { title: '查天气', brief: '查一下', reply: '我去看看' }),
   ]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  const result = await backend.chat({
-    messages: [{ role: 'user', content: '现在几点' }],
-    config: CONFIG,
-  });
-
-  assert.equal(result.steps, 3);
-  // 第二次快工具被拒了：那一句拒绝要喂回模型。
-  //
-  // **看的是第三次请求**：拒绝发生在第二步（跑工具的时候），
-  // 它的内容要等下一次调模型才进上下文——所以在第三次请求里。
-  const third = calls[2].body.messages;
-  assert.ok(
-    third.some((m) => String(m.content).includes('这一轮只能用一次快工具')),
-    '第二次快工具没有被拒'
-  );
-  assert.equal(result.text, '现在十点。');
-});
-
-test('快工具：失败的也算用掉配额', async () => {
-  const failing = listTool({
-    run: async () => {
-      throw new Error('列不了那个目录');
-    },
-  });
-  const { calls, fetchImpl } = fakeFetch([
-    toolCall('fs.list'),
-    toolCall('fs.list'),
-    say('那个目录我打不开。'),
-  ]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([failing]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '列一下 D 盘' }],
-    config: CONFIG,
-  });
-
-  // 第一次失败；第二次**不是**再试一次，而是被配额拦住。
-  //
-  // **看的是第三次请求**：配额拒绝是在第二步跑工具时发生的，
-  // 它的内容要等下一次调模型才进上下文。
-  const third = calls[2].body.messages;
-  assert.ok(
-    third.some((m) => String(m.content).includes('这一轮只能用一次快工具')),
-    '失败的快工具没有消耗掉配额'
-  );
-});
-
-test('提示词：预置了时间与在跑的任务数', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-    getTaskCounts: () => ({ running: 2, queued: 1 }),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '有几次任务在跑' }],
-    config: CONFIG,
-  });
-
-  const system = calls[0].body.messages[0].content;
-  assert.ok(
-    system.includes('后台正在跑 2 个任务，排队 1 个'),
-    `提示词里没有实时状态：\n${system}`
-  );
-  // 现在几点不用花工具调用：日期就写在提示词里。
-  assert.match(system, /\d{4} 年 \d{1,2} 月 \d{1,2} 日/);
-});
-
-test('提示词：写着先自己答一次，别动不动就派单', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.ok(system.includes('先自己答一次'), `提示词没写清楚派单条件：\n${system}`);
-});
-
-test('提示词：写着怎么判断该自己答还是派单', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.match(system, /一次工具调用就能答的/, `提示词没写清楚自己答的条件：\n${system}`);
-  assert.match(system, /要调好几次工具.*派后台任务/, `提示词没写清楚派单的条件：\n${system}`);
-  assert.match(system, /拿不准就派单/, `提示词没写清楚拿不准时怎么办：\n${system}`);
-});
-
-test('提示词：一次调工具搞不定的事一律派单（插件的活儿也是）', async () => {
-  // 用户问天气时，交互层没有天气工具：
-  // 提示词必须说清「插件的活儿你干不了，派单」，
-  // 否则模型会去找一个不存在的工具，把 3 步全烧光。
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.match(system, /一律派后台任务/, `提示词没写清派单是默认路径：\n${system}`);
-  assert.match(system, /天气/, `提示词没点名插件的活儿：\n${system}`);
-  assert.match(system, /capability\.list 只在用户问/, `提示词没限制 capability.list 的用法：\n${system}`);
-});
-
-test('提示词：清单类回答可以写长一点', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.match(system, /可以写到 300 字/, `提示词没放开清单类回答的字数：\n${system}`);
-});
-
-test('提示词：写着能力清单要查工具，别凭印象说', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你有哪些插件' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.match(system, /capability\.list/, `提示词没提能力清单工具：\n${system}`);
-  assert.match(system, /你装着的插件：天气/, `提示词里没有插件名：\n${system}`);
-});
-
-test('工具：能力清单工具在这一轮可用', async () => {
-  const { calls, fetchImpl } = fakeFetch([toolCall('capability.list'), say('我有天气和待办。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-    getPlugins: () => [{ id: 'weather', name: '天气', description: '查天气' }],
-  });
-  const result = await backend.chat({
-    messages: [{ role: 'user', content: '你有哪些插件' }],
-    config: CONFIG,
-  });
-  assert.equal(result.text, '我有天气和待办。');
-  // 工具表里要有它，模型才调得动。
-  const names = calls[0].body.tools.map((t) => t.function.name);
-  assert.ok(names.includes('capability.list'), `工具表里没有 capability.list：${names.join(' / ')}`);
-});
-
-test('轮次上限：3 步还没给答复就收尾，不空着', async () => {
-  // 每次都调工具：模型一直没交卷。
-  //
-  // **两个工具轮流调**（不是同一个调三次）：
-  // 循环里「同一个错误连着出三次就停」的计数是按「工具名 + 错误」算的，
-  // 同一个工具连错三次会走 `repeated_errors` 那条路，
-  // 收尾的话变成「这个工具连着出了几次错」——
-  // 那就不是这条测试要验的「步数用尽」了。
-  // 轮流调 → 每次的错都不一样 → 循环走到步数上限才停。
-  const { fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  const result = await backend.chat({
-    messages: [{ role: 'user', content: '做点什么' }],
-    config: CONFIG,
-  });
-  assert.equal(result.steps, 3);
-  // 没有派单工具时只能实话实说，但别再报「3 步」这种内部黑话。
-  assert.match(result.text, /一次做不完/);
-});
-
-test('兜底：3 步用尽还没答复 → 自动派单，别把模型的窝囊甩给用户', async () => {
-  // 用户问天气，交互层没有天气工具：模型自己绕来绕去也没答上来。
-  // 这时交互层该做的是**派后台任务**（后台有插件工具），
-  // 而不是甩一句「我没能在这 3 步之内做完这件事」。
   const submitted = [];
-  const { fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
   const backend = createInteractionBackend({
     fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
     getTaskTools: () => [
-      {
-        name: 'task.submit',
-        label: '派单',
-        description: '派一个后台任务',
-        parameters: { type: 'object', properties: {} },
-        risk: TOOL_RISK.READ,
+      submitTool({
         run: async (args) => {
           submitted.push(args);
-          return { text: '派了' };
+          return { text: '交出去了', data: { taskId: 't-1', answer: String(args?.reply || '').trim() } };
         },
-      },
+      }),
     ],
   });
   const result = await backend.chat({
@@ -308,33 +126,213 @@ test('兜底：3 步用尽还没答复 → 自动派单，别把模型的窝囊�
     config: CONFIG,
     turn: { userText: '今天天气怎么样', history: [] },
   });
-  assert.equal(submitted.length, 1, '没有替用户派单');
+  assert.equal(calls.length, 1, '派单不该问模型第二遍');
+  assert.equal(result.text, '我去看看');
+  assert.equal(submitted.length, 1);
+});
+
+test('reply 里带 META：正文剥掉 META，情绪与记忆留下', async () => {
+  const { fetchImpl } = fakeFetch([
+    toolCall('task.submit', {
+      title: '查天气',
+      brief: '查一下',
+      reply: '我去看看<<META>>{"emotion":"happy","mood":5,"memories":[{"text":"他住在北京","kind":"fact"}]}',
+    }),
+  ]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [submitTool()],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '今天天气怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天天气怎么样', history: [] },
+  });
+  assert.equal(result.text, '我去看看');
+  assert.equal(result.emotion, 'happy');
+  assert.equal(result.mood, 5);
+  assert.deepEqual(result.memories, [{ text: '他住在北京', kind: 'fact' }]);
+});
+
+test('模型没写 reply：退回第二轮，让模型自己说', async () => {
+  const { calls, fetchImpl } = fakeFetch([
+    toolCall('task.submit', { title: '查天气', brief: '查一下' }),
+    say('我去看一下。'),
+  ]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [submitTool()],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '今天天气怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天天气怎么样', history: [] },
+  });
+  assert.equal(calls.length, 2, '没给答复就该再问模型一次');
+  assert.equal(result.text, '我去看一下。');
+});
+
+test('提示词：写着我手头在做的事，且没有工具名', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getRegistry: () => fakeRegistry([listTool()]),
+    getTaskStates: () => [
+      {
+        taskId: 't-1',
+        title: '找 F 盘里的视频',
+        status: 'running',
+        lastStepLabel: '列目录',
+        elapsedMs: 12000,
+      },
+    ],
+  });
+  await backend.chat({ messages: [{ role: 'user', content: '那个视频怎么样了' }], config: CONFIG });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(system.includes('你手头在做的事'), system);
+  assert.ok(system.includes('找 F 盘里的视频'), system);
+  assert.ok(system.includes('列目录'), system);
+  assert.ok(system.includes('t-1'), '编号要留着，停掉那件事时要用');
+  assert.ok(!system.includes('fs.list'), '提示词里不许出现工具名');
+  assert.ok(!system.includes('task.submit'), '提示词里不许出现工具名');
+});
+
+test('提示词：没有在做的事时写「现在没有别的事在忙」', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskStates: () => [],
+  });
+  await backend.chat({ messages: [{ role: 'user', content: '你好' }], config: CONFIG });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(system.includes('现在没有别的事在忙'), system);
+});
+
+test('提示词：做完了的事不进状态块', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskStates: () => [
+      { taskId: 't-1', title: '已经做完的事', status: 'done', lastStepLabel: '', elapsedMs: 1000 },
+      { taskId: 't-2', title: '还在做的事', status: 'running', lastStepLabel: '列目录', elapsedMs: 1000 },
+    ],
+  });
+  await backend.chat({ messages: [{ role: 'user', content: '你好' }], config: CONFIG });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(!system.includes('已经做完的事'), system);
+  assert.ok(system.includes('还在做的事'), system);
+});
+
+test('话术：答复里的「后台任务」被过滤掉', async () => {
+  const { fetchImpl } = fakeFetch([say('我派了个后台任务去查。')]);
+  const backend = createInteractionBackend({ fetchImpl });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '查一下' }],
+    config: CONFIG,
+  });
+  assert.ok(!result.text.includes('后台任务'), `漏出去了：${result.text}`);
+  assert.ok(!result.text.includes('派单'), `漏出去了：${result.text}`);
+  assert.ok(!/后台|派发/.test(result.text), `漏出去了：${result.text}`);
+});
+
+test('话术：流出去的那一段也是干净的', async () => {
+  const { fetchImpl } = fakeFetch([say('我派了个后台任务去查。')]);
+  const backend = createInteractionBackend({ fetchImpl });
+  const chunks = [];
+  await backend.chat({
+    messages: [{ role: 'user', content: '查一下' }],
+    config: CONFIG,
+    onDelta: (d) => chunks.push(d),
+  });
+  const streamed = chunks.join('');
+  assert.ok(!streamed.includes('后台任务'), `流里漏出去了：${streamed}`);
+});
+
+test('maxTokens：交互层用下限 1024（工具参数不能被截断）', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({ fetchImpl });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: { ...CONFIG, maxTokens: 800 },
+  });
+  assert.equal(calls[0].body.max_tokens, 1024);
+});
+
+test('maxTokens：用户自己调大的照旧尊重', async () => {
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({ fetchImpl });
+  await backend.chat({
+    messages: [{ role: 'user', content: '你好' }],
+    config: { ...CONFIG, maxTokens: 4000 },
+  });
+  assert.equal(calls[0].body.max_tokens, 4000);
+});
+
+test('步数用尽：不再多跑一轮总结（交互层要秒级）', async () => {
+  const { calls, fetchImpl } = fakeFetch([
+    toolCall('task.cancel', { taskId: 't-1' }),
+    toolCall('task.cancel', { taskId: 't-1' }),
+  ]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [submitTool({ name: 'task.cancel' })],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '做点什么' }],
+    config: CONFIG,
+    turn: { userText: '做点什么', history: [] },
+  });
+  // 两步用尽之后**不该有第 3 次请求**——
+  // 那一轮是「让模型总结」，交互层不要它（多一次往返就慢一倍）。
+  assert.equal(calls.length, 2, '步数用尽后还多跑了一轮总结');
+  assert.equal(result.outcome, AGENT_OUTCOME.MAX_STEPS);
+});
+
+test('兜底：两步用尽还没答复 → 自动把事交出去，别把模型的窝囊甩给用户', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([
+    toolCall('task.cancel', { taskId: 't-1' }),
+    toolCall('task.cancel', { taskId: 't-1' }),
+  ]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        name: 'task.cancel',
+        run: async () => ({ text: '停掉了', data: { answer: '' } }),
+      }),
+      submitTool({
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '交出去了', data: { taskId: 't-2', answer: String(args?.reply || '').trim() } };
+        },
+      }),
+    ],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '今天天气怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天天气怎么样', history: [] },
+  });
+  assert.equal(submitted.length, 1, '没有替用户把事交出去');
   assert.match(submitted[0].brief, /今天天气怎么样/);
   assert.match(result.text, /我去查/);
 });
 
-test('兜底：模型自己已经派过单了 → 不要再派一次', async () => {
+test('兜底：模型自己已经交过了 → 不要再来一遍', async () => {
   const submitted = [];
   const { fetchImpl } = fakeFetch([
-    toolCall('task.submit', { title: '查天气', brief: '查一下天气' }),
-    toolCall('fs.list'),
-    toolCall('clock.now'),
+    toolCall('task.submit', { title: '查天气', brief: '查一下天气', reply: '我去看看' }),
   ]);
   const backend = createInteractionBackend({
     fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
     getTaskTools: () => [
-      {
-        name: 'task.submit',
-        label: '派单',
-        description: '派一个后台任务',
-        parameters: { type: 'object', properties: {} },
-        risk: TOOL_RISK.READ,
+      submitTool({
         run: async (args) => {
           submitted.push(args);
-          return { text: '派了' };
+          return { text: '交出去了', data: { taskId: 't-1', answer: String(args?.reply || '').trim() } };
         },
-      },
+      }),
     ],
   });
   const result = await backend.chat({
@@ -342,24 +340,8 @@ test('兜底：模型自己已经派过单了 → 不要再派一次', async () 
     config: CONFIG,
     turn: { userText: '今天天气怎么样', history: [] },
   });
-  assert.equal(submitted.length, 1, '同一个需求派了两遍');
-  assert.match(result.text, /派出去了/);
-});
-
-test('步数用尽：不再多跑一轮总结（交互层要秒级）', async () => {
-  const { calls, fetchImpl } = fakeFetch([toolCall('clock.now'), toolCall('fs.list')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  const result = await backend.chat({
-    messages: [{ role: 'user', content: '做点什么' }],
-    config: CONFIG,
-  });
-  // 3 步用尽之后**不该有第 4 次请求**——
-  // 那一轮是「让模型总结」，交互层不要它（多一次往返就慢一倍）。
-  assert.equal(calls.length, 3, '步数用尽后还多跑了一轮总结');
-  assert.equal(result.outcome, AGENT_OUTCOME.MAX_STEPS);
+  assert.equal(submitted.length, 1, '同一个需求交了两遍');
+  assert.equal(result.text, '我去看看');
 });
 
 test('取消：已经 abort 的 signal，一条模型请求都不该发', async () => {
@@ -386,17 +368,7 @@ test('工具：不是只读的工具当场报错（接线时就拦下）', async
   const { fetchImpl } = fakeFetch([say('你好。')]);
   const backend = createInteractionBackend({
     fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-    getTaskTools: () => [
-      {
-        name: 'task.submit',
-        label: '派单',
-        description: '派一个后台任务',
-        parameters: { type: 'object', properties: {} },
-        risk: TOOL_RISK.WRITE,
-        run: async () => ({ text: '派了' }),
-      },
-    ],
+    getTaskTools: () => [submitTool({ risk: TOOL_RISK.WRITE })],
   });
   await assert.rejects(
     () =>
@@ -411,114 +383,15 @@ test('工具：不是只读的工具当场报错（接线时就拦下）', async
   );
 });
 
-test('请求：没配 maxTokens 时按 800 兜底', async () => {
+test('请求：没配 maxTokens 时按 800 兜底，再抬到下限 1024', async () => {
   // 少了这个兜底，`Number(undefined) || 0` 会算出 0，
   // 而 0 是「合法数字」——于是真的发出去 max_tokens: 0。
   const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
+  const backend = createInteractionBackend({ fetchImpl });
   const { apiKey, baseUrls, model, temperature, maxTokensField } = CONFIG;
   await backend.chat({
     messages: [{ role: 'user', content: '你好' }],
     config: { apiKey, baseUrls, model, temperature, maxTokensField },
   });
-  assert.equal(calls[0].body.max_tokens, 800);
-});
-
-test('提示词：只报这一轮实际可用的快工具', async () => {
-  // 注册表里没有的工具不能报：报了模型就会去调，
-  // 循环回一句「没有这个工具」——白烧一步。
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([listTool()]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.ok(system.includes('fs.list'), `提示词里没有 fs.list：\n${system}`);
-  assert.ok(!system.includes('fs.read'), `提示词里报了没注册的工具 fs.read：\n${system}`);
-});
-
-test('提示词：注册表里没有 fs.list 时就不报它', async () => {
-  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([]),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '你好' }],
-    config: CONFIG,
-  });
-  const system = calls[0].body.messages[0].content;
-  assert.ok(!system.includes('fs.list'), `提示词里报了没注册的工具 fs.list：\n${system}`);
-});
-
-test('交互层把这一回合的过程写成记录', async () => {
-  const written = [];
-  const backend = createInteractionBackend({
-    fetchImpl: fakeFetch([
-      toolCall('clipboard.read', {}),
-      say('在你剪贴板里'),
-    ]).fetchImpl,
-    getRegistry: () =>
-      fakeRegistry([{ name: 'clipboard.read', risk: 'read', run: async () => ({ text: '内容' }) }]),
-    getTaskTools: () => [],
-    appendRecord: (entry) => written.push(entry),
-    getPersona: () => ({}),
-    getFacts: () => [],
-    getNow: () => new Date(),
-    getTaskCounts: () => ({ running: 0, queued: 0 }),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '剪贴板里是什么' }],
-    // 配置用整个 CONFIG：模型名就是 'stub-model'，别的字段（apiKey 等）也要有。
-    config: CONFIG,
-  });
-
-  const model = written.filter((e) => e.kind === 'model');
-  assert.equal(model.length, 1);
-  assert.equal(model[0].text, '在你剪贴板里');
-  assert.equal(model[0].meta.model, 'stub-model');
-  assert.equal(model[0].meta.index, 2, '轮号是模型往返的次序：工具轮也占一个号');
-
-  const call = written.filter((e) => e.kind === 'step');
-  assert.equal(call.length, 1);
-  assert.equal(call[0].meta.tool, 'clipboard.read');
-  assert.equal(call[0].meta.layer, 'interaction');
-});
-
-test('任务管理工具不记 step——它们已经是派单记录了', async () => {
-  // 记两遍的话，页面上会出现两行说同一件事的话。
-  const written = [];
-  const { fetchImpl } = fakeFetch([toolCall('task.submit', { title: '查视频' }), say('派出去了。')]);
-  const backend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => fakeRegistry([]),
-    getTaskTools: () => [
-      {
-        name: 'task.submit',
-        label: '派单',
-        description: '派一个后台任务',
-        parameters: { type: 'object', properties: {} },
-        risk: TOOL_RISK.READ,
-        run: async () => ({ text: '已派出任务 t-1' }),
-      },
-    ],
-    appendRecord: (entry) => written.push(entry),
-  });
-  await backend.chat({
-    messages: [{ role: 'user', content: '帮我查下视频' }],
-    config: CONFIG,
-  });
-
-  assert.equal(
-    written.filter((e) => e.kind === 'step').length,
-    0,
-    'task.* 工具不该再记一条 step'
-  );
+  assert.equal(calls[0].body.max_tokens, 1024);
 });
