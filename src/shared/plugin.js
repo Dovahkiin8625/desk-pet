@@ -31,8 +31,8 @@ export const PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** 独立窗口的尺寸默认值与上下限。 */
 export const PLUGIN_WINDOW_LIMITS = Object.freeze({
-  width: 360,
-  height: 420,
+  width: 720,
+  height: 560,
   minWidth: 200,
   minHeight: 120,
   maxWidth: 1200,

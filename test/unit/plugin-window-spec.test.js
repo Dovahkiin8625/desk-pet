@@ -104,3 +104,14 @@ test('小部件仍然要插件自己声明', () => {
   assert.equal(hasWidget({ id: 'todos', name: '待办' }), false);
   assert.equal(hasWidget({ id: 'system', name: '系统状态', widget: {} }), true);
 });
+
+test('默认的独立窗口是宽版：够宽才切得出宽版布局', () => {
+  const spec = defaultWindowSpec({ name: '待办' });
+  assert.equal(spec.width, 720);
+  assert.equal(spec.height, 560);
+  // 上下限不动。
+  assert.equal(PLUGIN_WINDOW_LIMITS.minWidth, 200);
+  assert.equal(PLUGIN_WINDOW_LIMITS.minHeight, 120);
+  assert.equal(PLUGIN_WINDOW_LIMITS.maxWidth, 1200);
+  assert.equal(PLUGIN_WINDOW_LIMITS.maxHeight, 900);
+});
