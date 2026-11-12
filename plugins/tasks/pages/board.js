@@ -280,7 +280,9 @@ function syncSteps(steps) {
     }
     view.item.dataset.failed = node.failed ? 'true' : 'false';
     view.time.textContent = node.time;
-    view.tool.textContent = node.label || node.tool;
+    // **看板是排查用的**：工具名留着（人话标签改成悬停提示）。
+    view.tool.textContent = node.tool || node.label || '';
+    view.tool.title = String(node.label || '');
     view.args.textContent = node.args;
     view.args.hidden = !node.args;
     const body = node.failed ? node.error : node.result;

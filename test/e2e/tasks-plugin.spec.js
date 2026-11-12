@@ -450,6 +450,8 @@ test.describe('后台任务插件', () => {
       await expect(frame.locator('#detail-steps .tl-tool').first()).toHaveText('fs.list', {
         timeout: 30000,
       });
+      // 人话标签改成悬停提示：看板是排查用的，悬停能看懂就行。
+      await expect(frame.locator('#detail-steps .tl-tool').first()).toHaveAttribute('title', '列目录');
 
       // 回总览。
       await frame.locator('#detail-back').click();
