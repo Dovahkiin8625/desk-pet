@@ -34,7 +34,7 @@ function applyState(next) {
   el.sub.textContent = cur
     ? `${cur.artist ? cur.artist + ' · ' : ''}${state.playing ? '在放' : '暂停'}`
     : state.trackCount
-      ? `曲库里 ${state.trackCount} 首`
+      ? `${state.sourceLabel || '曲库'} ${state.trackCount} 首`
       : '选一个音乐文件夹开始';
   el.time.textContent = `${formatTime(state.position)} / ${formatTime(state.duration)}`;
   const ratio = state.duration > 0 ? state.position / state.duration : 0;

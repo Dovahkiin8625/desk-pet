@@ -61,14 +61,38 @@ export function createTools(player) {
       async run(args) {
         await ready();
         const song = String(args?.song || '').trim();
-        if (!song) throw new Error('找哪首歌？给个 song');
-        const found = player.search(song);
+        const artist = String(args?.artist || '').trim();
+        if (!song && !artist) {
+          throw new Error('找哪首歌？给个 song（歌名）或 artist（歌手）');
+        }
+        const found = player.search({ song, artist });
         const s = player.snapshot();
-        const text = found.length
-          ? found.map((t) => (t.artist ? `${t.title} — ${t.artist}` : t.title)).join('；')
-          : `曲库里没有「${song}」`;
+        const what = [song && `歌名含「${song}」`, artist && `歌手含「${artist}」`]
+          .filter(Boolean)
+          .join('、');
+        if (!found.length) {
+          // 只按歌名没找到：多半是想找某个歌手的歌。
+          const byArtist = !artist && song ? player.search({ artist: song }) : [];
+          if (byArtist.length) {
+            const names = byArtist
+              .slice(0, 5)
+              .map((t) => (t.artist ? `${t.title} — ${t.artist}` : t.title))
+              .join('；');
+            return {
+              text: `曲库里一共 ${s.libraryCount} 首。没有${what}的歌，但有这些歌手对得上：${names}`,
+              data: { found: [], byArtist },
+            };
+          }
+          return {
+            text: `曲库里一共 ${s.libraryCount} 首。没有${what}的歌。`,
+            data: { found: [] },
+          };
+        }
+        const names = found
+          .map((t) => (t.artist ? `${t.title} — ${t.artist}` : t.title))
+          .join('；');
         return {
-          text: `曲库里一共 ${s.trackCount} 首。${text}`,
+          text: `曲库里一共 ${s.libraryCount} 首。${what}的歌有：${names}`,
           data: { found },
         };
       },
@@ -83,14 +107,14 @@ export function createTools(player) {
           : '还没在放';
         const text = `${cur}，${formatTime(s.position)} / ${formatTime(s.duration)}，${
           s.playing ? '在放' : '暂停了'
-        }。音量 ${Math.round(s.volume * 100)}，曲库里 ${s.trackCount} 首，${s.modeLabel}。`;
+        }。音量 ${Math.round(s.volume * 100)}，曲库里 ${s.libraryCount} 首，${s.modeLabel}。`;
         return {
           text,
           data: {
             playing: s.playing,
             position: s.position,
             duration: s.duration,
-            trackCount: s.trackCount,
+            trackCount: s.libraryCount,
             volume: s.volume,
             mode: s.mode,
           },

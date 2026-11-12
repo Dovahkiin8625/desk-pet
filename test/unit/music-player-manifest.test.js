@@ -22,6 +22,7 @@ async function readManifest() {
 function fakePlayer(overrides = {}) {
   const state = {
     trackCount: 2,
+    libraryCount: 2,
     current: { title: '稻香', artist: '周杰伦' },
     playing: true,
     position: 12,
@@ -36,7 +37,19 @@ function fakePlayer(overrides = {}) {
     pause: () => ({ ok: true, message: '暂停了' }),
     next: async () => ({ ok: true, message: '下一首' }),
     prev: async () => ({ ok: true, message: '上一首' }),
-    search: () => [{ title: '稻香', artist: '周杰伦', file: 'C:/music/x.mp3' }],
+    search: (filter) => {
+      const song = String(filter?.song || '').trim().toLowerCase();
+      const artist = String(filter?.artist || '').trim().toLowerCase();
+      return [
+        { title: '稻香', artist: '周杰伦', file: 'C:/music/x.mp3' },
+        { title: '晴天', artist: '周杰伦', file: 'C:/music/y.mp3' },
+        { title: '夜曲', artist: '林俊杰', file: 'C:/music/z.mp3' },
+      ].filter(
+        (t) =>
+          (!song || t.title.toLowerCase().includes(song)) &&
+          (!artist || t.artist.toLowerCase().includes(artist))
+      );
+    },
     setLyrics: async () => ({ ok: true, message: '桌面歌词开了' }),
     snapshot: () => state,
     ...overrides,
@@ -90,4 +103,21 @@ test('小部件与独立窗口的页面都在磁盘上', async () => {
     const body = await readFile(join(DIR, page), 'utf8');
     assert.ok(body.includes('<html'), `页面「${page}」不是 HTML`);
   }
+});
+
+test('找歌工具：按歌名过滤、按歌手过滤', async () => {
+  const impls = createTools(fakePlayer());
+  const search = impls.find((t) => t.name === 'music.search');
+  const bySong = await search.run({ song: '稻香' });
+  assert.deepEqual(bySong.data.found.map((t) => t.title), ['稻香']);
+  const byArtist = await search.run({ artist: '林俊杰' });
+  assert.deepEqual(byArtist.data.found.map((t) => t.title), ['夜曲']);
+  const both = await search.run({ song: '香', artist: '周杰伦' });
+  assert.deepEqual(both.data.found.map((t) => t.title), ['稻香']);
+});
+
+test('找歌工具：歌名与歌手都不给要报错（模型才能换个参数再试）', async () => {
+  const impls = createTools(fakePlayer());
+  const search = impls.find((t) => t.name === 'music.search');
+  await assert.rejects(() => search.run({}), /song/);
 });

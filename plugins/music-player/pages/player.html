@@ -127,6 +127,62 @@
         min-width: 40px;
         accent-color: var(--dp-accent-strong);
       }
+      /* 播放列表那一排 */
+      #pl-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #pl-select {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 6px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        color: var(--dp-text);
+      }
+      #pl-bar button {
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 8px;
+        white-space: nowrap;
+      }
+      #pl-bar button[disabled] {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #pl-del.confirm {
+        background: var(--dp-danger);
+        border-color: var(--dp-danger);
+        color: #fff;
+      }
+      #pl-new-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #pl-new-row[hidden] {
+        display: none;
+      }
+      #pl-name {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 8px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        color: var(--dp-text);
+      }
+      #pl-new-row button {
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 8px;
+      }
       #lib-head {
         display: flex;
         align-items: center;
@@ -195,6 +251,21 @@
       #list li.current .artist {
         color: var(--dp-accent-ink);
       }
+      #list .rm {
+        font: inherit;
+        font-size: 13px;
+        line-height: 1;
+        padding: 2px 6px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--dp-text-faint);
+        cursor: pointer;
+      }
+      #list .rm:hover {
+        background: var(--dp-surface-hover);
+        color: var(--dp-text);
+      }
       #empty {
         color: var(--dp-text-soft);
         font-size: 13px;
@@ -204,6 +275,111 @@
       }
       #empty[hidden] {
         display: none;
+      }
+      /* 挑歌的那块浮层 */
+      #picker {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        background: rgba(0, 0, 0, 0.35);
+        z-index: 10;
+      }
+      #picker[hidden] {
+        display: none;
+      }
+      #picker-card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: 100%;
+        max-width: 420px;
+        max-height: 100%;
+        padding: 10px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-bg);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      }
+      #picker-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      #picker-head .spacer {
+        flex: 1;
+      }
+      #picker-head button {
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 10px;
+      }
+      #picker-filter {
+        font: inherit;
+        font-size: 13px;
+        padding: 5px 8px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
+        color: var(--dp-text);
+      }
+      #picker-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+      }
+      #picker-list:empty {
+        display: none;
+      }
+      #picker-list li {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 6px 9px;
+        cursor: pointer;
+        border-bottom: 1px solid var(--dp-border-soft);
+      }
+      #picker-list li:last-child {
+        border-bottom: none;
+      }
+      #picker-list li:hover {
+        background: var(--dp-surface);
+      }
+      #picker-list li.added {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #picker-list li.none {
+        color: var(--dp-text-faint);
+        font-size: 12px;
+        cursor: default;
+      }
+      #picker-list .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+      }
+      #picker-list .artist {
+        color: var(--dp-text-faint);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 40%;
+      }
+      #picker-list .mark {
+        color: var(--dp-accent-strong);
+        font-size: 12px;
       }
     </style>
   </head>
@@ -236,6 +412,24 @@
         <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
       </div>
 
+      <div id="pl-bar">
+        <select id="pl-select" title="播放列表"></select>
+        <button id="pl-new" class="dp-button" type="button" title="新建歌单">新建</button>
+        <button id="pl-del" class="dp-button" type="button" title="删掉这个歌单">删除</button>
+        <button id="pl-folder" class="dp-button" type="button" title="把一个文件夹里的歌加进歌单">
+          ＋文件夹
+        </button>
+        <button id="pl-song" class="dp-button" type="button" title="从曲库里挑歌加进歌单">
+          ＋歌曲
+        </button>
+      </div>
+
+      <div id="pl-new-row" hidden>
+        <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
+        <button id="pl-name-ok" class="dp-button" type="button">确定</button>
+        <button id="pl-name-cancel" class="dp-button" type="button">取消</button>
+      </div>
+
       <div id="lib-head">
         <span id="lib-count">曲库</span>
         <span class="spacer"></span>
@@ -247,6 +441,18 @@
       </div>
       <ul id="list"></ul>
       <div id="empty">还没有音乐库。点右上角的「音乐库」选一个文件夹。</div>
+    </div>
+
+    <div id="picker" hidden>
+      <div id="picker-card">
+        <div id="picker-head">
+          <span id="picker-title">从曲库里挑歌</span>
+          <span class="spacer"></span>
+          <button id="picker-close" class="dp-button" type="button">完成</button>
+        </div>
+        <input id="picker-filter" type="text" placeholder="按歌名或歌手过滤" />
+        <ul id="picker-list"></ul>
+      </div>
     </div>
     <script type="module" src="player.js"></script>
   </body>

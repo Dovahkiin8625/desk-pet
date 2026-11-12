@@ -46,11 +46,13 @@
     {
       "name": "music.search",
       "label": "找歌",
-      "description": "在本地曲库里按歌名或歌手找歌，返回匹配到的歌。",
+      "description": "在本地曲库里找歌。可以按歌名过滤（song），也可以按歌手过滤（artist）；两个都给就都要对上。",
       "parameters": {
         "type": "object",
-        "properties": { "song": { "type": "string", "description": "歌名或歌手名" } },
-        "required": ["song"]
+        "properties": {
+          "song": { "type": "string", "description": "歌名，按歌名过滤" },
+          "artist": { "type": "string", "description": "歌手名，按歌手过滤" }
+        }
       },
       "risk": "read"
     },

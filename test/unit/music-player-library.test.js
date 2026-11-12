@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { scanLibrary, lyricPathsFor } from '../../plugins/music-player/lib/library.js';
+import { scanLibrary, lyricPathsFor, searchTracks } from '../../plugins/music-player/lib/library.js';
 
 async function makeLibrary() {
   const root = await mkdtemp(join(tmpdir(), 'music-'));
@@ -72,4 +72,41 @@ test('没有音乐文件夹时是空曲库（不是报错）', async () => {
 test('文件夹不在了也别炸', async () => {
   const { tracks } = await scanLibrary(join(tmpdir(), '音乐插件-不存在的文件夹-xyz'));
   assert.deepEqual(tracks, []);
+});
+
+test('找歌：按歌名过滤', () => {
+  const tracks = [
+    { title: '稻香', artist: '周杰伦' },
+    { title: '晴天', artist: '周杰伦' },
+    { title: '七里香', artist: '周杰伦' },
+  ];
+  const found = searchTracks(tracks, { song: '香' });
+  assert.deepEqual(found.map((t) => t.title), ['稻香', '七里香']);
+});
+
+test('找歌：按歌手过滤', () => {
+  const tracks = [
+    { title: '稻香', artist: '周杰伦' },
+    { title: '青花瓷', artist: '周杰伦' },
+    { title: '夜曲', artist: '林俊杰' },
+  ];
+  const found = searchTracks(tracks, { artist: '周杰伦' });
+  assert.deepEqual(found.map((t) => t.title), ['稻香', '青花瓷']);
+});
+
+test('找歌：歌名与歌手都要对上', () => {
+  const tracks = [
+    { title: '稻香', artist: '周杰伦' },
+    { title: '晴天', artist: '周杰伦' },
+    { title: '夜曲', artist: '林俊杰' },
+  ];
+  const found = searchTracks(tracks, { song: '香', artist: '周杰伦' });
+  assert.deepEqual(found.map((t) => t.title), ['稻香']);
+  assert.deepEqual(searchTracks(tracks, { song: '香', artist: '林俊杰' }), []);
+});
+
+test('找歌：什么都不给就是全部', () => {
+  const tracks = [{ title: '稻香', artist: '周杰伦' }];
+  assert.equal(searchTracks(tracks, {}).length, 1);
+  assert.equal(searchTracks(tracks, { song: '', artist: '' }).length, 1);
 });

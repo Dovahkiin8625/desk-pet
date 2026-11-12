@@ -5,8 +5,16 @@ import { join } from 'node:path';
 import { createEngine } from './engine.js';
 import { formatTime } from './format.js';
 import { createLyricsWindow } from './lyrics-window.js';
-import { lyricPathsFor, scanLibrary } from './library.js';
+import { lyricPathsFor, scanLibrary, searchTracks } from './library.js';
 import { decodeLyrics, lineIndexAt, parseLrc } from './lrc.js';
+import {
+  addPlaylist,
+  addTracksToPlaylist,
+  readPlaylists,
+  removePlaylist,
+  removeTrackFromPlaylist,
+  writePlaylists,
+} from './playlists.js';
 
 /** 与 preload/mp.cjs 约定的通道。 */
 const CHANNEL = 'mp:music-player:message';
@@ -32,15 +40,25 @@ const MODE_BY_LABEL = {
  */
 export function createPlayer({ ctx, pluginDir }) {
   const preloadPath = join(pluginDir, 'preload', 'mp.cjs');
+  const userDataDir = app.getPath('userData');
 
   const state = {
     folder: '',
-    tracks: [],
+    /** 曲库：扫出来的全部歌。 */
+    library: [],
+    /** 播放列表。 */
+    playlists: [],
+    /** 现在放的是哪个歌单（空 = 放曲库）。 */
+    activePlaylistId: '',
     truncated: false,
     scanning: false,
     /** 曲库变了就加一：界面靠它知道列表要不要重画。 */
     libraryVersion: 0,
+    /** 列表（曲库或歌单）变了就加一。 */
+    listVersion: 0,
     index: -1,
+    /** 引擎里正放着的那首歌（与列表下标分开：切歌单时歌还在放）。 */
+    current: null,
     playing: false,
     position: 0,
     duration: 0,
@@ -54,6 +72,8 @@ export function createPlayer({ ctx, pluginDir }) {
   let lyricLines = [];
   /** 此刻该显示第几行。 */
   let lyricIndex = -1;
+  /** 推给界面的那份是全量还是简版（列表变了才推全量）。 */
+  let pushedVersion = -1;
 
   /**
    * 起来了没有。
@@ -99,27 +119,55 @@ export function createPlayer({ ctx, pluginDir }) {
     state.folder = folderOfConfig();
   }
 
-  /** 第一次真有人用这个插件：读配置、扫曲库、歌词窗该开着就开着。 */
+  /** 第一次真有人用这个插件：读配置、读歌单、扫曲库、歌词窗该开着就开着。 */
   async function ensureStarted() {
     if (started) return;
     started = true;
     syncConfig();
     state.lyricsOpen = Boolean(readConfig().lyricsOn);
     if (state.lyricsOpen) ensureLyricsWindow().open();
+    state.playlists = await readPlaylists(userDataDir);
     await scan();
   }
 
-  /** 一份状态快照。`withTracks` 为真时带上整份曲库（界面要画列表）。 */
+  /** 现在在放的是哪一份列表：选中的歌单，或者曲库。 */
+  function sourceTracks() {
+    const playlist = state.playlists.find((p) => p.id === state.activePlaylistId);
+    return playlist ? playlist.tracks : state.library;
+  }
+
+  /** 现在这份列表叫什么（曲库，还是歌单的名字）。 */
+  function sourceLabel() {
+    const playlist = state.playlists.find((p) => p.id === state.activePlaylistId);
+    return playlist ? playlist.name : '曲库';
+  }
+
+  /** 列表变了：界面要重画。 */
+  function touchList() {
+    state.listVersion += 1;
+  }
+
+  /** 一份状态快照。`withTracks` 为真时带上整份列表（界面要画列表）。 */
   function snapshot(withTracks = false) {
     syncConfig();
-    const track = state.tracks[state.index] || null;
+    const tracks = sourceTracks();
+    const track = state.current;
     const out = {
       folder: state.folder,
-      trackCount: state.tracks.length,
+      sourceLabel: sourceLabel(),
+      trackCount: tracks.length,
+      libraryCount: state.library.length,
       truncated: state.truncated,
       scanning: state.scanning,
       libraryVersion: state.libraryVersion,
+      listVersion: state.listVersion,
       index: state.index,
+      activePlaylistId: state.activePlaylistId,
+      playlists: state.playlists.map((p) => ({
+        id: p.id,
+        name: p.name,
+        count: p.tracks.length,
+      })),
       current: track
         ? { id: track.id, title: track.title, artist: track.artist, file: track.file }
         : null,
@@ -133,7 +181,13 @@ export function createPlayer({ ctx, pluginDir }) {
       status: state.status,
     };
     if (withTracks) {
-      out.tracks = state.tracks.map((t) => ({
+      out.tracks = tracks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        file: t.file,
+      }));
+      out.library = state.library.map((t) => ({
         id: t.id,
         title: t.title,
         artist: t.artist,
@@ -143,10 +197,17 @@ export function createPlayer({ ctx, pluginDir }) {
     return out;
   }
 
-  /** 状态变了：推给所有挂着这个插件的界面。 */
+  /**
+   * 状态变了：推给所有挂着这个插件的界面。
+   *
+   * 列表变了才推全量（带整份歌单），其余时候推简版——
+   * 播放头每 250ms 动一次，整份列表跟着动太浪费。
+   */
   function notify() {
     try {
-      ctx.push?.(snapshot(false));
+      const full = state.listVersion !== pushedVersion;
+      if (full) pushedVersion = state.listVersion;
+      ctx.push?.(snapshot(full));
     } catch (err) {
       console.warn('[音乐] 状态推不出去：', err?.message);
     }
@@ -236,7 +297,7 @@ export function createPlayer({ ctx, pluginDir }) {
   /** 把歌词推给歌词窗。 */
   function pushLyrics() {
     if (!state.lyricsOpen) return;
-    const track = state.tracks[state.index] || null;
+    const track = state.current;
     lyricsWindow?.send({
       lines: lyricLines.map((l) => ({ t: l.t, text: l.text })),
       index: lyricIndex,
@@ -252,19 +313,21 @@ export function createPlayer({ ctx, pluginDir }) {
 
   /** 放第几首。不给下标就是「继续放现在这首」。 */
   async function play(index) {
+    const tracks = sourceTracks();
     if (index === undefined || index === null) {
-      if (state.index >= 0 && state.index < state.tracks.length) return resume();
+      if (state.current) return resume();
       return play(0);
     }
-    if (!state.tracks.length) {
-      state.status = '曲库是空的，先选一个音乐文件夹';
+    if (!tracks.length) {
+      state.status = state.activePlaylistId ? '这个歌单是空的' : '曲库是空的，先选一个音乐文件夹';
       notify();
       return { ok: false, message: state.status };
     }
     let at = Number(index);
-    if (!Number.isInteger(at) || at < 0 || at >= state.tracks.length) at = 0;
-    const track = state.tracks[at];
+    if (!Number.isInteger(at) || at < 0 || at >= tracks.length) at = 0;
+    const track = tracks[at];
     state.index = at;
+    state.current = track;
     state.position = 0;
     state.duration = 0;
     state.playing = true;
@@ -305,7 +368,7 @@ export function createPlayer({ ctx, pluginDir }) {
 
   /** 下一首是第几首。`auto` 是「这首放完了自己往下走」。 */
   function nextIndex(auto) {
-    const total = state.tracks.length;
+    const total = sourceTracks().length;
     if (!total) return -1;
     if (state.mode === 'shuffle') {
       if (total === 1) return 0;
@@ -331,8 +394,8 @@ export function createPlayer({ ctx, pluginDir }) {
   }
 
   async function prev() {
-    if (!state.tracks.length) {
-      state.status = '曲库是空的';
+    if (!sourceTracks().length) {
+      state.status = state.activePlaylistId ? '这个歌单是空的' : '曲库是空的';
       notify();
       return { ok: false, message: state.status };
     }
@@ -373,9 +436,11 @@ export function createPlayer({ ctx, pluginDir }) {
     const folder = folderOfConfig();
     state.folder = folder;
     if (!folder) {
-      state.tracks = [];
+      state.library = [];
       state.libraryVersion += 1;
+      touchList();
       state.index = -1;
+      state.current = null;
       state.playing = false;
       state.status = '还没有音乐文件夹';
       notify();
@@ -383,18 +448,21 @@ export function createPlayer({ ctx, pluginDir }) {
     }
     state.scanning = true;
     notify();
-    const currentId = state.tracks[state.index]?.id || '';
+    const currentFile = state.current?.file || '';
     try {
       const { tracks, truncated } = await scanLibrary(folder);
-      state.tracks = tracks;
+      state.library = tracks;
       state.truncated = truncated;
       state.libraryVersion += 1;
-      const at = currentId ? tracks.findIndex((t) => t.id === currentId) : -1;
+      touchList();
+      const at = currentFile ? sourceTracks().findIndex((t) => t.file === currentFile) : -1;
       state.index = at;
-      if (at < 0) {
+      if (at < 0 && !state.activePlaylistId) {
+        // 正在放的那首没了：停掉。
         state.playing = false;
         state.position = 0;
         state.duration = 0;
+        state.current = null;
       }
       state.status = tracks.length
         ? `曲库里 ${tracks.length} 首${truncated ? '（只收了前面一部分）' : ''}`
@@ -404,7 +472,7 @@ export function createPlayer({ ctx, pluginDir }) {
     }
     state.scanning = false;
     notify();
-    return { ok: state.tracks.length > 0, message: state.status };
+    return { ok: state.library.length > 0, message: state.status };
   }
 
   /** 让用户挑一个音乐文件夹。 */
@@ -422,6 +490,133 @@ export function createPlayer({ ctx, pluginDir }) {
     state.folder = folder;
     await scan();
     return { ok: true, message: `音乐库：${folder}` };
+  }
+
+  // -------------------------------------------------------------------------
+  // 播放列表
+  // -------------------------------------------------------------------------
+
+  /** 歌单存盘。写坏了也不该把音乐弄停——记一条日志就算了。 */
+  async function savePlaylists() {
+    try {
+      state.playlists = await writePlaylists(userDataDir, state.playlists);
+    } catch (err) {
+      console.warn('[音乐] 歌单存不下：', err?.message);
+      state.status = `歌单存不下：${err?.message || err}`;
+    }
+  }
+
+  /** 切到某个歌单（空 = 曲库）。 */
+  function selectPlaylist(id) {
+    const want = String(id || '');
+    if (want && !state.playlists.some((p) => p.id === want)) {
+      return { ok: false, message: '这个歌单已经不在了' };
+    }
+    state.activePlaylistId = want;
+    // 列表换了：正在放的歌不一定在里面，下标要重新对。
+    const currentFile = state.current?.file || '';
+    state.index = currentFile ? sourceTracks().findIndex((t) => t.file === currentFile) : -1;
+    touchList();
+    const label = sourceLabel();
+    state.status = want ? `在放「${label}」` : '在放曲库';
+    notify();
+    return { ok: true, message: state.status };
+  }
+
+  /** 新建一个歌单。 */
+  async function createPlaylist(name) {
+    const clean = String(name || '').trim();
+    if (!clean) return { ok: false, message: '歌单得有个名字' };
+    state.playlists = addPlaylist(state.playlists, clean);
+    const playlist = state.playlists[state.playlists.length - 1];
+    state.activePlaylistId = playlist.id;
+    state.index = -1;
+    touchList();
+    await savePlaylists();
+    state.status = `建好了「${clean}」`;
+    notify();
+    return { ok: true, message: state.status };
+  }
+
+  /** 删掉一个歌单。 */
+  async function deletePlaylist(id) {
+    const target = String(id || '');
+    const playlist = state.playlists.find((p) => p.id === target);
+    if (!playlist) return { ok: false, message: '这个歌单已经不在了' };
+    state.playlists = removePlaylist(state.playlists, target);
+    if (state.activePlaylistId === target) {
+      state.activePlaylistId = '';
+      state.index = -1;
+    }
+    touchList();
+    await savePlaylists();
+    state.status = `删掉了「${playlist.name}」`;
+    notify();
+    return { ok: true, message: state.status };
+  }
+
+  /** 往歌单里加歌（按文件路径认，重复的不加）。 */
+  async function addSongToPlaylist(id, file) {
+    const target = String(id || '');
+    if (!state.playlists.some((p) => p.id === target)) {
+      return { ok: false, message: '这个歌单已经不在了' };
+    }
+    const path = String(file || '');
+    const track =
+      state.library.find((t) => t.file === path) ||
+      state.playlists.flatMap((p) => p.tracks).find((t) => t.file === path);
+    if (!track) return { ok: false, message: '曲库里没有这首歌' };
+    const { playlists, added } = addTracksToPlaylist(state.playlists, target, [track]);
+    state.playlists = playlists;
+    touchList();
+    await savePlaylists();
+    state.status = added ? `加了《${track.title}》` : '这首歌已经在歌单里了';
+    notify();
+    return { ok: true, message: state.status };
+  }
+
+  /** 把一个文件夹里的歌加进歌单。 */
+  async function addFolderToPlaylist(id) {
+    const target = String(id || '');
+    if (!state.playlists.some((p) => p.id === target)) {
+      return { ok: false, message: '先选一个播放列表' };
+    }
+    const result = await dialog.showOpenDialog({
+      title: '选一个文件夹',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths?.length) {
+      return { ok: false, message: '没选文件夹' };
+    }
+    const { tracks } = await scanLibrary(result.filePaths[0]);
+    if (!tracks.length) {
+      state.status = '这个文件夹里没找到音频文件';
+      notify();
+      return { ok: false, message: state.status };
+    }
+    const { playlists, added } = addTracksToPlaylist(state.playlists, target, tracks);
+    state.playlists = playlists;
+    touchList();
+    await savePlaylists();
+    state.status = added ? `加了 ${added} 首` : '这些歌都在歌单里了';
+    notify();
+    return { ok: true, message: state.status };
+  }
+
+  /** 从歌单里去掉一首歌。 */
+  async function removeSongFromPlaylist(id, file) {
+    const target = String(id || '');
+    if (!state.playlists.some((p) => p.id === target)) {
+      return { ok: false, message: '这个歌单已经不在了' };
+    }
+    state.playlists = removeTrackFromPlaylist(state.playlists, target, file);
+    const currentFile = state.current?.file || '';
+    state.index = currentFile ? sourceTracks().findIndex((t) => t.file === currentFile) : -1;
+    touchList();
+    await savePlaylists();
+    state.status = '从歌单里拿掉了';
+    notify();
+    return { ok: true, message: state.status };
   }
 
   // -------------------------------------------------------------------------
@@ -464,14 +659,22 @@ export function createPlayer({ ctx, pluginDir }) {
   // 找歌（给 agent 用）
   // -------------------------------------------------------------------------
 
+  /** 曲库里有没有一首歌对得上这句话（歌名或歌手名）。 */
   function matches(track, query) {
     const q = query.toLowerCase();
     return track.title.toLowerCase().includes(q) || track.artist.toLowerCase().includes(q);
   }
 
-  function search(query) {
-    const q = String(query || '').trim();
-    const list = q ? state.tracks.filter((t) => matches(t, q)) : state.tracks;
+  /**
+   * 在曲库里找歌。
+   *
+   * `song` 按**歌名**过滤，`artist` 按**歌手**过滤；两个都给就都要对上。
+   *
+   * @param {{song?: string, artist?: string}} filter
+   * @returns {Array<{title: string, artist: string, file: string}>}
+   */
+  function search(filter) {
+    const list = searchTracks(state.library, filter);
     return list.slice(0, 20).map((t) => ({ title: t.title, artist: t.artist, file: t.file }));
   }
 
@@ -479,12 +682,18 @@ export function createPlayer({ ctx, pluginDir }) {
   async function playMatch(query) {
     const q = String(query || '').trim();
     if (!q) return play(undefined);
-    const at = state.tracks.findIndex((t) => matches(t, q));
-    if (at < 0) {
+    const track = state.library.find((t) => matches(t, q));
+    if (!track) {
       state.status = `曲库里没有「${q}」`;
       notify();
       return { ok: false, message: state.status };
     }
+    // 这首歌不在当前这份列表里：先把列表切回曲库，不然放不了它。
+    if (!sourceTracks().some((t) => t.file === track.file)) {
+      state.activePlaylistId = '';
+      touchList();
+    }
+    const at = sourceTracks().findIndex((t) => t.file === track.file);
     return play(at);
   }
 
@@ -534,5 +743,11 @@ export function createPlayer({ ctx, pluginDir }) {
     chooseFolder,
     search,
     playMatch,
+    selectPlaylist,
+    createPlaylist,
+    deletePlaylist,
+    addSongToPlaylist,
+    addFolderToPlaylist,
+    removeSongFromPlaylist,
   };
 }

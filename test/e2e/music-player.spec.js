@@ -4,9 +4,10 @@
 // - 选好的音乐文件夹进了曲库，歌单里看得见；
 // - 点一首歌就放它，界面上的歌名跟着变；
 // - 桌面小部件能开出来，显示的是同一首歌；
-// - 桌面歌词窗能开出来，并且跟着歌走。
+// - 桌面歌词窗能开出来，并且跟着歌走；
+// - 能建歌单、往歌单里加歌、放歌单里的歌，也能删掉歌单。
 import { test, expect, _electron as electron } from '@playwright/test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -205,6 +206,54 @@ test.describe('音乐播放器插件', () => {
       expect(lyrics, '桌面歌词窗没有出现').toBeTruthy();
       await lyrics.waitForLoadState('domcontentloaded');
       await expect(lyrics.locator('.line.current')).toHaveText('第一句歌词', { timeout: 20000 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('能建歌单、往里加歌、放歌单里的歌，也能删掉歌单', async () => {
+    const { app, pet } = await launch();
+    try {
+      await pet.evaluate(() => window.pet.openPanel());
+      const panel = await findWindow(app, '/renderer/panel/index.html');
+      expect(panel, '面板窗口没有出现').toBeTruthy();
+      await panel.waitForLoadState('domcontentloaded');
+
+      const frame = await openMusicPlugin(panel);
+      await expect(frame.locator('#list li')).toHaveCount(1, { timeout: 20000 });
+
+      // 新建歌单：建好之后它就是当前放的那一份。
+      await frame.locator('#pl-new').click();
+      await frame.locator('#pl-name').fill('通勤');
+      await frame.locator('#pl-name-ok').click();
+      await expect(frame.locator('#pl-select option')).toHaveCount(2, { timeout: 10000 });
+      await expect(frame.locator('#lib-count')).toHaveText('通勤 0 首');
+      await expect(frame.locator('#list li')).toHaveCount(0);
+
+      // 从曲库里挑一首歌加进歌单。
+      await frame.locator('#pl-song').click();
+      await expect(frame.locator('#picker-list li')).toHaveCount(1, { timeout: 10000 });
+      await frame.locator('#picker-list li').first().click();
+      await expect(frame.locator('#lib-count')).toHaveText('通勤 1 首', { timeout: 10000 });
+      await frame.locator('#picker-close').click();
+
+      // 歌单里的歌能放。
+      await expect(frame.locator('#list li')).toHaveCount(1);
+      await frame.locator('#list li').first().click();
+      await expect(frame.locator('#np-title')).toHaveText('测试歌曲', { timeout: 20000 });
+
+      // 歌单落盘了。
+      const saved = JSON.parse(await readFile(join(USER_DATA, 'music-playlists.json'), 'utf8'));
+      expect(saved.playlists.length, '歌单没存到盘上').toBe(1);
+      expect(saved.playlists[0].name).toBe('通勤');
+      expect(saved.playlists[0].tracks.length).toBe(1);
+
+      // 删歌单要点两下（头一下是问「真删？」）。
+      await frame.locator('#pl-del').click();
+      await expect(frame.locator('#pl-del')).toHaveText('真删？');
+      await frame.locator('#pl-del').click();
+      await expect(frame.locator('#pl-select option')).toHaveCount(1, { timeout: 10000 });
+      await expect(frame.locator('#lib-count')).toHaveText('曲库 1 首');
     } finally {
       await app.close();
     }

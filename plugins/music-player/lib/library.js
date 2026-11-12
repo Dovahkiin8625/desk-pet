@@ -90,3 +90,23 @@ export function lyricPathsFor(track) {
   if (track.title && track.title !== track.base) out.push(join(dir, `${track.title}.lrc`));
   return out;
 }
+
+/**
+ * 在曲库里找歌。
+ *
+ * `song` 按**歌名**过滤，`artist` 按**歌手**过滤；两个都给就都要对上。
+ *
+ * @param {object[]} tracks 曲库里的歌
+ * @param {{song?: string, artist?: string}} filter
+ * @returns {object[]} 对得上的那些歌
+ */
+export function searchTracks(tracks, filter) {
+  const song = String(filter?.song || '').trim().toLowerCase();
+  const artist = String(filter?.artist || '').trim().toLowerCase();
+  const list = Array.isArray(tracks) ? tracks : [];
+  return list.filter((track) => {
+    if (song && !String(track.title || '').toLowerCase().includes(song)) return false;
+    if (artist && !String(track.artist || '').toLowerCase().includes(artist)) return false;
+    return true;
+  });
+}
