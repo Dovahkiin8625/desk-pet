@@ -100,9 +100,28 @@ test('流式：text 是已经吐给上层的那段话', () => {
 });
 
 test('收拾阶段不许造出新的禁词', () => {
-  assert.equal(sanitizeSpeech('后 台任务'), '事情');
+  assert.equal(sanitizeSpeech('后 台任务'), '这件事');
   assert.ok(!sanitizeSpeech('后 台任务').includes('后台'));
-  assert.equal(sanitizeSpeech('（后 台任务）'), '（事情）');
+  assert.equal(sanitizeSpeech('（后 台任务）'), '（这件事）');
+});
+
+test('正常文本里的空格不被吃掉', () => {
+  assert.equal(sanitizeSpeech('你好 世界'), '你好 世界');
+  assert.equal(sanitizeSpeech('我看了一下（工具）'), '我看了一下');
+});
+
+test('落单的括号被去掉', () => {
+  assert.equal(sanitizeSpeech('好的）'), '好的');
+  assert.equal(sanitizeSpeech('（好的'), '（好的');
+});
+
+test('流式：切掉的尾巴不留空格，删掉的括号不留残骸', () => {
+  const f = createSpeechFilter({});
+  const all = f.push('后 后台 ') + f.finish();
+  assert.equal(all, sanitizeSpeech('后 后台 '));
+  const g = createSpeechFilter({});
+  const all2 = g.push('后后（）后') + g.finish();
+  assert.equal(all2, sanitizeSpeech('后后（）后'));
 });
 
 test('流式：任意切分点下累计文本等于整段结果', () => {
@@ -127,5 +146,62 @@ test('流式：任意切分点下累计文本等于整段结果', () => {
     for (const ch of s) perChar += g.push(ch);
     perChar += g.finish();
     assert.equal(perChar, whole, `样本「${s}」逐字流`);
+  }
+});
+
+/**
+ * 穷举：人想的样本覆盖不全，这里的 oracle 是机械的。
+ *
+ * 字母表取「后 台 工 具 （ ） 空格」——都是可能拼出禁词或影响清理的字符；
+ * 长度 ≤4 的全部字符串（7 + 49 + 343 + 2401 = 2800 个）× 全部 2 段切分 + 逐字流。
+ *
+ * 两条断言：
+ * - 任何时刻已吐出的文字里都没有禁词（这是硬要求）；
+ * - 流式累计 === 整段 sanitizeSpeech（这是范围内的要求）。
+ */
+test('穷举：禁词不会在流里漏出去，累计文本等于整段结果', () => {
+  const alphabet = ['后', '台', '工', '具', '（', '）', ' '];
+  const forbidden = [
+    '后台任务', '后台的事', '派出任务', '后台', '派单', '派发', '派出',
+    '任务', '派了个', '工具', '插件', 'MCP', '<<META>>',
+  ];
+  const patterns = forbidden.map((word) => {
+    const body = /^[\x20-\x7e]+$/.test(word)
+      ? word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : [...word].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[ \\t]*');
+    return new RegExp(body);
+  });
+  const leaks = (text) => patterns.some((re) => re.test(text));
+
+  const all = [];
+  const build = (prefix, depth) => {
+    if (prefix) all.push(prefix);
+    if (!depth) return;
+    for (const ch of alphabet) build(prefix + ch, depth - 1);
+  };
+  build('', 4);
+
+  for (const s of all) {
+    const whole = sanitizeSpeech(s);
+    assert.ok(!leaks(whole), `整段结果漏出禁词：${JSON.stringify(s)} → ${JSON.stringify(whole)}`);
+
+    const chunkings = [[...s]];
+    for (let i = 0; i <= s.length; i += 1) chunkings.push([s.slice(0, i), s.slice(i)]);
+    for (let i = 0; i <= s.length; i += 1) {
+      for (let j = i; j <= s.length; j += 1) {
+        chunkings.push([s.slice(0, i), s.slice(i, j), s.slice(j)]);
+      }
+    }
+    for (const parts of chunkings) {
+      const f = createSpeechFilter({});
+      let acc = '';
+      for (const part of parts) {
+        acc += f.push(part);
+        assert.ok(!leaks(acc), `流式中途漏出禁词：${JSON.stringify(s)} → ${JSON.stringify(acc)}`);
+      }
+      acc += f.finish();
+      assert.ok(!leaks(acc), `流式收尾漏出禁词：${JSON.stringify(s)} → ${JSON.stringify(acc)}`);
+      assert.equal(acc, whole, `流式累计不等于整段：${JSON.stringify(s)}`);
+    }
   }
 });
