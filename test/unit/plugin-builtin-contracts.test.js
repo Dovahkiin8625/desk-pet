@@ -4,7 +4,7 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { validateManifest } from '../../src/shared/plugin.js';
+import { validateManifest, resolveWindowSpec, PLUGIN_WINDOW_MODE } from '../../src/shared/plugin.js';
 import { createPluginHost } from '../../src/main/plugins/host.js';
 import { createToolRegistry } from '../../src/main/assistant/agent/tools/registry.js';
 
@@ -22,6 +22,11 @@ import { createToolRegistry } from '../../src/main/assistant/agent/tools/registr
 const ROOT = process.cwd();
 const PLUGINS_DIR = join(ROOT, 'plugins');
 const IDS = ['pomodoro', 'todos', 'reminders', 'system', 'weather'];
+/** 全部内置插件（窗口尺寸那条要对着每一个查）。 */
+const ALL_IDS = [
+  'chat-history', 'clipboard', 'music-player', 'pomodoro', 'reminders',
+  'screen-recorder', 'system', 'tasks', 'todos', 'weather',
+];
 
 test('内置插件：清单都合法', async () => {
   for (const id of IDS) {
@@ -66,5 +71,14 @@ test('内置插件：声明的工具都注册上了', async () => {
     }
   } finally {
     await rm(userData, { recursive: true, force: true });
+  }
+});
+
+test('内置插件：独立窗口都是宽版（宽度 ≥ 620，内容区才够 560）', async () => {
+  for (const id of ALL_IDS) {
+    const raw = JSON.parse(await readFile(join(PLUGINS_DIR, id, 'plugin.json'), 'utf8'));
+    const spec = resolveWindowSpec(raw, PLUGIN_WINDOW_MODE.WINDOW);
+    assert.ok(spec.width >= 620, `插件「${id}」的窗口宽度 ${spec.width} 不够宽`);
+    assert.ok(spec.height >= 480, `插件「${id}」的窗口高度 ${spec.height} 不够高`);
   }
 });

@@ -7,8 +7,8 @@
   "window": {
     "title": "剪贴板",
     "page": "pages/history.html",
-    "width": 380,
-    "height": 460,
+    "width": 720,
+    "height": 560,
     "refreshMs": 0
   },
   "settings": [

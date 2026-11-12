@@ -49,8 +49,8 @@
   ],
   "window": {
     "title": "待办",
-    "width": 320,
-    "height": 380,
+    "width": 640,
+    "height": 600,
     "refreshMs": 0
   }
 }

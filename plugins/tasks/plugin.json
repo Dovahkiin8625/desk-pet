@@ -8,8 +8,8 @@
   "window": {
     "title": "后台任务",
     "page": "pages/board.html",
-    "width": 420,
-    "height": 560,
+    "width": 760,
+    "height": 620,
     "refreshMs": 1000
   },
   "widget": {

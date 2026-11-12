@@ -44,8 +44,8 @@
   ],
   "window": {
     "title": "提醒",
-    "width": 320,
-    "height": 380,
+    "width": 640,
+    "height": 600,
     "refreshMs": 0
   }
 }

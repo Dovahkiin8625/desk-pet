@@ -109,8 +109,8 @@
   "window": {
     "title": "音乐播放器",
     "page": "pages/player.html",
-    "width": 380,
-    "height": 520,
+    "width": 780,
+    "height": 620,
     "refreshMs": 500
   },
   "widget": {

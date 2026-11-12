@@ -70,8 +70,8 @@
   ],
   "window": {
     "title": "番茄钟",
-    "width": 300,
-    "height": 300,
+    "width": 620,
+    "height": 520,
     "refreshMs": 1000
   }
 }
