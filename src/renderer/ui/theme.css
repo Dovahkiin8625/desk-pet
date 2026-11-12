@@ -146,11 +146,16 @@
 /*
  * 容器查询的容器。
  *
- * 宿主给内容区套这一层，插件页面用
- *   @container surface (min-width: 520px) { … }
+ * 宿主给内容区套这一层（面板的插件区、插件窗口的壳），
+ * 积木界面用
+ *   @container surface (min-width: 560px) { … }
  * 决定窄的时候怎么排、宽的时候怎么排。
  *
  * 容器只看**宽度**：面板高度变化不会反过来影响布局，没有死循环。
+ *
+ * **插件自带页面用不了它**：那些页面在 iframe 里（另一个文档），
+ * 容器查询跨不过 iframe 边界——插件页面按自己的视口宽度用
+ * `@media (min-width: 560px)` 切版。
  */
 .surface {
   container-type: inline-size;

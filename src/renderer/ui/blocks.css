@@ -103,3 +103,16 @@
 .block-messages .role { font-size: 12px; color: var(--dp-text-soft); flex: none; }
 .block-messages .text { flex: 1; word-break: break-word; }
 .block-messages .time { font-size: 11px; color: var(--dp-text-faint); flex: none; }
+
+/*
+ * 宽版（独立窗口）：条目型内容分两列，一屏看完更多。
+ *
+ * 容器是宿主给内容区套的 `.surface`（见 theme.css）：
+ * 它的宽度**等于 iframe 的宽度**，与插件页的视口宽度是同一个数——
+ * 所以积木与插件页面不会一个宽版一个窄版。
+ */
+@container surface (min-width: 560px) {
+  .block-list { columns: 2; column-gap: 20px; }
+  .block-list li { break-inside: avoid; }
+  .block-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
+}
