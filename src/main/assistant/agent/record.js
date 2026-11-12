@@ -188,20 +188,24 @@ export function dispatchRecord({
   brief = '',
   at = Date.now(),
 } = {}) {
-  const name = String(tool || '任务');
+  const name = String(tool || '');
   const id = String(taskId || '');
-  const parts = [name, action];
-  if (id) parts.push(`（任务 ${id}）`);
+  const titleText = String(title || '').trim();
+  // **可见文字是宠物的说法**：工具名只留在 meta 里（审计用），
+  // 「任务」这类内部词一个字都不许有——这段文字模型也会读，
+  // 模型会照着说给用户听。
+  const act = String(action || '').trim() || (titleText ? `开始做：${titleText}` : '');
   return {
     kind: CHAT_KIND.DISPATCH,
     role: 'assistant',
-    text: parts.filter(Boolean).join(' '),
+    // **编号留着**：交互层下一轮要靠它说「停掉 t-42」。
+    text: [act, id].filter(Boolean).join(' '),
     at,
     meta: {
       tool: name,
       taskId: id,
-      title: String(title || ''),
-      action: String(action || ''),
+      title: titleText,
+      action: act,
       brief: String(brief || ''),
       layer: LAYER.INTERACTION,
     },

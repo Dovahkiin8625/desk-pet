@@ -124,24 +124,27 @@ export function firstArg(args) {
 /**
  * 派单的人话。
  *
- * 五个任务管理工具各有一句；不认识的工具显示它自己的动作原文。
+ * **优先用 action**：那是这次调用真正发生的事——
+ * 「那句要求没送出去」不能被固定文案盖掉，说成「已追加」等于跟用户说谎。
+ * 没有 action 才按工具分派。
+ *
  * **不显示任务号**——那是内部标识，用户看不懂。
  */
 export function dispatchLabel(line) {
+  const action = String(line?.action || '').trim();
+  if (action) return action;
   const title = String(line?.title || '');
   switch (String(line?.tool || '')) {
     case 'task.submit':
-      return title ? `派了个后台任务：${title}` : '派了个后台任务';
-    case 'task.list':
-      return '看了看后台任务';
+      return title ? `开始做：${title}` : '开始做';
     case 'task.cancel':
-      return title ? `停掉了任务：${title}` : '停掉了那个后台任务';
+      return title ? `停掉了：${title}` : '停掉了';
     case 'task.delete':
-      return title ? `归档了任务：${title}` : '归档了那个后台任务';
+      return title ? `收起来了：${title}` : '收起来了';
     case 'task.steer':
-      return '给任务追加了一句要求';
+      return '给那件事补了一句要求';
     default:
-      return String(line?.action || '') || '做了个后台操作';
+      return '做了件事';
   }
 }
 

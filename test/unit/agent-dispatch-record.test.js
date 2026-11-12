@@ -40,13 +40,26 @@ test('派单记录：分类是 dispatch，正文里带着任务号', () => {
     tool: 'task.submit',
     taskId: 't-42',
     title: '查视频',
-    action: '派了个任务：查视频',
+    action: '开始做：查视频',
   });
   assert.equal(entry.kind, CHAT_KIND.DISPATCH);
   // 任务号必须在正文里：交互层下一轮要靠它说「停掉 t-42」。
   assert.match(entry.text, /t-42/);
   assert.equal(entry.meta.taskId, 't-42');
   assert.equal(entry.meta.tool, 'task.submit');
+});
+
+test('派单记录：可见文字是宠物的说法，工具名只留在 meta 里', () => {
+  const entry = dispatchRecord({
+    tool: 'task.submit',
+    taskId: 't-42',
+    title: '找视频',
+    action: '开始做：找视频',
+  });
+  assert.equal(entry.text, '开始做：找视频 t-42');
+  // **这段文字模型也会读**：模型会照着说给用户听。
+  assert.ok(!entry.text.includes('task.submit'), `工具名漏出去了：${entry.text}`);
+  assert.ok(!/后台任务|派单|派发/.test(entry.text), `内部话术漏出去了：${entry.text}`);
 });
 
 test('按层过滤：交互层看得见 dispatch，执行层看不见', () => {

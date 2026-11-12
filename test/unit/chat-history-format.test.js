@@ -86,12 +86,25 @@ test('快工具：参数太长截到 40 字', () => {
   assert.equal(label.length, '读了一个文件 '.length + 41);
 });
 
-test('派单：五个任务管理工具各有一句', () => {
-  assert.equal(dispatchLabel({ tool: 'task.submit', title: '查视频' }), '派了个后台任务：查视频');
-  assert.equal(dispatchLabel({ tool: 'task.list' }), '看了看后台任务');
-  assert.equal(dispatchLabel({ tool: 'task.cancel', title: '查视频' }), '停掉了任务：查视频');
-  assert.equal(dispatchLabel({ tool: 'task.delete', title: '查视频' }), '归档了任务：查视频');
-  assert.equal(dispatchLabel({ tool: 'task.steer' }), '给任务追加了一句要求');
+test('派单：四个任务管理工具各有一句宠物的说法', () => {
+  assert.equal(dispatchLabel({ tool: 'task.submit', title: '查视频' }), '开始做：查视频');
+  assert.equal(dispatchLabel({ tool: 'task.cancel', title: '查视频' }), '停掉了：查视频');
+  assert.equal(dispatchLabel({ tool: 'task.delete', title: '查视频' }), '收起来了：查视频');
+  assert.equal(dispatchLabel({ tool: 'task.steer' }), '给那件事补了一句要求');
+});
+
+test('派单：优先用动作原文——「没送出去」不能被盖成「已追加」', () => {
+  assert.equal(
+    dispatchLabel({ tool: 'task.steer', action: '那件事已经结束了，这句要求没送出去' }),
+    '那件事已经结束了，这句要求没送出去'
+  );
+});
+
+test('派单：页面上不许出现内部话术', () => {
+  for (const tool of ['task.submit', 'task.cancel', 'task.delete', 'task.steer', 'other']) {
+    const label = dispatchLabel({ tool, title: '查视频' });
+    assert.ok(!/后台任务|派单|派发|后台操作/.test(label), `漏出去了：${label}`);
+  }
 });
 
 test('派单：不显示任务号', () => {
@@ -100,8 +113,8 @@ test('派单：不显示任务号', () => {
 });
 
 test('派单：取不到标题就退成一句人话，也不显示任务号', () => {
-  assert.equal(dispatchLabel({ tool: 'task.cancel', taskId: 't-1' }), '停掉了那个后台任务');
-  assert.equal(dispatchLabel({ tool: 'task.delete', taskId: 't-9' }), '归档了那个后台任务');
+  assert.equal(dispatchLabel({ tool: 'task.cancel', taskId: 't-1' }), '停掉了');
+  assert.equal(dispatchLabel({ tool: 'task.delete', taskId: 't-9' }), '收起来了');
 });
 
 test('派单：不认识的工具就显示它自己的动作原文', () => {
@@ -109,8 +122,8 @@ test('派单：不认识的工具就显示它自己的动作原文', () => {
 });
 
 test('派单：不认识的工具又没有动作原文，也得有一句人话', () => {
-  assert.equal(dispatchLabel({ tool: 'other' }), '做了个后台操作');
-  assert.equal(dispatchLabel({ tool: 'other', action: '' }), '做了个后台操作');
+  assert.equal(dispatchLabel({ tool: 'other' }), '做了件事');
+  assert.equal(dispatchLabel({ tool: 'other', action: '' }), '做了件事');
 });
 
 test('任务状态：说人话', () => {
