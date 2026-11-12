@@ -199,15 +199,9 @@ test.describe('插件接给后台任务的 agent', () => {
     }
   });
 
-  test('交互层：问「你有哪些插件」，它查能力清单再答', async () => {
+  test('交互层：工具表里只有四个动作工具，状态写进提示词', async () => {
     const stub = await startStubLlm({
-      // 交互层：第一轮查能力清单，第二轮给答复。
-      interaction: (body) => {
-        const already = (body.messages || []).some((m) => m.role === 'tool');
-        return already
-          ? { choices: [{ message: { content: '我装了待办、提醒这些。' } }] }
-          : toolCall('capability.list', {});
-      },
+      interaction: () => ({ choices: [{ message: { content: '我装了待办、提醒这些。' } }] }),
       execution: () => ({ choices: [{ message: { content: '（不该被叫到）' } }] }),
     });
     await writeAssistantState(USER_DATA);
@@ -220,31 +214,27 @@ test.describe('插件接给后台任务的 agent', () => {
       await panel.fill('#query', '你有哪些插件');
       await panel.press('#query', 'Control+Enter');
 
-      // 等交互层真的查过一次清单。
       const deadline = Date.now() + 30000;
-      let toolMsg = null;
-      while (Date.now() < deadline && !toolMsg) {
-        for (const req of stub.interactionSeen) {
-          const msg = (req.messages || []).find((m) => m.role === 'tool');
-          if (msg) toolMsg = msg;
-        }
-        if (!toolMsg) await new Promise((r) => setTimeout(r, 100));
+      while (Date.now() < deadline && !stub.interactionSeen.length) {
+        await new Promise((r) => setTimeout(r, 100));
       }
-      expect(toolMsg, '交互层没查能力清单').toBeTruthy();
+      expect(stub.interactionSeen.length, '交互层一次请求都没发').toBeGreaterThan(0);
 
       const first = stub.interactionSeen[0];
       const names = (first.tools || []).map((t) => t?.function?.name || '');
-      expect(names, '交互层的工具表里没有 capability.list').toContain('capability.list');
+      // **交互层不再有外部能力**：只剩管自己那几件事的动作工具。
+      expect(names.sort(), '交互层的工具表不对').toEqual([
+        'task.cancel',
+        'task.delete',
+        'task.steer',
+        'task.submit',
+      ]);
 
-      // 提示词里写着插件名与「别凭印象说」。
       const system = first.messages?.[0]?.content || '';
-      expect(system, '提示词里没有插件名').toContain('你装着的插件：');
-      expect(system, '提示词里没说要查清单').toContain('capability.list');
-
-      // 清单里有装着的插件，也有工具名。
-      const text = String(toolMsg.content || '');
-      expect(text, '清单里没有待办插件').toContain('待办');
-      expect(text, '清单里没有工具').toContain('todos.add');
+      // 状态写进提示词：问「某某怎么样了」不用调工具。
+      expect(system, '提示词里没有状态块').toContain('你手头在做的事');
+      // 提示词里不许出现工具名。
+      expect(system, '提示词里出现了工具名').not.toContain('task.submit');
     } finally {
       await app.close();
       await stub.close();

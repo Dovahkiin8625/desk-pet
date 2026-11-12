@@ -521,7 +521,7 @@ test.describe('聊天记录插件', () => {
       const winFrame = pluginWin.frameLocator('#plugin-frame');
 
       const turn = winFrame.locator('.turn').first();
-      await expect(turn.locator('.lane-front')).toContainText('派了个后台任务');
+      await expect(turn.locator('.lane-front')).toContainText('开始做');
       await expect(turn.locator('.lane-back .task .task-title')).toContainText('查视频');
 
       // 结果回到**这一块**里：它是执行层的一条可折叠明细，摘要写「结果」。

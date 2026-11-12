@@ -119,6 +119,11 @@ test.describe('桌宠能做什么下拉框', () => {
     await writeAssistantState(dir, { dispatch: 'auto' });
     const app = await launch(dir);
     try {
+      // **切「只聊天」要问一声**：原生对话框不在测试范围里（Playwright 不拦它），
+      // 桩成「用户点头」。
+      await app.evaluate(({ dialog }) => {
+        dialog.showMessageBox = () => Promise.resolve({ response: 1, checkboxChecked: false });
+      });
       const settings = await openChatPanel(app);
 
       const before = await settings.textContent('#llmDispatchHint');

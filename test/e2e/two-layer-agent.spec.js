@@ -382,7 +382,7 @@ test.describe('双层 agent', () => {
         // 轮内的后续调用（工具结果刚回来）：给个答复。
         if (last.role === 'tool') {
           const toolText = String(last.content || '');
-          return say(toolText.includes('已停掉') ? '好，停掉了。' : '我去看看。');
+          return say(toolText.includes('停掉') ? '好，停掉了。' : '我去看看。');
         }
         const asked = String(last.content || '');
         if (asked.includes('停掉')) {
@@ -390,7 +390,8 @@ test.describe('双层 agent', () => {
           // 交互层看得见自己派过的单（dispatch 记录，规格 §6）。
           // 找不到就说明那条记录没进上下文，这条 e2e 正是要抓这个。
           const all = msgs.map((m) => String(m.content || '')).join('\n');
-          const at = all.match(/（任务 ([^）]+)）/);
+          // 派单记录现在写的是「开始做：查视频 <编号>」。
+          const at = all.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
           if (!at) return say('我不知道要停哪个任务。');
           return toolCall('task.cancel', { taskId: at[1] });
         }
