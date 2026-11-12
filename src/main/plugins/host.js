@@ -227,6 +227,20 @@ export async function createPluginHost({
     ).filter(([, size]) => size && typeof size === 'object')
   );
 
+  /** 把尺寸夹到上下限里。 */
+  function clampSize(width, height) {
+    return {
+      width: Math.min(
+        PLUGIN_WINDOW_LIMITS.maxWidth,
+        Math.max(PLUGIN_WINDOW_LIMITS.minWidth, Math.round(Number(width) || 0))
+      ),
+      height: Math.min(
+        PLUGIN_WINDOW_LIMITS.maxHeight,
+        Math.max(PLUGIN_WINDOW_LIMITS.minHeight, Math.round(Number(height) || 0))
+      ),
+    };
+  }
+
   /**
    * 某个插件的窗口尺寸：用户拖过的那个（没有就 null）。
    *
@@ -238,22 +252,24 @@ export async function createPluginHost({
     const width = Number(size.width) || 0;
     const height = Number(size.height) || 0;
     if (!width || !height) return null;
-    return { width, height };
+    // 读的时候也夹一遍：plugins.json 是磁盘上的文件，可能被手改过。
+    return clampSize(width, height);
   }
 
-  /** 记住一个插件的窗口尺寸，并落盘。 */
+  /**
+   * 记住一个插件的窗口尺寸，并落盘。
+   *
+   * 尺寸给空 = **忘掉**它：下次按清单里的尺寸开（恢复默认时用）。
+   */
   async function setWindowSize(id, size) {
     const key = String(id || '');
     if (!key) return false;
-    const width = Math.min(
-      PLUGIN_WINDOW_LIMITS.maxWidth,
-      Math.max(PLUGIN_WINDOW_LIMITS.minWidth, Math.round(Number(size?.width) || 0))
-    );
-    const height = Math.min(
-      PLUGIN_WINDOW_LIMITS.maxHeight,
-      Math.max(PLUGIN_WINDOW_LIMITS.minHeight, Math.round(Number(size?.height) || 0))
-    );
-    windowSizeStore.set(key, { width, height });
+    if (!size) {
+      if (!windowSizeStore.has(key)) return true;
+      windowSizeStore.delete(key);
+    } else {
+      windowSizeStore.set(key, clampSize(size.width, size.height));
+    }
     prefs = { ...prefs, windowSizes: Object.fromEntries(windowSizeStore) };
     try {
       await writeJson(userDataDir, PREFS_FILE, prefs);

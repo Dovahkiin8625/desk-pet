@@ -198,7 +198,12 @@ export function createPluginWindowController({
     };
     surfaces?.attach(pluginId, entry.surface);
 
+    /** 拖动窗口的写盘定时器（窗口没了要撤掉）。 */
+    let sizeTimer = null;
+
     win.on('closed', () => {
+      if (sizeTimer) clearTimeout(sizeTimer);
+      sizeTimer = null;
       byContents.delete(contentsId);
       // 窗口没了：这个界面落点也不能留着——tick 会一直推。
       if (entry.surface) surfaces?.detach(pluginId, entry.surface);
@@ -209,11 +214,21 @@ export function createPluginWindowController({
     //
     // **去抖**：拖动时 resize 连着来，每次都写盘太吵。
     if (!isWidget) {
-      let timer = null;
       win.on('resize', () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
+        if (sizeTimer) clearTimeout(sizeTimer);
+        sizeTimer = setTimeout(() => {
+          sizeTimer = null;
+          // 窗口可能在这 400ms 里已经关了（点 ✕ 或切小部件）：
+          // 对着销毁的窗口问尺寸会抛异常，把主进程带崩。
+          if (win.isDestroyed()) return;
           const [w, h] = win.getSize();
+          const spec = host.spec(pluginId, PLUGIN_WINDOW_MODE.WINDOW);
+          // 尺寸与清单里的一样：这条记忆没有意义（用户点了「恢复默认」），
+          // 忘掉它——插件作者以后改了尺寸，用户才看得到。
+          if (spec && w === spec.width && h === spec.height) {
+            void host.setWindowSize?.(pluginId, null);
+            return;
+          }
           void host.setWindowSize?.(pluginId, { width: w, height: h });
         }, 400);
       });
@@ -411,7 +426,7 @@ export function createPluginWindowController({
    * 恢复默认尺寸：回到清单里写的那个大小。
    *
    * 记住的尺寸会盖住清单里的值（插件作者后来改了尺寸，用户也看不到），
-   * 所以给一条回去的路。
+   * 所以给一条回去的路——顺手把那条记忆也忘掉。
    */
   ipcMain.handle('plugin:window:resetSize', (event) => {
     const pluginId = senderPluginId(event);
@@ -420,7 +435,7 @@ export function createPluginWindowController({
     const spec = host.spec(pluginId, PLUGIN_WINDOW_MODE.WINDOW);
     if (!spec) return false;
     entry.win.setBounds({ ...entry.win.getBounds(), width: spec.width, height: spec.height });
-    void host.setWindowSize?.(pluginId, { width: spec.width, height: spec.height });
+    void host.setWindowSize?.(pluginId, null);
     return true;
   });
 

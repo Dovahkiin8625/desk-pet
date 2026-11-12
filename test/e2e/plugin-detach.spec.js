@@ -3,7 +3,7 @@
 // 录屏的清单里没写 `window` 段：以前它的面板上没有「在新窗口打开」按钮，
 // 现在必须有，而且点了要真能开出一个窗口。
 import { test, expect, _electron as electron } from '@playwright/test';
-import { rm } from 'node:fs/promises';
+import { rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
@@ -154,6 +154,50 @@ test.describe('插件分离成独立窗口', () => {
       const size3 = await windowSize();
       expect(size3[0]).toBe(640);
       expect(size3[1]).toBe(600);
+
+      // 那条记忆被忘掉了：插件作者以后改了清单里的尺寸，用户才看得到。
+      const prefs = JSON.parse(await readFile(join(USER_DATA, 'plugins.json'), 'utf8'));
+      expect(prefs.windowSizes?.todos, '恢复默认后不该还记着尺寸').toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('拖完立刻关掉窗口：主进程不该被带崩', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'daiban');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('todos'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("待办")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'todos', null, { timeout: 10000 });
+      await panel.click('#detach');
+
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win, '待办的独立窗口没有出现').not.toBeNull();
+      await win.waitForLoadState('domcontentloaded');
+
+      // 拖一下，然后**马上**关掉：去抖写盘还没轮到，窗口就没了。
+      await app.evaluate(({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows().find((x) =>
+          x.getURL().includes('/renderer/plugin-window/index.html')
+        );
+        w.setSize(700, 500);
+      });
+      await win.click('#close');
+
+      // 等过去去抖的那一下（400ms），再看主进程还活着没有。
+      await new Promise((r) => setTimeout(r, 1200));
+      const alive = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+      expect(alive).toBeGreaterThan(0);
+
+      // 应用还能用：面板照常能开。
+      await pet.evaluate(() => window.pet.openPanel?.());
+      await new Promise((r) => setTimeout(r, 800));
+      const panel2 = await findWindow(app, '/renderer/panel/index.html');
+      expect(panel2, '面板开不出来了').not.toBeNull();
     } finally {
       await app.close();
     }

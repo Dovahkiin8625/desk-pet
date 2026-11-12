@@ -115,4 +115,10 @@
   .block-list { columns: 2; column-gap: 20px; }
   .block-list li { break-inside: avoid; }
   .block-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
+  /* 格子窄：标签一行、控件一行——挤在一行会把标签压没了。 */
+  .block-settings .config-row { flex-direction: column; align-items: stretch; gap: 4px; }
+  .block-settings .config-row:has(input[type="checkbox"]) { flex-direction: row; align-items: center; }
+  .block-settings input[type="text"],
+  .block-settings input[type="number"],
+  .block-settings select { flex: 1 1 auto; width: 100%; }
 }

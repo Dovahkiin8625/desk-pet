@@ -145,7 +145,7 @@
 记住的尺寸会**盖住**清单里的尺寸：用户拖过一次之后，清单里写多少都不生效了
 （插件作者后来改了窗口尺寸，用户也看不到）。所以要给一条回去的路：
 
-**独立窗口的标题栏上多一个「⤢」按钮**（挨着置顶 / 变小 / 关闭），
+**独立窗口的标题栏上多一个「⛶」按钮**（挨着置顶 / 变小 / 关闭），
 点一下就把窗口恢复成清单里写的尺寸，同时把记住的值也改成它（等于清掉记忆）。
 
 窗口不能最大化（`maximizable: false`），所以这个按钮不与「最大化」抢同一个手势。
@@ -195,7 +195,7 @@
 **渲染层**
 
 - `src/renderer/panel/index.html` —— `<section id="plugin">` 套 `.surface`（**外观不变**）。
-- `src/renderer/plugin-window/index.html` —— `#win` 套 `.surface`；标题栏加「⤢ 恢复默认尺寸」按钮。
+- `src/renderer/plugin-window/index.html` —— `#win` 套 `.surface`；标题栏加「⛶ 恢复默认尺寸」按钮。
 - `src/renderer/ui/blocks.css` —— 宽版的分列规则。
 - `src/renderer/ui/theme.css` —— 改对 `.surface` 那段注释（积木用容器查询、插件页用媒体查询）。
 
@@ -220,7 +220,7 @@
 | 默认窗口规格是宽版（≥ 560 宽）、上下限照旧夹 | `test/unit/plugin-window-spec.test.js` |
 | `windowSizes` 的存取与夹取 | `test/unit/plugin-host.test.js` |
 | 分离出来的窗口比面板宽、且插件页看到的是宽视口 | `test/e2e/plugin-detach.spec.js` |
-| 「⤢ 恢复默认尺寸」把窗口还原成清单里的尺寸 | `test/e2e/plugin-detach.spec.js` |
+| 「⛶ 恢复默认尺寸」把窗口还原成清单里的尺寸 | `test/e2e/plugin-detach.spec.js` |
 | 面板这一侧没被改坏（积木照旧、插件页仍是窄版） | `test/e2e/plugin-surface.spec.js` |
 
 E2E 会**真的开窗口**——别在别人开会时跑。

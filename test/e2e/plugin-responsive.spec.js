@@ -117,6 +117,69 @@ test.describe('宽版与窄版', () => {
     }
   });
 
+  test('两列是真的两列：条目分排在左右两栏', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'daiban');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('todos'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("待办")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'todos', null, { timeout: 10000 });
+      for (const text of ['写测试', '给窗子换个尺寸']) {
+        await panel.fill('#plugin-body input[type="text"]', text);
+        await panel.press('#plugin-body input[type="text"]', 'Enter');
+        await new Promise((r) => setTimeout(r, 300));
+      }
+
+      await panel.click('#detach');
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      await win.waitForLoadState('domcontentloaded');
+      await win.waitForFunction(
+        () => document.querySelectorAll('.block-list li').length >= 2,
+        null,
+        { timeout: 10000 }
+      );
+      // 两条在不同的列上（横向位置差得开）——只验计算样式不够。
+      const offsets = await win.evaluate(() =>
+        Array.from(document.querySelectorAll('.block-list li')).map((li) => li.offsetLeft)
+      );
+      expect(offsets.length).toBeGreaterThanOrEqual(2);
+      expect(offsets[0]).not.toBe(offsets[1]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('宽版里配置项是一行标签一行控件（别把标签挤没了）', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'fanqie');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('pomodoro'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li[data-plugin-id="pomodoro"]');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'pomodoro', null, {
+        timeout: 10000,
+      });
+
+      await panel.click('#detach');
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      await win.waitForLoadState('domcontentloaded');
+      await win.waitForFunction(() => document.querySelector('.block-settings .config-row'), null, {
+        timeout: 10000,
+      });
+      const direction = await win.evaluate(
+        () => getComputedStyle(document.querySelector('.block-settings .config-row')).flexDirection
+      );
+      expect(direction).toBe('column');
+    } finally {
+      await app.close();
+    }
+  });
+
   // 自带页面的插件：窄版是默认（面板里、小部件里），宽版在媒体查询里。
   const CASES = [
     { id: 'music-player', query: 'yinyue', sel: '#wrap' },
@@ -165,6 +228,20 @@ test.describe('宽版与窄版', () => {
           .first()
           .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
         expect(wide.split(' ').length, `${c.id} 在独立窗口里不是两栏`).toBe(2);
+
+        // 拖窄到 560 以下：插件自己的页面也退回窄版。
+        await app.evaluate(({ BrowserWindow }) => {
+          const w = BrowserWindow.getAllWindows().find((x) =>
+            x.getURL().includes('/renderer/plugin-window/index.html')
+          );
+          w.setSize(500, 500);
+        });
+        await new Promise((r) => setTimeout(r, 400));
+        const narrowAgain = await frame
+          .locator(c.sel)
+          .first()
+          .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
+        expect(narrowAgain.split(' ').length, `${c.id} 拖窄后没退回窄版`).toBe(1);
 
         await win.click('#close');
         await new Promise((r) => setTimeout(r, 400));

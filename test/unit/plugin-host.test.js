@@ -764,3 +764,27 @@ test('宿主：记住的尺寸会被夹到上下限里', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('宿主：读出来的时候也夹一遍（plugins.json 可能被手改过）', async () => {
+  const { host, root, userData } = await makeHost();
+  try {
+    await writeFile(
+      join(userData, 'plugins.json'),
+      JSON.stringify({ windowSizes: { todos: { width: 999999, height: 1 } } }),
+      'utf8'
+    );
+    const fresh = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await fresh.load();
+    assert.deepEqual(fresh.getWindowSize('todos'), {
+      width: PLUGIN_WINDOW_LIMITS.maxWidth,
+      height: PLUGIN_WINDOW_LIMITS.minHeight,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
