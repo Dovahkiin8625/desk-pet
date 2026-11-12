@@ -109,6 +109,8 @@ contextBridge.exposeInMainWorld('plugin', {
     setAlwaysOnTop: (enabled) => ipcRenderer.invoke('plugin:window:alwaysOnTop', Boolean(enabled)),
     // 在「独立窗口」与「桌面小部件」之间切换。
     setMode: (m) => ipcRenderer.invoke('plugin:window:mode', String(m || '')),
+    // 恢复默认尺寸（清单里写的那个大小）。
+    resetSize: () => ipcRenderer.invoke('plugin:window:resetSize'),
     close: () => ipcRenderer.invoke('plugin:window:close'),
   },
 

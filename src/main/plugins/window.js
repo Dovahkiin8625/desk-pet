@@ -121,10 +121,15 @@ export function createPluginWindowController({
     // 「有没有自带页面」在建窗时定一次就够：
     // 它要查磁盘（host.pageUrl() 判文件在不在），每次刷新都查一遍是白花钱。
     const ownPage = surface.ownPage;
+    // 用户拖过的尺寸说了算：清单里的尺寸只管第一次打开。
+    // 小部件不参与——它的尺寸是清单定的。
+    const remembered = isWidget ? null : host.getWindowSize?.(pluginId);
+    const width = remembered?.width || spec.width;
+    const height = remembered?.height || spec.height;
 
     const win = new BrowserWindow({
-      width: spec.width,
-      height: spec.height,
+      width,
+      height,
       show: false,
       // 小部件是透明的；独立窗口是实心的（卡片自己有底色）。
       transparent: isWidget,
@@ -199,6 +204,20 @@ export function createPluginWindowController({
       if (entry.surface) surfaces?.detach(pluginId, entry.surface);
       if (windows.get(pluginId) === entry) windows.delete(pluginId);
     });
+
+    // 用户拖过窗口：尺寸记下来，下次按它开。
+    //
+    // **去抖**：拖动时 resize 连着来，每次都写盘太吵。
+    if (!isWidget) {
+      let timer = null;
+      win.on('resize', () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          const [w, h] = win.getSize();
+          void host.setWindowSize?.(pluginId, { width: w, height: h });
+        }, 400);
+      });
+    }
 
     // 先挂上 ready-to-show 再加载：页面可能秒开，
     // 顺序反了窗口就永远不显示（show 那一行没人调）。
@@ -385,6 +404,23 @@ export function createPluginWindowController({
     const pluginId = senderPluginId(event);
     if (!pluginId) return false;
     close(pluginId);
+    return true;
+  });
+
+  /**
+   * 恢复默认尺寸：回到清单里写的那个大小。
+   *
+   * 记住的尺寸会盖住清单里的值（插件作者后来改了尺寸，用户也看不到），
+   * 所以给一条回去的路。
+   */
+  ipcMain.handle('plugin:window:resetSize', (event) => {
+    const pluginId = senderPluginId(event);
+    const entry = pluginId ? entryOf(pluginId) : null;
+    if (!entry || entry.mode === PLUGIN_WINDOW_MODE.WIDGET) return false;
+    const spec = host.spec(pluginId, PLUGIN_WINDOW_MODE.WINDOW);
+    if (!spec) return false;
+    entry.win.setBounds({ ...entry.win.getBounds(), width: spec.width, height: spec.height });
+    void host.setWindowSize?.(pluginId, { width: spec.width, height: spec.height });
     return true;
   });
 

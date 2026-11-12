@@ -23,6 +23,7 @@ const bodyEl = document.getElementById('body');
 const statusEl = document.getElementById('status');
 const pinEl = document.getElementById('pin');
 const modeEl = document.getElementById('mode');
+const resetSizeEl = document.getElementById('reset-size');
 const closeEl = document.getElementById('close');
 const frameEl = document.getElementById('plugin-frame');
 
@@ -66,6 +67,8 @@ async function syncState() {
   // 小部件永远置顶：那个按钮没有意义，藏起来。
   pinEl.hidden = state.mode === 'widget';
   pinEl.classList.toggle('on', Boolean(state.alwaysOnTop));
+  // 小部件的尺寸是清单定的，没有「默认尺寸」这回事。
+  resetSizeEl.hidden = state.mode === 'widget';
   // 没有小部件形态的插件就不给「变小」的按钮。
   modeEl.hidden = !state.canWidget;
   modeEl.title = state.mode === 'widget' ? '变回独立窗口' : '变成桌面小部件';
@@ -83,6 +86,11 @@ modeEl.addEventListener('click', async () => {
   const next = winEl.dataset.mode === 'widget' ? 'window' : 'widget';
   // 切形态会重建窗口：这一页马上就死了，后面的事交给新窗口。
   await window.plugin?.window?.setMode?.(next);
+});
+
+// 恢复默认尺寸：回到清单里写的那个大小。
+resetSizeEl.addEventListener('click', () => {
+  void window.plugin?.window?.resetSize?.();
 });
 
 closeEl.addEventListener('click', () => {

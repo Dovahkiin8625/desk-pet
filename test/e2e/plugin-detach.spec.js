@@ -94,4 +94,68 @@ test.describe('插件分离成独立窗口', () => {
       await app.close();
     }
   });
+
+  test('独立窗口：比面板宽，拖过的尺寸被记住，⛶ 能恢复默认', async () => {
+    const { app, pet } = await launch();
+    /** 独立窗口当前的尺寸。 */
+    const windowSize = () =>
+      app.evaluate(({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows().find((x) =>
+          x.getURL().includes('/renderer/plugin-window/index.html')
+        );
+        return w ? w.getSize() : null;
+      });
+    /** 在面板里打开待办，并分离成独立窗口。 */
+    const detachTodos = async () => {
+      const panel = await openPanel(app, pet);
+      await panel.fill('#query', 'daiban');
+      await panel.waitForFunction(() => window.__panel?.resultIds?.includes('todos'), null, {
+        timeout: 10000,
+      });
+      await panel.click('#results li:has-text("待办")');
+      await panel.waitForFunction(() => window.__panel?.pluginId === 'todos', null, { timeout: 10000 });
+      await panel.click('#detach');
+      return panel;
+    };
+
+    try {
+      await detachTodos();
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win, '待办的独立窗口没有出现').not.toBeNull();
+      await win.waitForLoadState('domcontentloaded');
+
+      // 独立窗口比面板宽得多（清单里待办是 640×600）。
+      const size = await windowSize();
+      expect(size[0]).toBeGreaterThanOrEqual(620);
+
+      // 拖过之后：尺寸被记住（重新打开还是这个大小）。
+      await app.evaluate(({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows().find((x) =>
+          x.getURL().includes('/renderer/plugin-window/index.html')
+        );
+        w.setSize(700, 500);
+      });
+      await new Promise((r) => setTimeout(r, 800)); // 等去抖写盘
+      await win.click('#close');
+      await new Promise((r) => setTimeout(r, 500));
+
+      // 面板在分离时收起来了：再打开一次，回到搜索视图。
+      await detachTodos();
+      const win2 = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win2, '待办的独立窗口没有再出现').not.toBeNull();
+      await win2.waitForLoadState('domcontentloaded');
+      const size2 = await windowSize();
+      expect(size2[0]).toBe(700);
+      expect(size2[1]).toBe(500);
+
+      // ⛶：恢复成清单里的尺寸（待办 640×600）。
+      await win2.click('#reset-size');
+      await new Promise((r) => setTimeout(r, 500));
+      const size3 = await windowSize();
+      expect(size3[0]).toBe(640);
+      expect(size3[1]).toBe(600);
+    } finally {
+      await app.close();
+    }
+  });
 });
