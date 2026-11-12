@@ -6,7 +6,7 @@
   "keywords": ["system", "status", "cpu", "gpu", "neicun", "xituan", "状态", "内存", "显卡", "温度", "电源"],
   "skill": {
     "name": "system",
-    "description": "读本机的运行状况：CPU、内存、GPU、温度、电源，以及过热提醒的开关",
+    "description": "用户问电脑状态、CPU、内存、温度、GPU、磁盘的时候用它",
     "file": "skill.md"
   },
   "tools": [

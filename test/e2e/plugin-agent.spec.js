@@ -176,6 +176,10 @@ test.describe('插件接给后台任务的 agent', () => {
       expect(system, '提示词里没有提醒插件的技能').toContain('reminders');
       // 技能正文里的那句话不该出现在提示词里（只该有「名字：说明」那一行）。
       expect(system, '技能正文漏进提示词了').not.toContain('一次只处理一条');
+      // 技能的说明写的是**什么时候用**，不是「它是什么」——
+      // 模型只看这一行决定要不要读正文。
+      expect(system, '技能说明还在写功能描述').not.toContain('管理待办清单：添加、列出、勾选完成、清理已完成');
+      expect(system, '技能说明没写什么时候用').toContain('用户要记待办');
 
       // 模型调 skill.read 之后，正文才给出来——得等带着工具结果的那次请求。
       const readDeadline = Date.now() + 30000;

@@ -6,7 +6,7 @@
   "keywords": ["pomodoro", "tomato", "fanqie", "fq", "focus", "专注", "计时", "计时器"],
   "skill": {
     "name": "pomodoro",
-    "description": "管理专注计时：开始、暂停、继续、重置，以及查看当前状态",
+    "description": "用户要专注、要休息、要开始或结束一段计时的时候用它",
     "file": "skill.md"
   },
   "tools": [

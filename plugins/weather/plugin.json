@@ -6,7 +6,7 @@
   "keywords": ["weather", "tianqi", "tq", "天气", "气温", "下雨", "温度"],
   "skill": {
     "name": "weather",
-    "description": "查当前天气，以及设置默认城市",
+    "description": "用户问天气、气温、要不要下雨、下不下雪、热不热的时候用它",
     "file": "skill.md"
   },
   "tools": [

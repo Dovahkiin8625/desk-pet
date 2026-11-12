@@ -6,7 +6,7 @@
   "keywords": ["reminder", "remind", "alarm", "tixing", "tx", "naozhong", "闹钟", "备忘"],
   "skill": {
     "name": "reminders",
-    "description": "管理定时提醒：添加、列出、删除",
+    "description": "用户要设提醒、闹钟、别忘了某件事的时候用它",
     "file": "skill.md"
   },
   "tools": [
