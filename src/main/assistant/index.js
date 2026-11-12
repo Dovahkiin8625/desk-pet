@@ -39,6 +39,7 @@ import { describeToolCall } from './agent/approval.js';
 import { interruptedTasks, taskRecord } from './agent/record.js';
 import { createInteractionBackend, INTERACTION_MAX_STEPS } from './layer/interaction.js';
 import { createTaskTools } from './layer/taskTools.js';
+import { sanitizeSpeech } from './layer/speech.js';
 import { runForeground, FALLBACK_NOTICE } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { mergeFacts, pickMemories } from './chat/memory.js';
@@ -352,19 +353,30 @@ export function createAssistant({  userDataDir,
         layer: LAYER.EXECUTION,
       }),
     appendRecord: appendChatRecord,
-    notify: ({ text, ok, taskId }) => {
+    notify: ({ text, ok, taskId, emotion, mood, memories }) => {
       // 完成通知也是**桌宠说的话**：记成 reply，
       // 交互层下一轮要记得「刚才那件事做完了」（规格 §7.3）。
+      //
+      // **文字过过滤器**：这句用户看得见，模型下一轮也会读到自己说过的话。
+      const safe = sanitizeSpeech(String(text || ''), {
+        toolNames: toolRegistry.list().map((t) => t.name),
+      });
       //
       // **带上任务号**：页面要靠它把结果归回发起它的那一块——
       // 没有它，完成的答复就成了没来由的一句话。
       appendChatRecord({
         role: 'assistant',
-        text: String(text || ''),
+        text: safe,
         at: Date.now(),
         proactive: false,
         meta: { taskId: String(taskId || ''), layer: LAYER.EXECUTION },
       });
+      // **记忆并进长期记忆**：后台任务学到的东西，桌宠自己也该记住。
+      const picked = pickMemories(Array.isArray(memories) ? memories : [], { userText: '' });
+      if (picked.length) {
+        state.chat.facts = mergeFacts(state.chat.facts, picked);
+        scheduleSave();
+      }
       // **不带 interrupt**：用户正在说话或正在做决定时，完成通知要排队，
       // 不能把气泡顶掉（规格 §5.3）。
       //
@@ -372,12 +384,18 @@ export function createAssistant({  userDataDir,
       // 说完时才开），通知要是现在就冒出来，答复气泡一开就把正文清空，
       // 用户只看到「我去看看」，结果那句没了——白跑一趟。
       // 所以前台正在说话时先攒着，等这一轮说完了再交出去。
-      const options = { emotion: ok ? 'happy' : 'sad', sound: ok ? 'success' : '' };
+      //
+      // **情绪只施加一次**：agent 的 META 情绪优先，没有就用成败推一个。
+      const options = {
+        emotion: String(emotion || '') || (ok ? 'happy' : 'sad'),
+        mood: Number(mood) || 0,
+        sound: ok ? 'success' : '',
+      };
       if (chatBusy) {
-        pendingNotices.push({ text, options });
+        pendingNotices.push({ text: safe, options });
         return;
       }
-      say(text, options);
+      say(safe, options);
     },
     getMaxConcurrent: () => state?.agent?.maxConcurrent || DEFAULT_AGENT.maxConcurrent,
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,

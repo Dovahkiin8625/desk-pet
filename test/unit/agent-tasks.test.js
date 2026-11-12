@@ -428,3 +428,48 @@ test('中枢：排队的任务不算「已排队」，跑着的才算', async ()
   assert.equal(first.queued, false);
   assert.equal(first.position, 1, '第一个任务就是第 1 位');
 });
+
+test('任务做完了：通知里带着情绪与记忆（桌宠自己要接住）', async () => {
+  // 后台任务学到的东西，桌宠自己得知道：
+  // 情绪决定表情，记忆进长期记忆。
+  const notices = [];
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async () => ({
+        text: '找到了，F 盘里有 3 个视频',
+        emotion: 'happy',
+        mood: 2,
+        memories: [{ text: '他的视频都放在 F 盘', kind: 'fact' }],
+      }),
+    },
+    notify: (n) => notices.push(n),
+  });
+  const t = tasks.submit({ prompt: '找视频', messages: [] });
+  await t.done;
+  await tick();
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].emotion, 'happy');
+  assert.equal(notices[0].mood, 2);
+  assert.deepEqual(notices[0].memories, [{ text: '他的视频都放在 F 盘', kind: 'fact' }]);
+});
+
+test('任务没做成：通知里没有情绪也没有记忆', async () => {
+  const notices = [];
+  const tasks = createAgentTasks({
+    backend: {
+      id: 'agent',
+      chat: async () => {
+        throw new Error('盘读不出来');
+      },
+    },
+    notify: (n) => notices.push(n),
+  });
+  const t = tasks.submit({ prompt: '找视频', messages: [] });
+  await assert.rejects(() => t.done);
+  await tick();
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].ok, false);
+  assert.equal(notices[0].emotion, '');
+  assert.deepEqual(notices[0].memories, []);
+});

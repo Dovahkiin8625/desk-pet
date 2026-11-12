@@ -110,7 +110,10 @@ export function buildAgentSystemPrompt({
       const desc = String(skill.description || '').trim();
       lines.push(`- ${skill.name}${desc ? `：${desc}` : ''}`);
     }
-    lines.push('要用某个技能时，先用 skill.read 读它的说明书，再动手。', '');
+    lines.push(
+      '要用某个技能时，先读它的说明书（用 skill.read），再动手——没读过就不许调这个插件的工具。',
+      ''
+    );
   }
 
   lines.push(
@@ -125,8 +128,10 @@ export function buildAgentSystemPrompt({
     '- 工具的结果里可能有噪声，自己挑出有用的部分。',
     '',
     '回答规则：',
-    '- 用中文口语回答，1~3 句，不超过 120 字：做了什么事、结果如何，一句带过。',
-    '- 不要复述用户的问题，不要 Markdown，不要表情符号。',
+    '- 这是桌宠回给用户的一句话：中文口语，1~3 句，不超过 80 字。',
+    '- 只说结果和要点（「找到了，F 盘里有 3 个视频」），不要复述过程。',
+    '- 不要提任何工具名、函数名、插件名，也不要说「后台任务」「派单」「派发」这类词。',
+    '- 拿不准就照实说，别编。',
     ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,

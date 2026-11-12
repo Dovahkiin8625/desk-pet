@@ -158,3 +158,22 @@ test('压缩说明：丢了几轮就说几轮', () => {
   assert.equal(compactionNote(0), '');
   assert.match(compactionNote(3), /3/);
 });
+
+test('执行层提示词：答复按桌宠口吻，不许提工具名', () => {
+  const sys = buildAgentSystemPrompt({ persona: {}, tools: [], skills: [] });
+  assert.ok(sys.includes('这是桌宠回给用户的一句话'), sys);
+  assert.ok(sys.includes('不要提任何工具名'), sys);
+  // 旧的 agent 口径（「做了什么事、结果如何」）要换掉。
+  assert.ok(!sys.includes('120 字'), sys);
+});
+
+test('执行层提示词：用插件的工具之前要先读技能的说明书', () => {
+  const sys = buildAgentSystemPrompt({
+    persona: {},
+    tools: [],
+    skills: [{ name: 'weather', description: '问天气时用' }],
+  });
+  assert.ok(sys.includes('先读'), sys);
+  assert.ok(sys.includes('skill.read'), sys);
+  assert.ok(sys.includes('没读过就不许调'), sys);
+});

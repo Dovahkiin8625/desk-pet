@@ -289,6 +289,11 @@ export function createAgentTasks({
             ok: true,
             // **带上任务号**：页面要靠它把结果归回发起它的那一块。
             taskId: job.taskId,
+            // **情绪与记忆也带回去**：后台任务学到的东西，
+            // 桌宠自己得知道（规格 §5.1）。
+            emotion: String(result?.emotion || ''),
+            mood: Number(result?.mood) || 0,
+            memories: Array.isArray(result?.memories) ? result.memories : [],
           });
         },
         (err) => {
@@ -300,6 +305,10 @@ export function createAgentTasks({
             ok: false,
             // 失败同样要带任务号：失败的块也得归回原来那一块。
             taskId: job.taskId,
+            // 失败没有情绪也没有记忆——那是 agent 没交卷，不是它不想说。
+            emotion: '',
+            mood: 0,
+            memories: [],
           });
         }
       );
