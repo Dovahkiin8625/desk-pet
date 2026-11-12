@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -719,5 +719,48 @@ test('推过去的数据真的到了界面落点（包成信封）', async () =>
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(userData, { recursive: true, force: true });
+  }
+});
+
+/** 造一个装着「待办」插件的宿主（临时目录，用完就删）。 */
+async function makeHost() {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = join(root, 'userdata');
+  await mkdir(userData, { recursive: true });
+  await makePlugin(root, 'todos', { id: 'todos', name: '待办' }, 'export default () => ({});');
+  const host = await createPluginHost({
+    rootDir: root,
+    userDataDir: userData,
+    assistant: fakeAssistant(),
+    openSettings: () => {},
+  });
+  await host.load();
+  return { host, root, userData };
+}
+
+test('宿主：记住独立窗口的尺寸（落在 plugins.json 的 windowSizes 里）', async () => {
+  const { host, root, userData } = await makeHost();
+  try {
+    assert.equal(host.getWindowSize('todos'), null);
+    assert.equal(await host.setWindowSize('todos', { width: 800, height: 600 }), true);
+    assert.deepEqual(host.getWindowSize('todos'), { width: 800, height: 600 });
+
+    const saved = JSON.parse(await readFile(join(userData, 'plugins.json'), 'utf8'));
+    assert.deepEqual(saved.windowSizes.todos, { width: 800, height: 600 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：记住的尺寸会被夹到上下限里', async () => {
+  const { host, root } = await makeHost();
+  try {
+    await host.setWindowSize('todos', { width: 999999, height: 1 });
+    assert.deepEqual(host.getWindowSize('todos'), {
+      width: PLUGIN_WINDOW_LIMITS.maxWidth,
+      height: PLUGIN_WINDOW_LIMITS.minHeight,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

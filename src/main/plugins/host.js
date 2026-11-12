@@ -19,6 +19,7 @@ import {
   resolveWindowSpec,
   isSafeRelativePath,
   PLUGIN_WINDOW_MODE,
+  PLUGIN_WINDOW_LIMITS,
 } from '../../shared/plugin.js';
 import { createAgentFacade } from '../assistant/agent/facade.js';
 import { appUrl } from '../protocol.js';
@@ -214,6 +215,54 @@ export async function createPluginHost({
   const configStore = new Map(
     Object.entries(prefs?.config && typeof prefs.config === 'object' ? prefs.config : {})
   );
+  /**
+   * 用户拖过的独立窗口尺寸：id → { width, height }。
+   *
+   * 与「启用状态」「插件自己的配置」同一个文件——它们都是宿主管的、
+   * 与插件代码无关的东西。
+   */
+  const windowSizeStore = new Map(
+    Object.entries(
+      prefs?.windowSizes && typeof prefs.windowSizes === 'object' ? prefs.windowSizes : {}
+    ).filter(([, size]) => size && typeof size === 'object')
+  );
+
+  /**
+   * 某个插件的窗口尺寸：用户拖过的那个（没有就 null）。
+   *
+   * 清单里的尺寸管**第一次**打开；拖过之后就是这个说了算。
+   */
+  function getWindowSize(id) {
+    const size = windowSizeStore.get(String(id || ''));
+    if (!size) return null;
+    const width = Number(size.width) || 0;
+    const height = Number(size.height) || 0;
+    if (!width || !height) return null;
+    return { width, height };
+  }
+
+  /** 记住一个插件的窗口尺寸，并落盘。 */
+  async function setWindowSize(id, size) {
+    const key = String(id || '');
+    if (!key) return false;
+    const width = Math.min(
+      PLUGIN_WINDOW_LIMITS.maxWidth,
+      Math.max(PLUGIN_WINDOW_LIMITS.minWidth, Math.round(Number(size?.width) || 0))
+    );
+    const height = Math.min(
+      PLUGIN_WINDOW_LIMITS.maxHeight,
+      Math.max(PLUGIN_WINDOW_LIMITS.minHeight, Math.round(Number(size?.height) || 0))
+    );
+    windowSizeStore.set(key, { width, height });
+    prefs = { ...prefs, windowSizes: Object.fromEntries(windowSizeStore) };
+    try {
+      await writeJson(userDataDir, PREFS_FILE, prefs);
+    } catch (err) {
+      console.warn('[desk-pet] 窗口尺寸保存失败：', err?.message);
+      return false;
+    }
+    return true;
+  }
 
   /**
    * 插件自己的配置项（清单里声明的那些），配上当前值。
@@ -931,5 +980,9 @@ export async function createPluginHost({
      * 带缓存：查盘一次就够，别在清单刷新的热路径上 statSync。
      */
     pageUrl: (id) => pageUrlOf(id),
+    /** 用户拖过的窗口尺寸（没有就 null）。 */
+    getWindowSize,
+    /** 记住一个插件的窗口尺寸，并落盘。 */
+    setWindowSize,
   };
 }
