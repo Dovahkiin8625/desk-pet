@@ -613,7 +613,7 @@ body:not(.dp-panel) .studio {
 
 /* —— 窄的时候竖着排 —— */
 
-@container surface (max-width: 460px) {
+@container surface (max-width: 559px) {
   .studio-body {
     grid-template-columns: minmax(0, 1fr);
     /* 两行都按内容算：面板里整体高度是内容决定的，

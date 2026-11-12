@@ -116,4 +116,61 @@ test.describe('宽版与窄版', () => {
       await app.close();
     }
   });
+
+  // 自带页面的插件：窄版是默认（面板里、小部件里），宽版在媒体查询里。
+  const CASES = [
+    { id: 'music-player', query: 'yinyue', sel: '#wrap' },
+    { id: 'chat-history', query: 'jl', sel: '#list' },
+    { id: 'clipboard', query: 'jiban', sel: '.clip-list' },
+    { id: 'tasks', query: 'houtai', sel: '#overview' },
+  ];
+
+  test('插件自带页面：独立窗口里是宽版（两栏），面板里是窄版', async () => {
+    const { app, pet } = await launch();
+    try {
+      for (const c of CASES) {
+        const panel = await openPanel(app, pet);
+        await panel.fill('#query', c.query);
+        await panel.waitForFunction((id) => window.__panel?.resultIds?.includes(id), c.id, {
+          timeout: 10000,
+        });
+        await panel.click(`#results li[data-plugin-id="${c.id}"]`);
+
+        // 面板里：窄版（不是网格）。
+        await panel.waitForFunction(
+          (sel) => {
+            const doc = document.getElementById('plugin-frame')?.contentDocument;
+            return Boolean(doc?.querySelector(sel));
+          },
+          c.sel,
+          { timeout: 10000 }
+        );
+        const narrow = await panel.evaluate((sel) => {
+          const doc = document.getElementById('plugin-frame')?.contentDocument;
+          const el = doc?.querySelector(sel);
+          return el ? getComputedStyle(el).gridTemplateColumns : 'none';
+        }, c.sel);
+        expect(narrow, `${c.id} 在面板里不该是两栏`).toBe('none');
+
+        // 独立窗口里：宽版（两栏）。
+        await panel.click('#detach');
+        const win = await findWindow(app, '/renderer/plugin-window/index.html');
+        expect(win, `${c.id} 的独立窗口没有出现`).not.toBeNull();
+        await win.waitForLoadState('domcontentloaded');
+        const frame = win.frameLocator('#plugin-frame');
+        // 空列表高度是 0，Playwright 会当成「不可见」——只等它挂上。
+        await frame.locator(c.sel).first().waitFor({ state: 'attached', timeout: 10000 });
+        const wide = await frame
+          .locator(c.sel)
+          .first()
+          .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
+        expect(wide.split(' ').length, `${c.id} 在独立窗口里不是两栏`).toBe(2);
+
+        await win.click('#close');
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } finally {
+      await app.close();
+    }
+  });
 });

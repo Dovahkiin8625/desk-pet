@@ -204,6 +204,21 @@
         text-align: center;
         padding: 24px 0;
       }
+      /* 宽版（独立窗口）：组里的对话块分两列，组标题跨两列。 */
+      @media (min-width: 560px) {
+        #list {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px 16px;
+          align-items: start;
+        }
+        .day {
+          display: contents;
+        }
+        .day-title {
+          grid-column: 1 / -1;
+        }
+      }
     </style>
   </head>
   <body>

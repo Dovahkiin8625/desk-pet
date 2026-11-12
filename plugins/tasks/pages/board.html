@@ -405,6 +405,25 @@
       body.dp-widget .current {
         padding: 4px 8px;
       }
+      /* 宽版（独立窗口）：左边当前任务，右边待点头与任务列表。 */
+      @media (min-width: 560px) {
+        #overview {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 0 20px;
+          align-items: start;
+        }
+        #interrupted {
+          grid-column: 1 / -1;
+        }
+        #current-sec {
+          grid-column: 1;
+        }
+        #pending-sec,
+        #tasks-sec {
+          grid-column: 2;
+        }
+      }
     </style>
   </head>
   <body>

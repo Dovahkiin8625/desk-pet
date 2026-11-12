@@ -339,3 +339,15 @@ body.dp-panel .list-wrap {
   color: var(--dp-danger);
   line-height: 1.6;
 }
+
+/* 宽版（独立窗口）：条目分两列，分组标题跨两列。 */
+@media (min-width: 560px) {
+  .clip-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 16px;
+  }
+  .clip-list .group {
+    grid-column: 1 / -1;
+  }
+}

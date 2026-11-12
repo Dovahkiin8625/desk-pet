@@ -381,6 +381,32 @@
         color: var(--dp-accent-strong);
         font-size: 12px;
       }
+      /* 窄版（面板里）：两个分组是透明的——排版与从前一模一样。 */
+      #player,
+      #library {
+        display: contents;
+      }
+      /* 宽版（独立窗口）：左边播放器，右边歌单与曲库。 */
+      @media (min-width: 560px) {
+        #wrap {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 10px 18px;
+          align-items: start;
+        }
+        #head {
+          grid-column: 1 / -1;
+        }
+        #player,
+        #library {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        #list {
+          max-height: 50vh;
+        }
+      }
     </style>
   </head>
   <body>
@@ -393,54 +419,58 @@
         <button id="scan" class="dp-button" type="button" title="重新扫描这个文件夹">↻</button>
       </div>
 
-      <div id="now">
-        <div id="np-title">还没在放</div>
-        <div id="np-sub">选一个音乐文件夹开始</div>
-        <div id="bar" title="点一下跳到那儿"><i id="bar-fill"></i></div>
-        <div id="times">
-          <span id="pos">00:00</span>
-          <span class="spacer"></span>
-          <span id="dur">00:00</span>
+      <div id="player">
+        <div id="now">
+          <div id="np-title">还没在放</div>
+          <div id="np-sub">选一个音乐文件夹开始</div>
+          <div id="bar" title="点一下跳到那儿"><i id="bar-fill"></i></div>
+          <div id="times">
+            <span id="pos">00:00</span>
+            <span class="spacer"></span>
+            <span id="dur">00:00</span>
+          </div>
+        </div>
+
+        <div id="controls">
+          <button id="prev" type="button" title="上一首">⏮</button>
+          <button id="play" type="button" title="播放 / 暂停">▶</button>
+          <button id="next" type="button" title="下一首">⏭</button>
+          <input id="vol" type="range" min="0" max="100" title="音量" />
+          <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
         </div>
       </div>
 
-      <div id="controls">
-        <button id="prev" type="button" title="上一首">⏮</button>
-        <button id="play" type="button" title="播放 / 暂停">▶</button>
-        <button id="next" type="button" title="下一首">⏭</button>
-        <input id="vol" type="range" min="0" max="100" title="音量" />
-        <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
-      </div>
+      <div id="library">
+        <div id="pl-bar">
+          <select id="pl-select" title="播放列表"></select>
+          <button id="pl-new" class="dp-button" type="button" title="新建歌单">新建</button>
+          <button id="pl-del" class="dp-button" type="button" title="删掉这个歌单">删除</button>
+          <button id="pl-folder" class="dp-button" type="button" title="把一个文件夹里的歌加进歌单">
+            ＋文件夹
+          </button>
+          <button id="pl-song" class="dp-button" type="button" title="从曲库里挑歌加进歌单">
+            ＋歌曲
+          </button>
+        </div>
 
-      <div id="pl-bar">
-        <select id="pl-select" title="播放列表"></select>
-        <button id="pl-new" class="dp-button" type="button" title="新建歌单">新建</button>
-        <button id="pl-del" class="dp-button" type="button" title="删掉这个歌单">删除</button>
-        <button id="pl-folder" class="dp-button" type="button" title="把一个文件夹里的歌加进歌单">
-          ＋文件夹
-        </button>
-        <button id="pl-song" class="dp-button" type="button" title="从曲库里挑歌加进歌单">
-          ＋歌曲
-        </button>
-      </div>
+        <div id="pl-new-row" hidden>
+          <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
+          <button id="pl-name-ok" class="dp-button" type="button">确定</button>
+          <button id="pl-name-cancel" class="dp-button" type="button">取消</button>
+        </div>
 
-      <div id="pl-new-row" hidden>
-        <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
-        <button id="pl-name-ok" class="dp-button" type="button">确定</button>
-        <button id="pl-name-cancel" class="dp-button" type="button">取消</button>
+        <div id="lib-head">
+          <span id="lib-count">曲库</span>
+          <span class="spacer"></span>
+          <select id="mode" title="播放模式">
+            <option value="顺序播放">顺序播放</option>
+            <option value="单曲循环">单曲循环</option>
+            <option value="随机播放">随机播放</option>
+          </select>
+        </div>
+        <ul id="list"></ul>
+        <div id="empty">还没有音乐库。点右上角的「音乐库」选一个文件夹。</div>
       </div>
-
-      <div id="lib-head">
-        <span id="lib-count">曲库</span>
-        <span class="spacer"></span>
-        <select id="mode" title="播放模式">
-          <option value="顺序播放">顺序播放</option>
-          <option value="单曲循环">单曲循环</option>
-          <option value="随机播放">随机播放</option>
-        </select>
-      </div>
-      <ul id="list"></ul>
-      <div id="empty">还没有音乐库。点右上角的「音乐库」选一个文件夹。</div>
     </div>
 
     <div id="picker" hidden>
