@@ -439,3 +439,76 @@ test.describe('后台任务的设置', () => {
     }
   });
 });
+
+test.describe('切到「只聊天」', () => {
+  test('用户不点头就不切：下拉框退回原值，磁盘上还是能派活', async () => {
+    const stub = await startStubLlm({
+      interaction: () => say('好。'),
+      execution: () => say('好。'),
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      // **原生对话框不在测试范围里**（Playwright 不拦它）：把它桩掉，
+      // 记下问没问、问的是什么。
+      await app.evaluate(({ dialog }) => {
+        globalThis.__asked = [];
+        dialog.showMessageBox = (...args) => {
+          const opt = args.length > 1 ? args[1] : args[0];
+          globalThis.__asked.push(String(opt?.message || ''));
+          // 0 = 第一个按钮 =「取消」。
+          return Promise.resolve({ response: 0, checkboxChecked: false });
+        };
+      });
+      const settings = await openSettings(app);
+      // 「桌宠能做什么」在「模型」这一页里（openSettings 默认停在「后台任务」）。
+      await settings.click('#chat-tab-model');
+      await settings.waitForSelector('#chat-sub-model:not([hidden])', { timeout: 10000 });
+      await settings.selectOption('#llmDispatch', 'off');
+
+      const asked = await waitUntil(async () => {
+        const list = await app.evaluate(() => globalThis.__asked || []);
+        return list.length ? list : null;
+      });
+      expect(asked[0], '切之前没有问').toContain('只聊天');
+
+      // 用户不点头：下拉框退回原值，磁盘上什么都没改。
+      await waitUntil(async () => (await settings.inputValue('#llmDispatch')) === 'auto');
+      const stored = await readStoredState();
+      expect(stored.agent.dispatch, '用户没点头就切了').toBe('auto');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
+  test('用户点头才切：磁盘上存的是 off', async () => {
+    const stub = await startStubLlm({
+      interaction: () => say('好。'),
+      execution: () => say('好。'),
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      await app.evaluate(({ dialog }) => {
+        dialog.showMessageBox = () =>
+          // 1 = 第二个按钮 =「切到只聊天」。
+          Promise.resolve({ response: 1, checkboxChecked: false });
+      });
+      const settings = await openSettings(app);
+      // 「桌宠能做什么」在「模型」这一页里（openSettings 默认停在「后台任务」）。
+      await settings.click('#chat-tab-model');
+      await settings.waitForSelector('#chat-sub-model:not([hidden])', { timeout: 10000 });
+      await settings.selectOption('#llmDispatch', 'off');
+
+      const stored = await waitUntil(async () => {
+        const s = await readStoredState();
+        return s?.agent?.dispatch === 'off' ? s : null;
+      });
+      expect(stored.agent.dispatch).toBe('off');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+});

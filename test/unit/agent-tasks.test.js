@@ -473,3 +473,40 @@ test('任务没做成：通知里没有情绪也没有记忆', async () => {
   assert.equal(notices[0].emotion, '');
   assert.deepEqual(notices[0].memories, []);
 });
+
+test('cancelAll：未结束的任务全被停掉', async () => {
+  // 一个 running、一个 queued、一个 done。
+  const tasks = createAgentTasks({
+    backend: { id: 'agent', chat: () => new Promise(() => {}) },
+  });
+  tasks.submit({ prompt: '找视频', messages: [] });
+  tasks.submit({ prompt: '查天气', messages: [] });
+  await tick();
+  const before = tasks.list();
+  assert.equal(before.length, 2);
+  assert.ok(before.some((t) => t.status === 'running'), '第一个该在跑');
+  assert.ok(before.some((t) => t.status === 'queued'), '第二个该在排队');
+
+  const res = tasks.cancelAll();
+  assert.equal(res.stopped, 2);
+  for (const t of tasks.list()) {
+    assert.equal(t.status, 'cancelled', `${t.taskId} 该停掉`);
+  }
+});
+
+test('cancelAll：已经结束的任务不动', async () => {
+  const tasks = createAgentTasks({ backend: fakeBackend() });
+  const t = tasks.submit({ prompt: '查天气', messages: [] });
+  await t.done;
+  await tick();
+  assert.equal(tasks.list()[0].status, 'done');
+
+  const res = tasks.cancelAll();
+  assert.equal(res.stopped, 0);
+  assert.equal(tasks.list()[0].status, 'done');
+});
+
+test('cancelAll：没有任务时返回 stopped: 0', () => {
+  const tasks = createAgentTasks({ backend: fakeBackend() });
+  assert.deepEqual(tasks.cancelAll(), { stopped: 0 });
+});

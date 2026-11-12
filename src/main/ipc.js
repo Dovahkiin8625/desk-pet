@@ -8,6 +8,7 @@ export function registerIpc({
   switchModel,
   importModel,
   deleteModel,
+  confirmDispatchOff,
   onOpenSettings,
   onShowContextMenu,
   onOpenPanel,
@@ -47,6 +48,8 @@ export function registerIpc({
   // 主进程据此校验发起方是不是设置窗口（渲染层不是可信边界）。
   ipcMain.handle('pet:importModel', (e) => importModel(e));
   ipcMain.handle('pet:deleteModel', (e, modelId) => deleteModel(e, modelId));
+  // 切到「只聊天」前问一句：正在做的事会被停掉（原生确认框）。
+  ipcMain.handle('pet:confirmDispatchOff', (e) => confirmDispatchOff(e));
   ipcMain.handle('pet:showContextMenu', () => onShowContextMenu());
   ipcMain.handle('pet:openSettings', () => onOpenSettings());
   // 双击桌宠 → 弹出插件面板。

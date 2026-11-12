@@ -80,7 +80,7 @@ export const DISPATCH_MODE_INFO = Object.freeze({
   }),
   off: Object.freeze({
     label: '只聊天',
-    hint: '桌宠只跟你聊天：读时间、读单个文件，其他事一概不派。',
+    hint: '桌宠只跟你聊天：不查本机、不翻文件、不跑命令，什么都不替你做。',
   }),
 });
 

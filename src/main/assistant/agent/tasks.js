@@ -3,6 +3,14 @@ import { createApprovalGate } from './approval.js';
 import { approvalRecord, stepRecord, taskRecord } from './record.js';
 import { AGENT_EVENT, APPROVAL_DECISION, TASK_STATUS } from '../../../shared/assistant.js';
 
+/** 终态：这些任务已经结束了，停不掉也不该停。 */
+const FINAL_STATUS = new Set([
+  TASK_STATUS.DONE,
+  TASK_STATUS.FAILED,
+  TASK_STATUS.CANCELLED,
+  TASK_STATUS.INTERRUPTED,
+]);
+
 /**
  * agent 任务的中枢。
  *
@@ -326,6 +334,24 @@ export function createAgentTasks({
     /** 取消一个任务。 */
     cancel(taskId) {
       return runtime.cancel(taskId);
+    },
+
+    /**
+     * 把所有**没做完**的任务停掉。
+     *
+     * 切到「只聊天」时用：桌宠不再接新活，手上正在做的事也得停下来。
+     * **已经结束的任务不动**——它们的结果还在记录里，停不掉也没必要停。
+     *
+     * @returns {{stopped: number}} 停掉几个
+     */
+    cancelAll() {
+      let stopped = 0;
+      for (const task of runtime.list()) {
+        if (FINAL_STATUS.has(task.status)) continue;
+        const res = runtime.cancel(task.id);
+        if (res?.ok) stopped += 1;
+      }
+      return { stopped };
     },
 
     /**

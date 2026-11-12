@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('pet', {
   importModel: () => ipcRenderer.invoke('pet:importModel'),
   // 删除导入的模型（内置模型删不得）。主进程会弹原生确认框。
   deleteModel: (id) => ipcRenderer.invoke('pet:deleteModel', id),
+  // 切到「只聊天」前问一句：正在做的事会被停掉。
+  confirmDispatchOff: () => ipcRenderer.invoke('pet:confirmDispatchOff'),
   // 形象列表变了（导入或删除之后）：设置窗口据此刷新下拉框。
   // 载荷是刷新后应当选中的形象 id——刷新是异步的，
   // 而设置广播可能先到也可能后到，把该选哪个一并告诉它才不会打架。

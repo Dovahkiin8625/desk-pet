@@ -1555,6 +1555,11 @@ export function createAssistant({  userDataDir,
         };
       }
       state = sanitizeAssistant(next);
+      // 切到「只聊天」：手上有活就停掉。
+      // 这是唯一的收口——不管这个改动从哪条路来（设置页、插件、代码），都会停。
+      if (state?.agent?.dispatch === 'off' && before?.agent?.dispatch !== 'off') {
+        agentTasks.cancelAll();
+      }
       scheduleSave();
       if (patch?.clipboard?.enabled !== undefined) {
         if (patch.clipboard.enabled) clipboardWatcher.start();

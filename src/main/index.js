@@ -436,6 +436,37 @@ function isSettingsSender(event) {
 }
 
 /**
+ * 切到「只聊天」之前问一句：正在做的事会被停掉。
+ *
+ * **为什么要问**：切过去不只是「以后不接活」，手头正在做的事也会停下来。
+ * 这是不可逆的（停了就是停了），一次点击不该就丢掉。
+ */
+async function confirmDispatchOff(event) {
+  if (!isSettingsSender(event)) {
+    return { ok: false, error: '只有设置窗口可以切到只聊天' };
+  }
+  const parent = settingsWin && !settingsWin.isDestroyed() ? settingsWin : undefined;
+  const options = {
+    type: 'warning',
+    title: '切到只聊天',
+    message: '切到「只聊天」后，桌宠不再接新活，正在做的事也会停下来。',
+    detail: '已经派出去的事会被停掉。',
+    buttons: ['取消', '切到只聊天'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  try {
+    const result = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return { ok: true, confirmed: result.response === 1 };
+  } catch (err) {
+    return { ok: false, error: `无法显示确认框：${err?.message || err}` };
+  }
+}
+
+/**
  * 形象列表变了：通知设置窗口重新拉取注册表、刷新下拉框。
  *
  * modelId 是**刷新后应当选中的**那个形象：刷新是异步的，
@@ -937,6 +968,7 @@ app.whenReady().then(async () => {
     // 所以主进程会校验发起方是不是设置窗口。
     importModel: (event) => importModel(event),
     deleteModel: (event, modelId) => deleteModel(event, modelId),
+    confirmDispatchOff: (event) => confirmDispatchOff(event),
     onOpenSettings: openSettings,
     onShowContextMenu: showContextMenu,
     // 双击桌宠：弹出插件面板。

@@ -58,6 +58,8 @@ const tapTalkLinesInput = document.getElementById('tapTalkLines');
 const llmEnabledBox = document.getElementById('llmEnabled');
 const llmDispatchSelect = document.getElementById('llmDispatch');
 const llmDispatchHint = document.getElementById('llmDispatchHint');
+/** 派单模式的当前值：用户不点头切「只聊天」时，下拉框要退回这里。 */
+let dispatchModeValue = 'auto';
 const llmBaseUrlInput = document.getElementById('llmBaseUrl');
 const llmModelInput = document.getElementById('llmModel');
 const llmTemperatureInput = document.getElementById('llmTemperature');
@@ -862,6 +864,7 @@ function applyAssistantState(state) {
   llmDispatchSelect.value = DISPATCH_MODES.includes(state.agent?.dispatch)
     ? state.agent.dispatch
     : 'auto';
+  dispatchModeValue = llmDispatchSelect.value;
   updateDispatchHint();
 
   // 后台任务。
@@ -1073,7 +1076,19 @@ for (const box of [llmEnabledBox, llmProactiveBox]) {
     persistAssistantPrefs();
   });
 }
-llmDispatchSelect.addEventListener('change', () => {
+llmDispatchSelect.addEventListener('change', async () => {
+  const next = llmDispatchSelect.value;
+  if (next === 'off') {
+    // 切到「只聊天」之前问一句：正在做的事会被停掉，停掉了就回不来了。
+    const res = await window.pet.confirmDispatchOff?.();
+    if (!res?.confirmed) {
+      // 用户不点头：下拉框退回原来的值，什么都不改。
+      llmDispatchSelect.value = dispatchModeValue;
+      updateDispatchHint();
+      return;
+    }
+  }
+  dispatchModeValue = next;
   updateDispatchHint();
   persistAssistantPrefs();
 });
