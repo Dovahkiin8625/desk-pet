@@ -46,6 +46,8 @@ async function startStubLlm({
 }) {
   // 挂起的定时器：关服时一并清掉，否则进程要等它们跑完才退。
   const timers = new Set();
+  // 记下每一次请求：断言「模型为了回答多花了几次往返」要用。
+  const seen = [];
   const server = createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => {
@@ -55,6 +57,7 @@ async function startStubLlm({
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
       const isExecution = !names.includes('task.submit');
+      seen.push({ isExecution, body });
       const reply = isExecution ? execution(body) : interaction(body);
       // 回 `{ status, body }` = 这个请求要出错。
       const isError = Boolean(reply) && typeof reply === 'object' && 'status' in reply;
@@ -76,6 +79,7 @@ async function startStubLlm({
   const { port } = server.address();
   return {
     baseUrl: `http://127.0.0.1:${port}/v1`,
+    seen,
     close: () =>
       new Promise((resolve) => {
         for (const t of timers) clearTimeout(t);
@@ -262,6 +266,75 @@ test.describe('双层 agent', () => {
       });
       expect(reply, '状态文件里没有前台答复的记录').toBeTruthy();
       expect(reply.meta.rounds, `轮数不对：${JSON.stringify(reply.meta)}`).toBe(2);
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
+  test('问「那个怎么样了」：状态写在提示词里，模型不用调工具', async () => {
+    // 用户的要求就是「随时能问桌宠某某工作怎么样了」——
+    // 这道防线落在**提示词**上：状态块在提示词里，模型一眼就能答，
+    // 一次工具往返都不用花。
+    const stub = await startStubLlm({
+      interaction: (body) => {
+        const msgs = body.messages || [];
+        const last = String(msgs.at(-1)?.content || '');
+        if (last.includes('怎么样了')) {
+          // 第二问：**直接答**，一个工具都不调。
+          return say('还在跑，我盯着呢。');
+        }
+        const already = msgs.some((m) => m.role === 'tool');
+        return already ? say('我去看看。') : toolCall('task.submit', { title: '查视频', brief: '看看 video 下有什么' });
+      },
+      execution: () => say('video 下有 3 个视频。'),
+      // 执行层拖着：让那件事在第二问时还在跑。
+      executionDelayMs: 8000,
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      await panel.fill('#query', 'video 下有什么');
+      await panel.press('#query', 'Control+Enter');
+
+      // 等派单落地、也等第一句答复落地。
+      await waitForState((s) =>
+        (s?.chat?.messages || []).find((m) => m.kind === 'dispatch' && m.meta?.taskId)
+      );
+      const bubble = await findWindow(app, '/src/renderer/bubble/index.html', 10000);
+      expect(bubble, '气泡窗口没有出现').toBeTruthy();
+      await bubble.waitForLoadState('domcontentloaded');
+      await recordBubble(bubble);
+      await bubble.waitForFunction(
+        () => (window.__seen || []).some((t) => t.includes('我去看看')),
+        null,
+        { timeout: 30000 }
+      );
+
+      const before = stub.seen.filter((r) => !r.isExecution).length;
+      await panel.fill('#query', '那个怎么样了');
+      await panel.press('#query', 'Control+Enter');
+
+      await bubble.waitForFunction(
+        () => (window.__seen || []).some((t) => t.includes('盯着呢')),
+        null,
+        { timeout: 30000 }
+      );
+
+      // **只发了一次请求**：模型没有为了回答而调工具。
+      const asked = stub.seen.filter((r) => !r.isExecution).length;
+      expect(asked - before, `回答「怎么样了」多花了几次模型请求：${asked - before}`).toBe(1);
+
+      // 状态块在提示词里：模型看得到那件事在忙什么。
+      const system = stub.seen.filter((r) => !r.isExecution).at(-1)?.body?.messages?.[0]?.content || '';
+      expect(system, '提示词里没有状态块').toContain('你手头在做的事');
+      expect(system, '状态块里没有那件事的标题').toContain('查视频');
+      // 提示词里不许出现工具名。
+      expect(system, '提示词里出现了工具名').not.toContain('task.submit');
     } finally {
       await app.close();
       await stub.close();
