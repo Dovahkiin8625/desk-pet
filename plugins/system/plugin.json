@@ -1,7 +1,7 @@
 {
   "id": "system",
   "name": "系统状态",
-  "icon": "📊",
+  "icon": "activity",
   "description": "CPU、内存、GPU、温度、电源",
   "keywords": ["system", "status", "cpu", "gpu", "neicun", "xituan", "状态", "内存", "显卡", "温度", "电源"],
   "skill": {

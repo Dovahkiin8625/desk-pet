@@ -77,7 +77,7 @@
       }
       /* 用得狠了换个颜色：一眼就知道哪条红。 */
       .meter.hot .track i {
-        background: #d08a6a;
+        background: var(--dp-danger);
       }
       .meter .value {
         text-align: right;
@@ -97,6 +97,9 @@
       /* ---------------- 底下那行 ---------------- */
       .gear {
         flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         width: 26px;
         height: 26px;
         border: none;
@@ -122,7 +125,7 @@
 
       <footer class="dp-footer">
         <span class="grow" id="info">正在读系统状态…</span>
-        <button type="button" class="gear" id="gearBtn" title="设置" aria-label="设置">⚙</button>
+        <button type="button" class="gear" id="gearBtn" title="设置" aria-label="设置"><span class="icon" data-icon="settings"></span></button>
       </footer>
     </div>
 

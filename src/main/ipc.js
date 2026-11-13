@@ -3,6 +3,8 @@ import { ipcMain } from 'electron';
 // 只注册渲染层实际用得到的通道；托盘/右键菜单的行为由主进程直接执行，不走 IPC。
 export function registerIpc({
   getSettings,
+  getTheme,
+  listThemes,
   saveSettings,
   listModels,
   switchModel,
@@ -39,6 +41,10 @@ export function registerIpc({
   setPluginAgentEnabled,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
+  // 当前的主题：刚打开的窗口靠它知道自己该用哪一套配色。
+  ipcMain.handle('pet:theme', () => getTheme());
+  // 有哪些主题可选：设置页的下拉框按这个填。
+  ipcMain.handle('pet:themes', () => listThemes());
   ipcMain.handle('pet:saveSettings', (_e, patch) => saveSettings(patch));
   ipcMain.handle('pet:listModels', () => listModels());
   ipcMain.handle('pet:switchModel', (_e, modelId) => switchModel(modelId));

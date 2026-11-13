@@ -284,7 +284,7 @@ test.describe('音乐播放器插件', () => {
       // 真的在放：播放头往前走，时长也读得到。
       await expect(frame.locator('#dur')).toHaveText('00:03', { timeout: 20000 });
       await expect(frame.locator('#pos')).not.toHaveText('00:00', { timeout: 20000 });
-      await expect(frame.locator('#play')).toHaveText('⏸');
+      await expect(frame.locator('#play svg[data-icon="pause"]')).toHaveCount(1);
     } finally {
       await app.close();
     }

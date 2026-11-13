@@ -1,7 +1,7 @@
 {
   "id": "todos",
   "name": "待办",
-  "icon": "✓",
+  "icon": "check-square",
   "description": "查看与添加待办",
   "keywords": ["todo", "todos", "daiban", "dai", "qingdan", "清单", "任务", "事项"],
   "skill": {

@@ -109,6 +109,19 @@ src/renderer/ui/           theme.css 设计系统 / blocks.js 积木 / pluginPag
 
 细节见[插件系统架构](./插件系统架构.md)。
 
+## 一页速查：加一个主题
+
+```
+src/renderer/ui/themes/<id>.css   一套配色（加主题 = 放一个文件进去）
+src/shared/theme.js              明暗模式（浅色 / 深色 / 跟随系统）
+src/main/themes.js               扫描主题目录，拼成一张样式表
+src/renderer/ui/theme.css        结构（圆角、间距、按钮）+ 把主题带进来
+```
+
+主题文件里写 `:root[data-theme='<id>'] { --dp-bg: …; }`，
+浅色与深色并排写在 `light-dark()` 里，文件头写「主题：名字」。
+主进程启动时扫描那个目录，设置页的下拉框按它填。
+
 ## 规矩
 
 - **注释与文档用中文。**

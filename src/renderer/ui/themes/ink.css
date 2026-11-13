@@ -1,0 +1,41 @@
+/*
+ * 主题：墨白
+ *
+ * 中性灰底 + 靛蓝强调色。不冷不暖，界面最「素」的一套。
+ */
+
+:root[data-theme='ink'] {
+  /* 底与面 */
+  --dp-bg: light-dark(#fbfbfc, #17181b);
+  --dp-surface: light-dark(#f2f2f4, #1f2024);
+  --dp-surface-2: light-dark(#eaeaec, #26282c);
+  --dp-surface-hover: light-dark(#e4e4e7, #2e3035);
+  --dp-surface-active: light-dark(#dedee1, #383a41);
+  --dp-surface-sunken: light-dark(#ececee, #101114);
+  --dp-border: light-dark(#c8c8cd, #3b3d43);
+  --dp-border-soft: light-dark(#e4e4e7, #2b2d32);
+  --dp-border-strong: light-dark(#adadb4, #4a4c53);
+  --dp-input-bg: light-dark(#ffffff, #1f2024);
+
+  /* 字 */
+  --dp-text: light-dark(#26262b, #e7e7ea);
+  --dp-text-soft: light-dark(#6d6d76, #a1a1a8);
+  --dp-text-faint: light-dark(#92929b, #7c7c84);
+
+  /* 强调 */
+  --dp-accent: light-dark(#9aa3c9, #7b86b5);
+  --dp-accent-strong: light-dark(#6f7aa8, #9aa4cf);
+  --dp-accent-soft: light-dark(#e8eaf4, #2a2e3d);
+  --dp-accent-ink: light-dark(#333c63, #eef0f8);
+
+  /* 状态 */
+  --dp-ok: light-dark(#4c7a58, #8fbf8f);
+  --dp-danger: light-dark(#c9503f, #e08a76);
+  --dp-danger-bg: light-dark(#f7e7e1, #3a2622);
+  --dp-danger-border: light-dark(#d9b3a8, #5c3a31);
+
+  /* 影 */
+  --dp-shadow: light-dark(rgba(30, 30, 40, 0.16), rgba(0, 0, 0, 0.45));
+  --dp-shadow-strong: light-dark(rgba(30, 30, 40, 0.26), rgba(0, 0, 0, 0.6));
+  --dp-scrim: light-dark(rgba(30, 30, 40, 0.28), rgba(8, 8, 10, 0.55));
+}

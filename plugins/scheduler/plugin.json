@@ -1,0 +1,78 @@
+{
+  "id": "scheduler",
+  "name": "定时任务",
+  "icon": "clock",
+  "description": "到点跑命令，或让桌宠自己想个法子去做",
+  "keywords": ["schedule", "scheduler", "cron", "timer", "定时", "定时任务", "dingshi", "计划", "jihua", "定时器"],
+  "skill": {
+    "name": "scheduler",
+    "description": "用户要设定时任务、到点自动做事、按计划跑命令的时候用它",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "scheduler.add",
+      "label": "加定时任务",
+      "description": "加一条到点自动做的事。kind=command 是按原样执行一条命令；kind=agent 是只说要做什么，由桌宠自己想办法（必要时写脚本）。定时方式写「每隔 30 分钟」「每天 09:00」或 cron 表达式「0 9 * * 1-5」。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "任务的名字，例如「备份」" },
+          "kind": {
+            "type": "string",
+            "description": "command = 按原样执行这条命令；agent = 只说要做的事，由桌宠自己想办法"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "定时方式：「每隔 30 分钟」「每天 09:00」，或 cron 表达式「0 9 * * 1-5」"
+          },
+          "command": { "type": "string", "description": "kind=command 时要执行的那条命令" },
+          "description": { "type": "string", "description": "kind=agent 时要做的事，写清楚一点" }
+        },
+        "required": ["kind", "schedule"]
+      },
+      "risk": "exec"
+    },
+    {
+      "name": "scheduler.list",
+      "label": "看定时任务",
+      "description": "列出所有定时任务，含每条的 id、定时方式与下一次的时刻。",
+      "parameters": { "type": "object", "properties": {} },
+      "risk": "read"
+    },
+    {
+      "name": "scheduler.remove",
+      "label": "删定时任务",
+      "description": "删掉一条定时任务。id 从 scheduler.list 的结果里取。",
+      "parameters": {
+        "type": "object",
+        "properties": { "id": { "type": "string", "description": "定时任务 id" } },
+        "required": ["id"]
+      },
+      "risk": "write"
+    }
+  ],
+  "settings": [
+    {
+      "key": "notifyOnFinish",
+      "label": "跑完告诉我一声",
+      "type": "boolean",
+      "default": true,
+      "hint": "命令跑完（或没跑成）时，桌宠在气泡里说一声。"
+    },
+    {
+      "key": "commandTimeoutMinutes",
+      "label": "命令最长跑多久（分钟）",
+      "type": "number",
+      "default": 10,
+      "hint": "超过这个时间就把命令停掉。"
+    }
+  ],
+  "window": {
+    "title": "定时任务",
+    "page": "pages/scheduler.html",
+    "width": 640,
+    "height": 620,
+    "refreshMs": 2000
+  }
+}

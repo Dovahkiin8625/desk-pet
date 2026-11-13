@@ -162,6 +162,9 @@ body.dp-panel .list-wrap {
   flex: none;
   width: 20px;
   height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -195,6 +198,9 @@ body.dp-panel .list-wrap {
   flex: none;
   width: 26px;
   height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 7px;
   background: transparent;
@@ -214,7 +220,7 @@ body.dp-panel .list-wrap {
 .scrim {
   position: fixed;
   inset: 0;
-  background: rgba(40, 34, 24, 0.28);
+  background: var(--dp-scrim);
   z-index: 5;
 }
 
@@ -228,7 +234,7 @@ body.dp-panel .list-wrap {
   flex-direction: column;
   background: var(--dp-bg);
   border-left: 1px solid var(--dp-border);
-  box-shadow: -6px 0 18px rgba(40, 34, 24, 0.18);
+  box-shadow: -6px 0 18px var(--dp-shadow);
   transform: translateX(100%);
   transition: transform 0.18s ease;
   z-index: 6;
@@ -255,6 +261,9 @@ body.dp-panel .list-wrap {
 .drawer-close {
   width: 26px;
   height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 7px;
   background: transparent;

@@ -3,46 +3,45 @@
 <head>
   <meta charset="utf-8">
   <title>桌面宠物 · 设置</title>
+  <link rel="stylesheet" href="/src/renderer/ui/theme.css">
   <style>
     /* ---------------------------------------------------------------------
-       色板：与插件面板、气泡同一套暖色（#fffdf8 / #d8d2c4 / #bda87c）。
-       设置页原先是冷灰蓝，是全应用唯一的冷色页——两份配色已经漂开了。
-       下面的值全部取自 panel/index.html 与 bubble/index.html，没有新色。
+       颜色全部来自共享设计系统（theme.css）：这一页不自带调色板。
+       下面这些变量只是**别名**——页面里用起来短，
+       真正的颜色只有 theme.css 那一份（换主题只改那一处）。
        --------------------------------------------------------------------- */
     :root {
-      color-scheme: light;
-
       /* 表面 */
-      --bg: #f2eee2;             /* 窗口底 */
-      --surface: #fffdf8;        /* 面板底 */
-      --surface-2: #f6f2e7;      /* 按钮底 */
-      --surface-hover: #efe9d8;  /* 悬停 */
-      --surface-active: #f1ead8; /* 选中项 */
-      --surface-sunken: #ece6d8; /* 凹陷（发丝线） */
+      --bg: var(--dp-bg);                   /* 窗口底 */
+      --surface: var(--dp-surface);          /* 面板底 */
+      --surface-2: var(--dp-surface-2);      /* 按钮底 */
+      --surface-hover: var(--dp-surface-hover);
+      --surface-active: var(--dp-surface-active);
+      --surface-sunken: var(--dp-surface-sunken);
 
       /* 描边 */
-      --border: #d8d2c4;
-      --border-hair: #ece6d8;
-      --border-input: #c9c1b0;
+      --border: var(--dp-border);
+      --border-hair: var(--dp-border-soft);
+      --border-input: var(--dp-border-strong);
 
       /* 文字 */
-      --text: #2b2a26;
-      --text-2: #3a352c;
-      --muted: #8a8272;
-      --muted-2: #9a9384;
-      --muted-3: #a9a294;
+      --text: var(--dp-text);
+      --text-2: var(--dp-text);
+      --muted: var(--dp-text-soft);
+      --muted-2: var(--dp-text-faint);
+      --muted-3: var(--dp-text-faint);
 
       /* 强调（黄铜） */
-      --accent: #bda87c;
-      --accent-soft: #d9c9a3;
-      --accent-ink: #7a6a4f;
-      --focus: #c8b78f;
+      --accent: var(--dp-accent-strong);
+      --accent-soft: var(--dp-accent-soft);
+      --accent-ink: var(--dp-accent-ink);
+      --focus: var(--dp-accent-strong);
 
       /* 状态 */
-      --ok: #4f7a52;
-      --danger: #a8543f;
-      --danger-bg: #f7e7e1;
-      --danger-border: #d9b3a8;
+      --ok: var(--dp-ok);
+      --danger: var(--dp-danger);
+      --danger-bg: var(--dp-danger-bg);
+      --danger-border: var(--dp-danger-border);
 
       /* 尺度 */
       --radius-sm: 6px;
@@ -156,6 +155,38 @@
       display: grid; grid-template-columns: 1fr 1fr;
       gap: 12px 20px; margin-bottom: var(--gap);
     }
+
+    /* ---------- 一排互斥的选项（主题） ---------- */
+    /* 单选框藏在label里，看得见的是那一排按钮。 */
+    .seg {
+      display: inline-flex;
+      gap: 3px;
+      padding: 3px;
+      border: 1px solid var(--border-input);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+    .seg label { position: relative; display: block; cursor: pointer; }
+    .seg input {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      margin: 0; opacity: 0; cursor: pointer;
+    }
+    .seg span {
+      display: block;
+      padding: 5px 14px;
+      border-radius: 4px;
+      color: var(--muted);
+      transition: background-color .12s ease, color .12s ease;
+    }
+    .seg label:hover span { color: var(--text); }
+    .seg input:checked + span {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: 0 1px 2px var(--dp-shadow);
+    }
+    .seg input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
 
     /* ---------- 分组（人设 / 主动搭话） ---------- */
     .group {
@@ -281,7 +312,7 @@
     /* ---------- 工具抽屉 ---------- */
     .drawer-backdrop {
       position: fixed; inset: 0; z-index: 40;
-      background: rgba(43, 42, 38, 0.28);
+      background: var(--dp-scrim);
     }
     .drawer {
       position: fixed; top: 0; bottom: 0; right: 0; z-index: 41;
@@ -289,7 +320,7 @@
       display: flex; flex-direction: column;
       background: var(--surface);
       border-left: 1px solid var(--border);
-      box-shadow: -6px 0 24px rgba(43, 42, 38, 0.14);
+      box-shadow: -6px 0 24px var(--dp-shadow);
       animation: drawer-in 0.18s ease-out;
     }
     @keyframes drawer-in {
@@ -306,6 +337,7 @@
     .drawer-title code { font-size: 12px; }
     .drawer-close {
       flex: none; width: 26px; height: 26px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
       border: 1px solid var(--border-input); border-radius: var(--radius-sm);
       background: var(--surface); color: var(--muted); font-size: 15px;
       cursor: pointer;
@@ -335,13 +367,17 @@
     .param-desc { display: block; color: var(--muted-2); font-size: 12px; }
 
     /* ---------- 控件 ---------- */
-    select, input[type="text"], input[type="password"], textarea {
+    select, input[type="text"], input[type="password"], input[type="number"], textarea {
       width: 100%;
       padding: 6px 9px; border: 1px solid var(--border-input);
       border-radius: var(--radius-sm);
       background: var(--surface); color: inherit; font: inherit;
     }
     textarea { resize: vertical; min-height: 54px; line-height: 1.55; }
+    /* 数字框：跟别的输入框一个样子。
+       上下那对小箭头是浏览器画的（聚焦时才出现），
+       它的颜色跟 accent-color 走——所以也归 accent 管。 */
+    input[type="number"] { accent-color: var(--accent); }
     /* 滑块自己画：浏览器默认的轨道是没走的那段深炭灰，在米色底上太扎眼；
        而只改轨道颜色会连「已经走到哪儿」的填充一起弄丢——
        填充是 UA 用 accent-color 画在轨道上的，所以填充改成 --pct 渐变，
@@ -407,6 +443,7 @@
     .fact-del {
       flex: none;
       width: 22px; height: 22px; padding: 0;
+      display: flex; align-items: center; justify-content: center;
       border: 1px solid transparent; border-radius: var(--radius-sm);
       background: transparent; color: var(--muted);
       font: inherit; font-size: 16px; line-height: 1; cursor: pointer;
@@ -477,6 +514,12 @@
                 aria-selected="true" tabindex="0">
           <span class="nav-label">桌宠</span>
           <span class="nav-summary" data-summary="pet">—</span>
+        </button>
+        <button type="button" class="nav-tab" id="tab-appearance" role="tab"
+                data-section="appearance" aria-controls="panel-appearance"
+                aria-selected="false" tabindex="-1">
+          <span class="nav-label">外观</span>
+          <span class="nav-summary" data-summary="appearance">—</span>
         </button>
         <button type="button" class="nav-tab" id="tab-voice" role="tab"
                 data-section="voice" aria-controls="panel-voice"
@@ -571,6 +614,30 @@
               插件的设置归插件自己管，这里不重复一份。
             </p>
           </div>
+        </section>
+
+        <section class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance" hidden>
+          <h1>外观</h1>
+          <p class="panel-sub">界面的配色。面板、插件窗口与气泡会一起换。</p>
+
+          <div class="field">
+            <label for="themeSelect">主题</label>
+            <div class="control">
+              <select id="themeSelect"></select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>明暗</label>
+            <div class="control">
+              <div class="seg" role="radiogroup" aria-label="明暗">
+                <label><input type="radio" name="mode" value="light"><span>浅色</span></label>
+                <label><input type="radio" name="mode" value="dark"><span>深色</span></label>
+                <label><input type="radio" name="mode" value="system"><span>跟随系统</span></label>
+              </div>
+            </div>
+          </div>
+          <p class="hint">「跟随系统」跟着 Windows 的深浅色设置走。</p>
         </section>
 
         <section class="panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
@@ -997,7 +1064,7 @@
         <h2 id="toolDrawerName"></h2>
         <code id="toolDrawerId"></code>
       </div>
-      <button type="button" class="drawer-close" id="toolDrawerClose" aria-label="关闭">×</button>
+      <button type="button" class="drawer-close" id="toolDrawerClose" aria-label="关闭"><span class="icon" data-icon="close"></span></button>
     </div>
     <div class="drawer-body">
       <section class="drawer-section">

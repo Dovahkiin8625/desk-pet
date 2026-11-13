@@ -76,6 +76,12 @@ ipcRenderer.on('plugin:data', (_e, payload) => deliverData(payload));
 ipcRenderer.on('plugin:tick', (_e, payload) => deliverTick(payload));
 
 contextBridge.exposeInMainWorld('plugin', {
+  // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
+  // 当前的主题：刚打开的窗口靠它知道自己该是浅色还是深色。
+  theme: () => ipcRenderer.invoke('pet:theme'),
+  onTheme: (cb) => {
+    ipcRenderer.on('pet:theme', (_e, theme) => cb(theme));
+  },
   /** 插件的 id（哪个插件的窗口）。 */
   id: pluginId,
   /** 窗口形态：`window` 或 `widget`。 */

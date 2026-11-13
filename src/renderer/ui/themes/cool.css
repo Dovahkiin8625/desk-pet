@@ -1,0 +1,41 @@
+/*
+ * 主题：青岚
+ *
+ * 冷灰蓝底 + 钢蓝强调色。不想看米色的时候用这一套。
+ */
+
+:root[data-theme='cool'] {
+  /* 底与面 */
+  --dp-bg: light-dark(#f7f8fa, #16191d);
+  --dp-surface: light-dark(#eef1f5, #1d2126);
+  --dp-surface-2: light-dark(#e7ebf0, #24282e);
+  --dp-surface-hover: light-dark(#e2e7ed, #2b3037);
+  --dp-surface-active: light-dark(#dde4ec, #31373f);
+  --dp-surface-sunken: light-dark(#e4e8ed, #121417);
+  --dp-border: light-dark(#b9c2cd, #3a4048);
+  --dp-border-soft: light-dark(#e4e8ed, #2b3037);
+  --dp-border-strong: light-dark(#a8b3c0, #474e57);
+  --dp-input-bg: light-dark(#ffffff, #1d2126);
+
+  /* 字 */
+  --dp-text: light-dark(#23272d, #e4e8ec);
+  --dp-text-soft: light-dark(#6b7480, #a2abb6);
+  --dp-text-faint: light-dark(#8d959f, #79828d);
+
+  /* 强调 */
+  --dp-accent: light-dark(#b9cbdd, #6f89a6);
+  --dp-accent-strong: light-dark(#7d97b3, #9db4cb);
+  --dp-accent-soft: light-dark(#e2ebf3, #2c3540);
+  --dp-accent-ink: light-dark(#22303d, #eef3f8);
+
+  /* 状态 */
+  --dp-ok: light-dark(#4a7a58, #8fbf8f);
+  --dp-danger: light-dark(#c0503f, #e08a76);
+  --dp-danger-bg: light-dark(#f7e7e1, #3a2622);
+  --dp-danger-border: light-dark(#d9b3a8, #5c3a31);
+
+  /* 影 */
+  --dp-shadow: light-dark(rgba(30, 36, 45, 0.16), rgba(0, 0, 0, 0.45));
+  --dp-shadow-strong: light-dark(rgba(30, 36, 45, 0.26), rgba(0, 0, 0, 0.6));
+  --dp-scrim: light-dark(rgba(30, 36, 45, 0.28), rgba(8, 7, 6, 0.55));
+}

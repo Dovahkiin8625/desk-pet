@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>定时任务</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      /*
+       * 定时任务的面板与独立窗口。
+       *
+       * 颜色、控件走 theme.css 的变量（页面里链着那份），
+       * 这里只管**排版**：表单怎么排、任务条目怎么摆。
+       */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body.dp-page {
+        background: var(--dp-bg);
+      }
+      .wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px;
+      }
+      /* 独立窗口：铺满整个视口（高度是用户拖出来的）。 */
+      body:not(.dp-panel) .wrap {
+        min-height: 100vh;
+        box-sizing: border-box;
+      }
+
+      .card {
+        padding: 12px 14px;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius-lg);
+        background: var(--dp-surface);
+      }
+      .card h2 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+
+      .field {
+        display: grid;
+        grid-template-columns: 74px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        margin: 8px 0;
+      }
+      /* 藏起来的那几栏（换一个定时方式就换一组）：**真的藏起来**。 */
+      .field[hidden] {
+        display: none;
+      }
+      .field > span {
+        color: var(--dp-text-soft);
+        font-size: 13px;
+      }
+      .field.stack {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .inline > span {
+        color: var(--dp-text-soft);
+        font-size: 13px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .field textarea {
+        font: inherit;
+        width: 100%;
+        min-height: 62px;
+        padding: 7px 10px;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        background: var(--dp-input-bg);
+        color: inherit;
+        resize: vertical;
+      }
+      .field textarea:focus {
+        outline: 2px solid var(--dp-accent);
+        outline-offset: 1px;
+      }
+      .field .dp-input {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .field .narrow {
+        width: 96px;
+      }
+      .acts {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .acts button {
+        font-size: 12px;
+        padding: 4px 11px;
+      }
+
+      /* ---------------- 任务条目 ---------------- */
+      .task {
+        padding: 10px 12px;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius-lg);
+        background: var(--dp-surface);
+      }
+      .task + .task {
+        margin-top: 8px;
+      }
+      .task.off {
+        opacity: 0.55;
+      }
+      .task .head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .task .name {
+        flex: 1;
+        min-width: 0;
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .badge {
+        flex: none;
+        padding: 1px 8px;
+        border-radius: 999px;
+        background: var(--dp-accent);
+        color: var(--dp-accent-ink);
+        font-size: 11px;
+      }
+      .task .meta {
+        margin-top: 4px;
+        color: var(--dp-text-faint);
+        font-size: 12px;
+      }
+      .task .result {
+        margin-top: 2px;
+        color: var(--dp-text-soft);
+        font-size: 12px;
+        word-break: break-word;
+      }
+      .task .acts {
+        margin-top: 8px;
+      }
+      .empty {
+        padding: 18px 12px;
+        text-align: center;
+        color: var(--dp-text-faint);
+        font-size: 13px;
+      }
+
+      .gear {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border: none;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--dp-text-soft);
+        cursor: pointer;
+        font-size: 15px;
+      }
+      .gear:hover {
+        background: var(--dp-surface-hover);
+      }
+
+      /* 宽版（独立窗口）：表单排成两列。 */
+      @media (min-width: 560px) {
+        .form-grid {
+          grid-template-columns: 1fr 1fr;
+          gap: 0 18px;
+        }
+        .form-grid .field.stack {
+          grid-column: 1 / -1;
+        }
+        .form-grid .field {
+          grid-template-columns: 64px minmax(0, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body class="dp-page">
+    <div class="wrap">
+      <section class="card">
+        <h2 id="formTitle">新建定时任务</h2>
+        <div class="form-grid">
+          <div class="field">
+            <span>名字</span>
+            <input id="fName" class="dp-input" type="text" placeholder="备份" />
+          </div>
+          <div class="field">
+            <span>做什么</span>
+            <div class="dp-segmented" id="fType">
+              <button type="button" data-v="command" aria-pressed="true">跑命令</button>
+              <button type="button" data-v="agent" aria-pressed="false">让桌宠去做</button>
+            </div>
+          </div>
+          <div class="field stack">
+            <span id="fContentLabel">命令</span>
+            <textarea id="fContent" placeholder="python D:\scripts\backup.py"></textarea>
+          </div>
+          <div class="field">
+            <span>什么时候</span>
+            <div class="dp-segmented" id="fSched">
+              <button type="button" data-v="interval" aria-pressed="true">每隔</button>
+              <button type="button" data-v="daily" aria-pressed="false">每天</button>
+              <button type="button" data-v="cron" aria-pressed="false">cron</button>
+            </div>
+          </div>
+          <div class="field" id="pInterval">
+            <span>间隔</span>
+            <div class="inline">
+              <input id="fMinutes" class="dp-input narrow" type="number" min="1" value="30" />
+              <span>分钟</span>
+            </div>
+          </div>
+          <div class="field" id="pDaily" hidden>
+            <span>时刻</span>
+            <input id="fAt" class="dp-input narrow" type="time" value="09:00" />
+          </div>
+          <div class="field" id="pCron" hidden>
+            <span>cron</span>
+            <input id="fCron" class="dp-input" type="text" placeholder="0 9 * * 1-5" />
+          </div>
+        </div>
+        <div class="acts">
+          <button id="fSave" type="button" class="dp-button primary">存下</button>
+          <button id="fCancel" type="button" class="dp-button" hidden>取消</button>
+        </div>
+      </section>
+
+      <section id="list"></section>
+    </div>
+
+    <footer class="dp-footer">
+      <span class="grow" id="info"></span>
+      <button type="button" class="gear" id="gearBtn" title="设置" aria-label="设置"><span class="icon" data-icon="settings"></span></button>
+    </footer>
+
+    <script type="module" src="scheduler.js"></script>
+  </body>
+</html>

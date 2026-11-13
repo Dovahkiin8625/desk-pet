@@ -21,11 +21,11 @@ import { createToolRegistry } from '../../src/main/assistant/agent/tools/registr
 
 const ROOT = process.cwd();
 const PLUGINS_DIR = join(ROOT, 'plugins');
-const IDS = ['pomodoro', 'todos', 'reminders', 'system', 'weather'];
+const IDS = ['pomodoro', 'todos', 'reminders', 'scheduler', 'system', 'weather'];
 /** 全部内置插件（窗口尺寸那条要对着每一个查）。 */
 const ALL_IDS = [
   'chat-history', 'clipboard', 'music-player', 'pomodoro', 'reminders',
-  'screen-recorder', 'system', 'tasks', 'todos', 'weather',
+  'scheduler', 'screen-recorder', 'system', 'tasks', 'todos', 'weather',
 ];
 
 test('内置插件：清单都合法', async () => {

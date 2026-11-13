@@ -1,3 +1,5 @@
+import { iconSvg } from './icons.js';
+
 /**
  * 设置抽屉。
  *
@@ -41,7 +43,7 @@ export function createDrawer({ button = null, container = null, top = 0, title =
   closeBtn.type = 'button';
   closeBtn.className = 'dp-drawer-close';
   closeBtn.title = '关上';
-  closeBtn.textContent = '✕';
+  closeBtn.append(iconSvg('close'));
 
   head.append(heading, closeBtn);
 

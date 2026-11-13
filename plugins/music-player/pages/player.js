@@ -9,10 +9,14 @@
  * - **报高度**：面板里报一个定高（窗口不跟内容一高一低），独立窗口按内容。
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+import { hydrateIcons, iconSvg, setIcon } from '/src/renderer/ui/icons.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
 import { formatTime } from '../lib/format.js';
 
 const surface = bindSurface();
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
 
 // 面板里与独立窗口里，高度策略是**相反**的（见 body.dp-panel）。
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
@@ -203,7 +207,7 @@ function renderNow() {
   el.dur.textContent = formatTime(state.duration);
   const ratio = state.duration > 0 ? state.position / state.duration : 0;
   el.trackFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
-  el.play.textContent = state.playing ? '⏸' : '▶';
+  setIcon(el.play, state.playing ? 'pause' : 'play');
   renderSettings();
   renderNowCover();
 }
@@ -278,7 +282,7 @@ function renderSide() {
         const remove = document.createElement('button');
         remove.className = 'rm';
         remove.type = 'button';
-        remove.textContent = '×';
+        remove.append(iconSvg('close'));
         remove.title = '删掉这个歌单';
         remove.dataset.id = playlist.id;
         li.append(remove);
@@ -310,7 +314,7 @@ function renderCovers() {
       img.alt = '';
       cover.append(img);
     } else {
-      cover.textContent = '♪';
+      setIcon(cover, 'note');
     }
   }
 }
@@ -349,7 +353,7 @@ function renderList() {
       const remove = document.createElement('button');
       remove.className = 'rm';
       remove.type = 'button';
-      remove.textContent = '×';
+      remove.append(iconSvg('close'));
       remove.title = '从这个列表里拿掉';
       remove.dataset.file = track.file;
       li.append(remove);

@@ -6,28 +6,24 @@
  *
  * 插件页面在 app:// 下，用绝对路径链它：
  *   <link rel="stylesheet" href="/src/renderer/ui/theme.css">
+ *
+ * **颜色不在这一份里**：颜色由主题决定，主题是
+ * `src/renderer/ui/themes/<id>.css` 里的一个文件——
+ * **加一个主题就是放一个文件进去**（不用改这里，也不用改别处的代码）。
+ * 那些文件由主进程拼成一张样式表，这里 @import 进来。
+ *
+ * 两个维度：
+ * - **主题**（data-theme）：用哪一套配色；
+ * - **明暗**（data-scheme）：那一套配色里的浅色还是深色。
+ *
+ * 主题的 css 里，浅色与深色并排写在 light-dark() 里，
+ * data-scheme 决定取哪一边。
  */
 
+@import url('/__dp-themes.css');
+
 :root {
-  color-scheme: light;
-
-  /* 底与面 */
-  --dp-bg: #fffdf8;
-  --dp-surface: #f6f2e7;
-  --dp-surface-hover: #efe9d8;
-  --dp-border: #c9c1b0;
-  --dp-border-soft: #ece6d8;
-
-  /* 字 */
-  --dp-text: #2b2a26;
-  --dp-text-soft: #8a8272;
-  --dp-text-faint: #a9a294;
-
-  /* 强调 */
-  --dp-accent: #d9c9a3;
-  --dp-accent-strong: #bda87c;
-  --dp-accent-ink: #4a3f2a;
-  --dp-danger: #c9503f;
+  color-scheme: light dark;
 
   /* 形 */
   --dp-radius-sm: 7px;
@@ -38,12 +34,51 @@
   --dp-font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
 }
 
+/*
+ * 明暗。
+ *
+ * 只改 color-scheme——颜色本身在主题的 light-dark() 里，
+ * 原生控件（滚动条、勾选框）也跟着它变。
+ */
+:root[data-scheme='light'] { color-scheme: light; }
+:root[data-scheme='dark'] { color-scheme: dark; }
+
 /* 宿主自己的页面（面板、插件壳）用这一份字体与底色。 */
 .dp-page {
   font: var(--dp-font);
   color: var(--dp-text);
   background: var(--dp-bg);
 }
+
+/*
+ * 图标。
+ *
+ * 边长跟着字号走（1em）：图标不会因为放在哪儿就忽大忽小。
+ */
+.dp-icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* 图标占位：图标装在它里面。 */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/*
+ * 藏起来的东西必须真的不占地方。
+ *
+ * 上面那些 .icon / .dp-icon 都写了 display，
+ * 作者样式会盖掉浏览器默认的 [hidden] { display: none }——
+ * 那样「藏起来」的按钮还占着地方，看着像点不动。
+ */
+[hidden] { display: none !important; }
 
 /* 按钮 */
 .dp-button {
@@ -88,7 +123,7 @@
 .dp-segmented button[aria-pressed='true'] {
   background: var(--dp-bg);
   color: var(--dp-text);
-  box-shadow: 0 1px 2px rgba(40, 34, 24, 0.12);
+  box-shadow: 0 1px 2px var(--dp-shadow);
 }
 
 /* 开关 */
@@ -125,7 +160,7 @@
   padding: 7px 10px;
   border: 1px solid var(--dp-border);
   border-radius: var(--dp-radius);
-  background: #fff;
+  background: var(--dp-input-bg);
   color: inherit;
 }
 .dp-input:focus { outline: 2px solid var(--dp-accent); outline-offset: 1px; }
@@ -139,7 +174,7 @@
 .dp-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(40, 34, 24, 0.28);
+  background: var(--dp-scrim);
   z-index: 5;
 }
 .dp-scrim[hidden] { display: none; }
@@ -154,7 +189,7 @@
   flex-direction: column;
   background: var(--dp-bg);
   border-left: 1px solid var(--dp-border);
-  box-shadow: -6px 0 18px rgba(40, 34, 24, 0.18);
+  box-shadow: -6px 0 18px var(--dp-shadow);
   transform: translateX(100%);
   transition: transform 0.18s ease;
   z-index: 6;
@@ -180,6 +215,9 @@
   color: var(--dp-text-soft);
   cursor: pointer;
   font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .dp-drawer-close:hover { background: var(--dp-surface-hover); }
 

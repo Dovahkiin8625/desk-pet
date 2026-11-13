@@ -6,6 +6,14 @@
  * 所以这里用的是裸 API：`window.plugin`。
  */
 import { formatTime } from '../lib/format.js';
+import { hydrateIcons, setIcon } from '/src/renderer/ui/icons.js';
+import { bindTheme } from '/src/renderer/ui/theme.js';
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变（小部件是独立窗口，得自己接）。
+bindTheme(window.plugin);
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,7 +47,7 @@ function applyState(next) {
   el.time.textContent = `${formatTime(state.position)} / ${formatTime(state.duration)}`;
   const ratio = state.duration > 0 ? state.position / state.duration : 0;
   el.fill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
-  el.play.textContent = state.playing ? '⏸' : '▶';
+  setIcon(el.play, state.playing ? 'pause' : 'play');
   el.lyrics.setAttribute('aria-pressed', state.lyricsOpen ? 'true' : 'false');
 }
 

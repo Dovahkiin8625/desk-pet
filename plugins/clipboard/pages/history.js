@@ -12,9 +12,13 @@
  * 每敲一个字就往返一次，键盘会跟手得像在等网络。
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+import { hydrateIcons, iconSvg } from '/src/renderer/ui/icons.js';
 import { accelFromEvent, describeAccel } from '../lib/accelerator.js';
 
 const surface = bindSurface();
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
 
 /**
  * 面板里与独立窗口里，高度策略是**相反**的：
@@ -168,7 +172,7 @@ function row(item) {
   pin.type = 'button';
   pin.className = item.pinned ? 'pin on' : 'pin';
   pin.title = item.pinned ? '取消固定' : '固定（不会被淘汰）';
-  pin.textContent = '📌';
+  pin.append(iconSvg('pin'));
   pin.addEventListener('click', (event) => {
     event.stopPropagation();
     void act('pin', { id: item.id });
@@ -189,7 +193,7 @@ function row(item) {
   del.type = 'button';
   del.className = 'del';
   del.title = '删掉';
-  del.textContent = '✕';
+  del.append(iconSvg('close'));
   del.addEventListener('click', (event) => {
     event.stopPropagation();
     void act('remove', { id: item.id });

@@ -15,7 +15,7 @@ const FEATURES = Object.freeze([
   {
     id: BUILTIN_SETTINGS,
     name: '设置',
-    icon: '⚙️',
+    icon: 'settings',
     description: '桌宠的偏好与语音配置',
     keywords: ['settings', 'setting', 'shezhi', 'sz', '设置', '偏好', '配置'],
   },

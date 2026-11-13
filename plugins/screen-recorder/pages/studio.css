@@ -259,6 +259,7 @@ body:not(.dp-panel) .studio {
 
 .region-icon {
   font-size: 20px;
+  color: var(--dp-text-faint);
   line-height: 1.2;
 }
 
@@ -369,7 +370,7 @@ body:not(.dp-panel) .studio {
 .scrim {
   position: absolute;
   inset: 0;
-  background: rgba(30, 26, 18, 0.28);
+  background: var(--dp-scrim);
   z-index: 5;
 }
 
@@ -388,7 +389,7 @@ body:not(.dp-panel) .studio {
   flex-direction: column;
   background: var(--dp-bg);
   border-left: 1px solid var(--dp-border);
-  box-shadow: -8px 0 24px rgba(40, 34, 24, 0.16);
+  box-shadow: -8px 0 24px var(--dp-shadow);
   transform: translateX(100%);
   transition: transform 0.16s ease-out;
 }
@@ -418,6 +419,9 @@ body:not(.dp-panel) .studio {
 }
 
 .drawer-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   font-size: 14px;

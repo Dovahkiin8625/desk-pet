@@ -91,7 +91,7 @@ test.describe('设置页分区与记忆', () => {
     await rm(USER_DATA, { recursive: true, force: true });
   });
 
-  test('分区是六个，外观与桌面助理并成了「桌宠」', async () => {
+  test('分区是七个，外观与桌面助理并成了「桌宠」', async () => {
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA);
     try {
@@ -100,7 +100,7 @@ test.describe('设置页分区与记忆', () => {
       const labels = await settings.evaluate(() =>
         Array.from(document.querySelectorAll('#nav .nav-tab .nav-label')).map((el) => el.textContent.trim())
       );
-      expect(labels, '分区和设计对不上').toEqual(['桌宠', '语音', '对话', '记忆', '插件', '系统']);
+      expect(labels, '分区和设计对不上').toEqual(['桌宠', '外观', '语音', '对话', '记忆', '插件', '系统']);
 
       // 「桌宠」这一节里既有形象，也有它什么时候出声。
       await settings.click('#tab-pet');
@@ -108,6 +108,12 @@ test.describe('设置页分区与记忆', () => {
       expect(await settings.isVisible('#model'), '桌宠这一节里没有形象').toBe(true);
       expect(await settings.isVisible('#chime'), '桌宠这一节里没有整点报时').toBe(true);
       expect(await settings.isVisible('#greeting'), '桌宠这一节里没有启动问候').toBe(true);
+
+      // 「外观」这一节里是主题与明暗。
+      await settings.click('#tab-appearance');
+      await settings.waitForSelector('#panel-appearance:not([hidden])', { timeout: 10000 });
+      expect(await settings.locator('input[name="mode"]').count(), '外观这一节里没有明暗').toBe(3);
+      expect(await settings.locator('#themeSelect option').count(), '外观这一节里没有主题清单').toBeGreaterThan(0);
     } finally {
       await app.close();
     }

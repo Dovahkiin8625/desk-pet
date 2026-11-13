@@ -1,5 +1,7 @@
 import { renderPage } from '../ui/blocks.js';
 import { createDrawer } from '../ui/drawer.js';
+import { hydrateIcons } from '../ui/icons.js';
+import { applyThemeToFrame, bindTheme } from '../ui/theme.js';
 
 /**
  * 插件的独立窗口。
@@ -27,6 +29,13 @@ const modeEl = document.getElementById('mode');
 const resetSizeEl = document.getElementById('reset-size');
 const closeEl = document.getElementById('close');
 const frameEl = document.getElementById('plugin-frame');
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变。
+// 插件页面在 iframe 里（另一个文档），主题得转过去。
+bindTheme(window.plugin, () => applyThemeToFrame(frameEl));
 
 /**
  * 设置抽屉：插件的配置项都在这里，不占正文。
@@ -180,7 +189,11 @@ if (src) {
   // 而插件页面要先把监听器挂上——页面还没加载完时推过来，就没人接了
   // （插件页面通过 `parent.plugin.onData(...)` 订阅，走的是同一个
   // 渲染进程里 preload 的监听器）。
-  frameEl.addEventListener('load', () => reportReady(), { once: true });
+  frameEl.addEventListener('load', () => {
+    // 页面装好了：把当前主题给它（iframe 是另一个文档，主题不会自己穿过去）。
+    applyThemeToFrame(frameEl);
+    reportReady();
+  }, { once: true });
 } else {
   // 没有自带页面：壳自己画积木，现在就可以报到。
   reportReady();

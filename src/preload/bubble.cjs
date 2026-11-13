@@ -9,6 +9,12 @@ const { contextBridge, ipcRenderer } = require('electron');
  * 多给它一份能力就多一份攻击面——它跟主进程之间还隔着 IPC。
  */
 contextBridge.exposeInMainWorld('bubble', {
+  // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
+  // 当前的主题：刚打开的窗口靠它知道自己该是浅色还是深色。
+  theme: () => ipcRenderer.invoke('pet:theme'),
+  onTheme: (cb) => {
+    ipcRenderer.on('pet:theme', (_e, theme) => cb(theme));
+  },
   // 主进程要显示一条消息。
   onShow: (cb) => {
     ipcRenderer.on('pet:bubbleShow', (_e, message) => cb(message));

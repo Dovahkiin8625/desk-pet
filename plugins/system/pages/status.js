@@ -10,8 +10,12 @@
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
+import { hydrateIcons } from '/src/renderer/ui/icons.js';
 
 const surface = bindSurface();
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
 
 /**
  * 面板里与独立窗口里，高度策略是**相反**的：

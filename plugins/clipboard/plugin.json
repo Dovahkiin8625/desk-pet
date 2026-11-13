@@ -1,7 +1,7 @@
 {
   "id": "clipboard",
   "name": "剪贴板",
-  "icon": "📋",
+  "icon": "clipboard",
   "description": "剪贴板历史：双击就贴出去，能固定",
   "keywords": ["clipboard", "copy", "jiban", "jb", "剪贴板", "复制"],
   "window": {

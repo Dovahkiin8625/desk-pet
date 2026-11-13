@@ -11,6 +11,7 @@
  */
 
 import { TOOL_NAME_RE, TOOL_RISK_ORDER } from './assistant.js';
+import { normalizeIconName } from './icons.js';
 
 /** 插件清单的文件名：每个插件目录下都要有这一个。 */
 export const PLUGIN_MANIFEST_FILE = 'plugin.json';
@@ -118,7 +119,7 @@ export function normalizeWindowSpec(raw, mode) {
  * （见 README「独立窗口与桌面小部件」）。
  *
  * 合成的这份刻意「朴素」：不置顶、不自动刷新，
- * 用户想置顶可以点标题栏的 📌。
+ * 用户想置顶可以点标题栏的图钉。
  */
 export function defaultWindowSpec(manifest) {
   return {
@@ -381,7 +382,9 @@ export function validateManifest(raw) {
   const manifest = {
     id,
     name,
-    icon: str(raw.icon).trim() || '•',
+    // 图标是**图标集里的名字**（见 shared/icons.js），不是 emoji。
+    // 认不出来的（写错了、或者写的是个 emoji）退回默认的那个。
+    icon: normalizeIconName(raw.icon),
     description: str(raw.description).trim(),
     keywords,
     entry,

@@ -103,9 +103,9 @@ export default function createMusicPlayerPlugin(ctx) {
         `${formatTime(s.position)} / ${formatTime(s.duration)}${s.playing ? '' : '（暂停）'}`
       ),
       ctx2.ui.buttonsBlock([
-        { id: 'prev', label: '⏮' },
-        { id: 'toggle', label: s.playing ? '⏸' : '▶', primary: true },
-        { id: 'next', label: '⏭' },
+        { id: 'prev', label: '上一首', icon: 'prev' },
+        { id: 'toggle', label: s.playing ? '暂停' : '播放', icon: s.playing ? 'pause' : 'play', primary: true },
+        { id: 'next', label: '下一首', icon: 'next' },
         { id: 'lyrics', label: s.lyricsOpen ? '关掉桌面歌词' : '桌面歌词' },
       ])
     );
@@ -135,8 +135,8 @@ export default function createMusicPlayerPlugin(ctx) {
       ),
       ctx2.ui.inputBlock('playlist-create', '新歌单的名字', '新建歌单'),
       ctx2.ui.buttonsBlock([
-        { id: 'playlist-add-files', label: '♫ 添加歌曲' },
-        { id: 'playlist-add-folder', label: '📁 添加文件夹' },
+        { id: 'playlist-add-files', label: '添加歌曲', icon: 'music' },
+        { id: 'playlist-add-folder', label: '添加文件夹', icon: 'folder' },
       ])
     );
     return ctx2.ui.makePage({

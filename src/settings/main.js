@@ -18,6 +18,9 @@ import {
   applyBatchApproval,
   selectAllState,
 } from './toolBatch.js';
+import { hydrateIcons, iconSvg } from '../renderer/ui/icons.js';
+import { bindTheme } from '../renderer/ui/theme.js';
+import { normalizeMode } from '../shared/theme.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
@@ -27,6 +30,16 @@ const opacityInput = document.getElementById('opacity');
 const scaleVal = document.getElementById('scaleVal');
 const opacityVal = document.getElementById('opacityVal');
 const status = document.getElementById('status');
+
+// 外观
+const themeSelect = document.getElementById('themeSelect');
+const modeRadios = Array.from(document.querySelectorAll('input[name="mode"]'));
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变（用户在别处换了主题，这边也换）。
+bindTheme(window.pet);
 
 // 桌面助理
 //
@@ -211,8 +224,8 @@ function setRangeFill(input) {
 // 左边是目录，右边一次只显示一节。
 // ---------------------------------------------------------------------------
 
-/** 六个分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['pet', 'voice', 'chat', 'memory', 'plugins', 'system'];
+/** 分区：目录项、面板、摘要都用同一个 key。 */
+const SECTION_KEYS = ['pet', 'appearance', 'voice', 'chat', 'memory', 'plugins', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -373,6 +386,87 @@ function refreshNavSummaries() {
     dockEnabledBox.checked,
   ];
   setSummary('system', `${systemFlags.filter(Boolean).length}/${systemFlags.length}`);
+
+  // 外观：主题名（目录那一列只放得下两个字）。
+  setSummary('appearance', themeLabel(themeSelect.value));
+}
+
+// ---------------------------------------------------------------------------
+// 主题
+//
+// 全局一套：面板、插件窗口、气泡、插件自己的页面都跟着换。
+// 主进程那边把主题广播过来，渲染层据此给 <html> 标 data-theme 与 data-scheme。
+//
+// 主题是 themes 目录里的 css 文件：加一个文件就是一个新主题，
+// 这里的下拉框按那个目录填。
+// ---------------------------------------------------------------------------
+
+/** 主题清单：[{ id, label }]。 */
+let themeList = [];
+
+/**
+ * 最近一次发出去的设置。
+ *
+ * 广播回来的那份不直接盖住用户刚点的——那会把刚选的又弹回去。
+ * 认出「这是我自己刚改的那次广播」就跳过。
+ */
+let themeSent = '';
+let modeSent = '';
+
+/** 把主题定到控件上（并记住，免得广播把它弹回去）。 */
+function setTheme(theme) {
+  const ids = themeList.map((t) => t.id);
+  const value = ids.includes(theme) ? theme : ids[0];
+  if (value) themeSelect.value = value;
+  themeSent = value;
+}
+
+/** 把明暗定到控件上。 */
+function setMode(mode) {
+  const value = normalizeMode(mode);
+  for (const radio of modeRadios) radio.checked = radio.value === value;
+  modeSent = value;
+}
+
+/** 下拉框按主题清单填。 */
+function fillThemeSelect() {
+  themeSelect.textContent = '';
+  for (const t of themeList) {
+    const opt = document.createElement('option');
+    opt.value = t.id;
+    opt.textContent = t.label;
+    themeSelect.appendChild(opt);
+  }
+}
+
+/** 主题 id → 给人看的名字。 */
+function themeLabel(id) {
+  return themeList.find((t) => t.id === id)?.label || id;
+}
+
+themeSelect.addEventListener('change', async () => {
+  const value = themeSelect.value;
+  themeSent = value;
+  refreshNavSummaries();
+  try {
+    // 只送被改的那一个字段：整份送回会把用户没碰过的设置一起写回去。
+    await window.pet.saveSettings({ theme: value });
+  } catch (err) {
+    show(`保存失败：${err?.message || err}`, 'error');
+  }
+});
+
+for (const radio of modeRadios) {
+  radio.addEventListener('change', async () => {
+    const value = radio.value;
+    modeSent = value;
+    refreshNavSummaries();
+    try {
+      await window.pet.saveSettings({ mode: value });
+    } catch (err) {
+      show(`保存失败：${err?.message || err}`, 'error');
+    }
+  });
 }
 
 // init() 完成之前收到的广播：先记下来，等初始化结束时统一应用。
@@ -778,7 +872,7 @@ function toolRow(t) {
 
   const arrow = document.createElement('span');
   arrow.className = 'tool-arrow';
-  arrow.textContent = '›';
+  arrow.append(iconSvg('forward'));
 
   li.append(select, text, arrow);
   li.addEventListener('click', () => openToolDrawer(t));
@@ -1024,7 +1118,7 @@ function renderFacts(facts) {
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'fact-del';
-    del.textContent = '×';
+    del.append(iconSvg('close'));
     del.title = '忘掉这一条';
     del.setAttribute('aria-label', `忘掉这一条：${fact}`);
     del.addEventListener('click', () => {
@@ -1524,7 +1618,7 @@ function renderPlugins(list) {
 
     const icon = document.createElement('span');
     icon.className = 'p-icon';
-    icon.textContent = p.icon || '•';
+    icon.append(iconSvg(p.icon || 'plugin'));
 
     const text = document.createElement('span');
     text.className = 'p-text';
@@ -1869,6 +1963,9 @@ async function init() {
     if (typeof s.modelId === 'string') setModel(s.modelId);
     if (typeof s.scale === 'number') updateScale(s.scale);
     if (typeof s.opacity === 'number') updateOpacity(s.opacity);
+    // 主题：只认**不是自己刚改的那次**广播——否则用户点完就被弹回去。
+    if (typeof s.theme === 'string' && s.theme !== themeSent) setTheme(s.theme);
+    if (typeof s.mode === 'string' && s.mode !== modeSent) setMode(s.mode);
     // 系统状态可能变了（比如开机自启写注册表失败、开关被回退）：
     // 广播里带的是**设置**，不是系统状态——重新拉一次才能拿到 lastError。
     //
@@ -1963,6 +2060,11 @@ async function init() {
   setModel(latest.modelId);
   updateScale(latest.scale);
   updateOpacity(latest.opacity);
+  // 主题清单要先到，下拉框才知道有哪些可选。
+  themeList = (await window.pet.themes?.()) || [];
+  fillThemeSelect();
+  setTheme(latest.theme);
+  setMode(latest.mode);
   // 工具清单要先到，「工具」页才能按来源分组画出来。
   agentToolList = (agentTools || []).filter((t) => t?.name);
   applyAssistantState(assistantState);

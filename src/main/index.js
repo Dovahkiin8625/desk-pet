@@ -1,4 +1,4 @@
-import { app, screen, dialog, BrowserWindow, shell, globalShortcut } from 'electron';
+import { app, screen, dialog, BrowserWindow, shell, globalShortcut, nativeTheme } from 'electron';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stat } from 'node:fs/promises';
@@ -29,6 +29,8 @@ import { createSystemSearch } from './systemSearch.js';
 import { createAssistant } from './assistant/index.js';
 import { createSystemController } from './system.js';
 import { visibleRectOnScreen } from '../shared/petRect.js';
+import { normalizeMode, resolveMode, MODE_SYSTEM, DEFAULT_THEME } from '../shared/theme.js';
+import { listThemes as loadThemeList } from './themes.js';
 import { makeHotkeyCapture } from './hotkeyCapture.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
@@ -52,6 +54,10 @@ let win = null;
 let tray = null;
 let settings = null;
 let saveTimer = null;
+// 主题清单：themes 目录里的 css 文件——加一个文件就是一个新主题。
+let themes = [];
+// 最近一次广播出去的明暗：系统换了深浅色时，据此判断要不要再广播一次。
+let lastScheme = null;
 // 气泡窗口与桌面助理：第二、三部分（交互与动作系统 / 桌面助理功能）。
 let bubble = null;
 let assistant = null;
@@ -171,6 +177,8 @@ function persist(patch) {
   // 会留在内存里，而落盘时被夹紧——内存与磁盘不一致，
   // getSettings 会把越界值发回渲染层，Task 9 还会拿它去调 win.setOpacity()。
   const prevScale = settings.scale;
+  const prevTheme = settings.theme;
+  const prevMode = settings.mode;
   settings = sanitizeSettings({ ...settings, ...patch });
   // 缩放变了：窗口尺寸必须跟着变。
   //
@@ -194,6 +202,8 @@ function persist(patch) {
   }
   // 系统级开关要立刻生效：落盘是 300ms 之后的事，生效是现在。
   system?.applySettings?.(settings);
+  // 主题变了：所有窗口都要跟着换（面板、插件窗口、气泡……）。
+  if (settings.theme !== prevTheme || settings.mode !== prevMode) applyTheme();
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -214,6 +224,60 @@ function broadcastSettings(next) {
   if (settingsWin && !settingsWin.isDestroyed()) targets.push(settingsWin);
   for (const w of targets) {
     w.webContents.send('pet:settingsChanged', next);
+  }
+}
+
+/**
+ * 当前生效的主题。
+ *
+ * 主题是 themes 目录里的 css 文件：加一个文件就是一个新主题。
+ * 设置里选的那个主题文件没了（被删了），就退回目录里的第一个。
+ */
+function activeTheme() {
+  const found = themes.find((t) => t.id === settings?.theme);
+  return found || themes[0] || { id: DEFAULT_THEME, label: DEFAULT_THEME };
+}
+
+/**
+ * 当前这一帧用哪一套配色。
+ *
+ * scheme 是**定下来的**明暗：「跟随系统」在主进程就变成浅色或深色——
+ * 渲染层不必（也不能）自己去问系统，那边的答案不一定跟得上。
+ */
+function themeState() {
+  const mode = normalizeMode(settings?.mode);
+  return {
+    theme: activeTheme().id,
+    mode,
+    scheme: resolveMode(mode, nativeTheme.shouldUseDarkColors),
+  };
+}
+
+/**
+ * 换主题。
+ *
+ * 三件事：
+ * 1. `nativeTheme.themeSource` 跟着换——原生控件（滚动条、下拉框）跟它走；
+ * 2. 广播给所有窗口——渲染层据此给 <html> 标 data-theme 与 data-scheme，
+ *    已经开着的窗口立刻换（等 1 的通知不一定靠得住）；
+ * 3. 刚打开的窗口第一帧就是对的——主题是主进程标到页面上的
+ *    （见 protocol.js），不用等渲染层。
+ *
+ * **不碰窗口自己的底色**：桌宠、面板、气泡的窗口是透明的，
+ * 一旦被涂上颜色，桌宠背后就多出一块不透明的底。
+ */
+function applyTheme() {
+  const mode = normalizeMode(settings?.mode);
+  try {
+    nativeTheme.themeSource = mode;
+  } catch {
+    /* 平台不支持就算了：界面照样能换色 */
+  }
+  const state = themeState();
+  lastScheme = state.scheme;
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    w.webContents.send('pet:theme', state);
   }
 }
 
@@ -841,12 +905,19 @@ function openSettings() {
     maximizable: false,
     title: '桌面宠物 · 设置',
     autoHideMenuBar: true,
+    // 先藏着，等页面画好再显示：窗口自己的底色是白的，
+    // 深色主题下先亮一下再变暗，很扎眼。
+    show: false,
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: join(ROOT, 'src', 'preload', 'index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  settingsWin.once('ready-to-show', () => {
+    if (settingsWin && !settingsWin.isDestroyed()) settingsWin.show();
   });
   // 快捷键录制：主进程接管按键捕获。
   //
@@ -947,14 +1018,30 @@ app.whenReady().then(async () => {
   registerAppProtocol(ROOT, {
     [USER_MODELS_URL_PREFIX]: userModelsDir(app.getPath('userData')),
     [USER_PLUGINS_URL_PREFIX]: userPluginsDir(app.getPath('userData')),
-  });
+  }, () => themeState());
   settings = await loadSettings(app.getPath('userData'));
+  // 主题清单：themes 目录里的 css 文件（设置页来问的时候会现读一遍）。
+  themes = await loadThemeList(ROOT);
+  // 主题要在窗口起来之前就定好：原生控件（滚动条、菜单）也跟它走。
+  applyTheme();
+  // 「跟随系统」：系统的深浅色变了，界面也得跟着变。
+  nativeTheme.on('updated', () => {
+    if (normalizeMode(settings?.mode) !== MODE_SYSTEM) return;
+    const next = resolveMode(MODE_SYSTEM, nativeTheme.shouldUseDarkColors);
+    // 明暗没变就别再广播：改 themeSource 本身也会触发这个事件。
+    if (next === lastScheme) return;
+    applyTheme();
+  });
   // 没有保存过位置时不需要在这里补默认值：createPetWindow 的 restorePosition
   // 会用真实视口尺寸算出主显示器右下角，避免这里写死 300×560 与清单脱节。
   // 必须先注册 IPC 再创建窗口：渲染层页面一加载就会调用 getSettings()，
   // 顺序反了会撞上 "No handler registered"。
   registerIpc({
     getSettings: () => settings,
+    getTheme: () => themeState(),
+    // 主题清单：启动时读的那一份。新加的主题文件要重启才认——
+    // 样式表是页面加载时一起拉下来的，列出来了却没样式比不列更糟。
+    listThemes: () => themes,
     saveSettings: (patch) => {
       const next = persist(patch);
       // 缩放/透明度改完必须立刻广播给宠物窗口，

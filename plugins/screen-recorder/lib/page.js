@@ -9,12 +9,13 @@
 
 export const MODE_LABELS = Object.freeze({ screen: '全屏', region: '选区', window: '窗口' });
 
-/** 模式按钮：当前模式前面加个 ●，其余是 ○。 */
+/** 模式按钮：当前模式是实心圆，其余是空心圆。 */
 function modeButtons(ui, mode) {
   return ui.buttonsBlock(
     Object.keys(MODE_LABELS).map((key) => ({
       id: `mode:${key}`,
-      label: `${mode === key ? '●' : '○'} ${MODE_LABELS[key]}`,
+      label: MODE_LABELS[key],
+      icon: mode === key ? 'dot' : 'ring',
     }))
   );
 }
@@ -49,7 +50,7 @@ export function buildPanelPage(ui, data) {
           actionId: 'select-target',
           label: t.label,
           // 选中的那个标出来：不然用户不知道这次会录哪一块。
-          hint: t.id === selectedId ? '● 已选' : t.hint || '',
+          hint: t.id === selectedId ? '已选' : t.hint || '',
         }))
       )
     );
@@ -65,8 +66,8 @@ export function buildPanelPage(ui, data) {
 
   blocks.push(
     ui.buttonsBlock([
-      { id: 'format:video', label: `${config.format === 'video' ? '●' : '○'} 视频` },
-      { id: 'format:gif', label: `${config.format === 'gif' ? '●' : '○'} GIF` },
+      { id: 'format:video', label: '视频', icon: config.format === 'video' ? 'dot' : 'ring' },
+      { id: 'format:gif', label: 'GIF', icon: config.format === 'gif' ? 'dot' : 'ring' },
     ])
   );
 

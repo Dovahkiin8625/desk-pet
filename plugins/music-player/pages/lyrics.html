@@ -50,16 +50,34 @@
         position: absolute;
         top: 2px;
         right: 6px;
+        width: 18px;
+        height: 18px;
         border: none;
         background: transparent;
         color: rgba(255, 255, 255, 0.35);
-        font-size: 13px;
-        line-height: 1;
-        padding: 4px 6px;
+        padding: 0;
         border-radius: 6px;
         cursor: pointer;
         opacity: 0;
         transition: opacity 0.2s ease;
+      }
+      /* 那个叉是 CSS 画的：歌词窗走 file://，用不了宿主那份图标模块。 */
+      #close::before,
+      #close::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 9px;
+        height: 1.5px;
+        border-radius: 1px;
+        background: currentColor;
+      }
+      #close::before {
+        transform: translate(-50%, -50%) rotate(45deg);
+      }
+      #close::after {
+        transform: translate(-50%, -50%) rotate(-45deg);
       }
       #stage:hover #close {
         opacity: 1;
@@ -83,7 +101,7 @@
   <body>
     <div id="stage">
       <div id="viewport"><div id="lines"></div></div>
-      <button id="close" type="button" title="收起">✕</button>
+      <button id="close" type="button" title="收起" aria-label="收起"></button>
     </div>
     <script src="lyrics.js"></script>
   </body>

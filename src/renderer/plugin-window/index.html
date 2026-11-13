@@ -8,7 +8,6 @@
   <style>
     /* 颜色走 theme.css 的变量（上面链着那份）：
        改主题只改一处，这一页跟着变。 */
-    :root { color-scheme: light; }
     html, body {
       margin: 0; padding: 0;
       background: transparent;
@@ -24,16 +23,16 @@
       display: flex;
       flex-direction: column;
       background: var(--dp-bg);
-      border: 1px solid #d8d2c4;
+      border: 1px solid var(--dp-border);
       border-radius: 12px;
-      box-shadow: 0 6px 18px rgba(40, 34, 24, 0.22);
+      box-shadow: 0 6px 18px var(--dp-shadow-strong);
       overflow: hidden;
     }
     /* 小部件：透明、无边框——它是**画在桌面上的**，不是一个窗口。 */
     #win[data-mode="widget"] {
-      background: rgba(255, 253, 248, 0.92);
+      background: color-mix(in srgb, var(--dp-bg) 92%, transparent);
       border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(40, 34, 24, 0.18);
+      box-shadow: 0 4px 12px var(--dp-shadow);
     }
 
     #head {
@@ -60,12 +59,12 @@
       background: transparent;
       color: var(--dp-text-soft);
       cursor: pointer;
-      font-size: 14px;
+      font-size: 15px;
     }
-    #head button:hover { background: #f1ead8; color: #3a352c; }
+    #head button:hover { background: var(--dp-surface-active); color: var(--dp-text); }
     #head button[hidden] { display: none; }
     /* 置顶开着时高亮：一眼看得出它压着别人。 */
-    #head button.on { background: #efe4c6; color: #7a6a4f; }
+    #head button.on { background: var(--dp-accent-soft); color: var(--dp-accent-ink); }
 
     #subtitle {
       padding: 6px 14px 0;
@@ -83,7 +82,7 @@
     #status {
       padding: 7px 14px;
       border-top: 1px solid var(--dp-border-soft);
-      color: #7a6a4f;
+      color: var(--dp-text-soft);
       font-size: 12px;
       min-height: 30px;
       flex: none;
@@ -107,11 +106,11 @@
     <header id="head">
       <span id="title"></span>
       <span class="spacer"></span>
-      <button id="settings" title="设置" hidden>⚙</button>
-      <button id="reset-size" title="恢复默认尺寸">⛶</button>
-      <button id="pin" title="置顶">📌</button>
-      <button id="mode" title="变成桌面小部件">▣</button>
-      <button id="close" title="关闭">✕</button>
+      <button id="settings" title="设置" hidden><span class="icon" data-icon="settings"></span></button>
+      <button id="reset-size" title="恢复默认尺寸"><span class="icon" data-icon="frame"></span></button>
+      <button id="pin" title="置顶"><span class="icon" data-icon="pin"></span></button>
+      <button id="mode" title="变成桌面小部件"><span class="icon" data-icon="shrink"></span></button>
+      <button id="close" title="关闭"><span class="icon" data-icon="close"></span></button>
     </header>
     <div id="subtitle"></div>
     <div id="body"></div>

@@ -5,22 +5,23 @@
   <title>系统监控</title>
   <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
   <style>
-    :root { color-scheme: light; }
+
     html, body {
       margin: 0; padding: 0;
       background: transparent;
       overflow: hidden;
       height: 100%;
-      font: 12px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-      color: #2b2a26;
+      font: var(--dp-font);
+      font-size: 12px;
+      color: var(--dp-text);
     }
     .row { display: flex; align-items: center; gap: 6px; }
-    .row .name { width: 26px; color: #8a8272; flex: none; }
+    .row .name { width: 26px; color: var(--dp-text-soft); flex: none; }
     .bar {
       flex: 1;
       height: 6px;
       border-radius: 3px;
-      background: #ece6d8;
+      background: var(--dp-surface-sunken);
       overflow: hidden;
     }
     .bar i {
@@ -28,16 +29,16 @@
       height: 100%;
       width: 0;
       border-radius: 3px;
-      background: #c9b98c;
+      background: var(--dp-accent);
       transition: width 0.4s ease;
     }
-    .bar.hot i { background: #d08a6a; }
-    .row .val { width: 34px; text-align: right; color: #6d6558; flex: none; font-variant-numeric: tabular-nums; }
+    .bar.hot i { background: var(--dp-danger); }
+    .row .val { width: 34px; text-align: right; color: var(--dp-text-soft); flex: none; font-variant-numeric: tabular-nums; }
     #foot {
       display: flex;
       align-items: center;
       gap: 6px;
-      color: #8a8272;
+      color: var(--dp-text-soft);
       font-size: 11px;
     }
     #foot .spacer { flex: 1; }
@@ -48,8 +49,8 @@
     <div id="head" class="dp-widget-head">
       <span>系统监控</span>
       <span class="spacer"></span>
-      <button id="expand" title="变回独立窗口">▣</button>
-      <button id="close" title="收起来">✕</button>
+      <button id="expand" title="变回独立窗口"><span class="icon" data-icon="frame"></span></button>
+      <button id="close" title="收起来"><span class="icon" data-icon="close"></span></button>
     </div>
     <div class="row">
       <span class="name">CPU</span>

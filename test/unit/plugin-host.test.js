@@ -83,7 +83,7 @@ test('清单：没写的东西用默认值补齐', () => {
   const { ok, value } = validateManifest({ id: 'todos', name: '待办' });
   assert.ok(ok);
   assert.equal(value.entry, 'main.js');
-  assert.equal(value.icon, '•');
+  assert.equal(value.icon, 'plugin');
   assert.deepEqual(value.keywords, []);
   // 没写 `window` / `widget` 段 = 没有这两种形态（不是「有，默认值」）。
   assert.equal(value.window, null);

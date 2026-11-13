@@ -5,10 +5,7 @@
     <title>音乐播放器</title>
     <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
     <style>
-      :root {
-        color-scheme: light;
-      }
-      html,
+html,
       body {
         margin: 0;
         padding: 0;
@@ -16,8 +13,9 @@
         height: 100%;
         background: transparent;
         overflow: hidden;
-        font: 12px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-        color: #2b2a26;
+        font: var(--dp-font);
+        font-size: 12px;
+        color: var(--dp-text);
       }
       #title {
         font-weight: 600;
@@ -27,7 +25,7 @@
         white-space: nowrap;
       }
       #sub {
-        color: #8a8272;
+        color: var(--dp-text-soft);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -35,7 +33,7 @@
       #bar {
         height: 5px;
         border-radius: 3px;
-        background: #ece6d8;
+        background: var(--dp-surface-sunken);
         overflow: hidden;
         cursor: pointer;
         /* 进度条要能点（跳到那儿）：别跟着窗口一起拖。 */
@@ -46,7 +44,7 @@
         height: 100%;
         width: 0;
         border-radius: 3px;
-        background: #c9b98c;
+        background: var(--dp-accent);
         transition: width 0.25s linear;
       }
       #foot {
@@ -58,9 +56,12 @@
         flex: 1;
       }
       #foot button {
-        border: 1px solid #d8d2c4;
-        background: #fffdf8;
-        color: #6d6558;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--dp-border);
+        background: var(--dp-bg);
+        color: var(--dp-text-soft);
         border-radius: 6px;
         min-width: 26px;
         height: 22px;
@@ -70,15 +71,15 @@
         cursor: pointer;
       }
       #foot button:hover {
-        background: #efe6d2;
+        background: var(--dp-accent-soft);
       }
       #lyrics[aria-pressed='true'] {
-        background: #c9b98c;
-        border-color: #bda87c;
-        color: #4a3f2a;
+        background: var(--dp-accent);
+        border-color: var(--dp-accent-strong);
+        color: var(--dp-accent-ink);
       }
       #time {
-        color: #8a8272;
+        color: var(--dp-text-soft);
         font-variant-numeric: tabular-nums;
       }
     </style>
@@ -88,16 +89,16 @@
       <div id="head" class="dp-widget-head">
         <span>音乐播放器</span>
         <span class="spacer"></span>
-        <button id="expand" title="变回独立窗口">▣</button>
-        <button id="close" title="收起来">✕</button>
+        <button id="expand" title="变回独立窗口"><span class="icon" data-icon="frame"></span></button>
+        <button id="close" title="收起来"><span class="icon" data-icon="close"></span></button>
       </div>
       <div id="title">还没在放</div>
       <div id="sub">还没有歌</div>
       <div id="bar" title="点一下跳到那儿"><i id="fill"></i></div>
       <div id="foot">
-        <button id="prev" type="button" title="上一首">⏮</button>
-        <button id="play" type="button" title="播放 / 暂停">▶</button>
-        <button id="next" type="button" title="下一首">⏭</button>
+        <button id="prev" type="button" title="上一首"><span class="icon" data-icon="prev"></span></button>
+        <button id="play" type="button" title="播放 / 暂停"><span class="icon" data-icon="play"></span></button>
+        <button id="next" type="button" title="下一首"><span class="icon" data-icon="next"></span></button>
         <span id="time">00:00 / 00:00</span>
         <span class="spacer"></span>
         <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>

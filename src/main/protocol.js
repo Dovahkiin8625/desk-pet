@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { resolveStaticFile, isDeniedResource } from './staticFiles.js';
+import { THEMES_STYLESHEET_PATH, buildThemesStylesheet } from './themes.js';
 
 const SCHEME = 'app';
 const HOST = 'bundle';
@@ -57,10 +58,22 @@ export function registerSchemePrivileges() {
  * virtualRoots：「URL 前缀 → 真实目录」的映射。用户导入的 Live2D 模型
  * 存在 userData（安装目录可能没有写权限），于是给它一个虚拟根，
  * 渲染层就能用和内置模型一样的 URL 形状去取它们。
+ *
+ * getThemeState：返回当前主题（{ theme, scheme }）或 null。
+ * 页面里会把它标到 <html> 上——页面第一帧就是对的，
+ * 不用等渲染层拿到主题再改一次。
  */
-export function registerAppProtocol(rootDir, virtualRoots = null) {
+export function registerAppProtocol(rootDir, virtualRoots = null, getThemeState = null) {
   electronProtocol().handle(SCHEME, async (request) => {
     const url = new URL(request.url);
+    // 主题样式表：themes 目录里的每个主题拼成一张。
+    if (url.pathname === THEMES_STYLESHEET_PATH) {
+      const css = await buildThemesStylesheet(rootDir);
+      return new Response(css, {
+        status: 200,
+        headers: { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
     // 拒绝以点开头的路径段（.git / .env / .superpowers 等）。
     // app:// 的根是整个项目目录，渲染层不需要这些内容，
     // 一旦漏出去就能读到版本库配置与本地密钥文件。
@@ -98,6 +111,10 @@ export function registerAppProtocol(rootDir, virtualRoots = null) {
     try {
       const data = await readFile(resolved.filePath);
       const type = MIME[extname(resolved.filePath).toLowerCase()] || 'application/octet-stream';
+      if (type.startsWith('text/html')) {
+        const html = stampTheme(data.toString('utf8'), getThemeState?.());
+        return new Response(html, { status: 200, headers: { 'content-type': type } });
+      }
       return new Response(data, { status: 200, headers: { 'content-type': type } });
     } catch (err) {
       // 权限错误、EISDIR 等与「文件不存在」必须区分，否则无法排查。
@@ -111,4 +128,18 @@ export function registerAppProtocol(rootDir, virtualRoots = null) {
 
 export function appUrl(pathname) {
   return `${SCHEME}://${HOST}${pathname.startsWith('/') ? '' : '/'}${pathname}`;
+}
+
+/**
+ * 把当前主题标到页面的 <html> 上。
+ *
+ * 不这么做的话，页面要等渲染层拿到主题才换色——
+ * 中间那一帧是**没上色的**（白底黑字），窗口一开就能看见。
+ */
+function stampTheme(html, state) {
+  if (!state?.theme) return html;
+  return html.replace(/<html(\s[^>]*)?>/i, (_m, attrs = '') => {
+    const kept = attrs.replace(/\s+data-(theme|scheme)="[^"]*"/gi, '');
+    return `<html${kept} data-theme="${state.theme}" data-scheme="${state.scheme}">`;
+  });
 }

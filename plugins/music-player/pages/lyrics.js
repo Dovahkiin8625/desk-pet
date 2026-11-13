@@ -31,7 +31,7 @@ function paint() {
   lines.forEach((line, i) => {
     const p = document.createElement('p');
     p.className = i === index ? 'line current' : 'line';
-    p.textContent = line.text || '♪';
+    p.textContent = line.text || '';
     linesEl.append(p);
   });
   center();

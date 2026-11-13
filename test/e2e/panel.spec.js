@@ -108,7 +108,10 @@ test.describe('插件面板', () => {
       expect(ids).not.toContain('manager');
 
       // 输入框：图标与提示都要说清楚「它也能聊天」。
-      await expect(panel.locator('#searchbar .icon')).toHaveText('✨');
+      // 图标是 SVG（不是 emoji）：画出来了、而且不是文字。
+      const sparkIcon = panel.locator('#searchbar .icon svg');
+      await expect(sparkIcon).toHaveCount(1);
+      await expect(panel.locator('#searchbar .icon')).toHaveText('');
       const placeholder = await panel.locator('#query').getAttribute('placeholder');
       expect(placeholder).toContain('搜索');
       expect(placeholder).toContain('跟桌宠说点什么');

@@ -52,6 +52,9 @@
 .block-buttons button {
   font: inherit;
   padding: 6px 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--dp-border);
   border-radius: var(--dp-radius);
   background: var(--dp-surface);

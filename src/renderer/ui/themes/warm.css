@@ -1,0 +1,45 @@
+/*
+ * 主题：暖阳
+ *
+ * 米色底 + 黄铜强调色。浅色与深色并排写在 light-dark() 里，
+ * 明暗由 <html data-scheme> 决定（见 src/renderer/ui/theme.css）。
+ *
+ * 加一个主题：照这份抄一份放进这个目录就行——
+ * 文件名就是主题 id，文件头里的「主题：名字」是设置页显示的名字。
+ */
+
+:root[data-theme='warm'] {
+  /* 底与面 */
+  --dp-bg: light-dark(#fffdf8, #1c1b18);
+  --dp-surface: light-dark(#f6f2e7, #232220);
+  --dp-surface-2: light-dark(#f1ecdd, #2b2926);
+  --dp-surface-hover: light-dark(#efe9d8, #33302c);
+  --dp-surface-active: light-dark(#f1ead8, #3a362f);
+  --dp-surface-sunken: light-dark(#ece6d8, #161513);
+  --dp-border: light-dark(#c9c1b0, #403c36);
+  --dp-border-soft: light-dark(#ece6d8, #302d29);
+  --dp-border-strong: light-dark(#c9c1b0, #4d4840);
+  --dp-input-bg: light-dark(#fffdf8, #232220);
+
+  /* 字 */
+  --dp-text: light-dark(#2b2a26, #e8e3d9);
+  --dp-text-soft: light-dark(#8a8272, #a79f90);
+  --dp-text-faint: light-dark(#a9a294, #7f7769);
+
+  /* 强调 */
+  --dp-accent: light-dark(#d9c9a3, #8a7a58);
+  --dp-accent-strong: light-dark(#bda87c, #b39c72);
+  --dp-accent-soft: light-dark(#efe6d2, #3d3629);
+  --dp-accent-ink: light-dark(#4a3f2a, #f7f1e4);
+
+  /* 状态 */
+  --dp-ok: light-dark(#4f7a52, #8fbf8f);
+  --dp-danger: light-dark(#c9503f, #e08a76);
+  --dp-danger-bg: light-dark(#f7e7e1, #3a2622);
+  --dp-danger-border: light-dark(#d9b3a8, #5c3a31);
+
+  /* 影 */
+  --dp-shadow: light-dark(rgba(40, 34, 24, 0.18), rgba(0, 0, 0, 0.45));
+  --dp-shadow-strong: light-dark(rgba(40, 34, 24, 0.28), rgba(0, 0, 0, 0.6));
+  --dp-scrim: light-dark(rgba(40, 34, 24, 0.28), rgba(8, 7, 6, 0.55));
+}

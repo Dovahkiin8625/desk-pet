@@ -1,3 +1,5 @@
+import { bindTheme } from '../ui/theme.js';
+
 const bubble = document.getElementById('bubble');
 const titleEl = document.getElementById('title');
 const textEl = document.getElementById('text');
@@ -199,6 +201,9 @@ function cancelStream(payload) {
   streamId = null;
   streamNode = null;
 }
+
+// 主题：跟着主进程推来的那一套变。
+bindTheme(window.bubble);
 
 window.bubble?.onShow?.((message) => render(message));
 

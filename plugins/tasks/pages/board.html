@@ -365,9 +365,23 @@
       /* 小部件专属的按钮（变回窗口、收起）：别的地方不显示。 */
       .widget-btn {
         display: none;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--dp-text-soft);
+        cursor: pointer;
       }
       body.dp-widget #head .widget-btn {
         display: inline-flex;
+      }
+      .widget-btn:hover {
+        background: var(--dp-surface-hover);
+        color: var(--dp-text);
       }
       body.dp-widget #head h1 {
         font-size: 12px;
@@ -436,8 +450,8 @@
           <h1>后台任务</h1>
           <span id="counts"></span>
           <span class="spacer"></span>
-          <button id="widget-expand" class="widget-btn" title="变回独立窗口">▣</button>
-          <button id="widget-close" class="widget-btn" title="收起来">✕</button>
+          <button id="widget-expand" class="widget-btn" title="变回独立窗口"><span class="icon" data-icon="frame"></span></button>
+          <button id="widget-close" class="widget-btn" title="收起来"><span class="icon" data-icon="close"></span></button>
         </div>
 
         <!-- 总览层 -->
@@ -461,7 +475,7 @@
         <!-- 详情层 -->
         <div id="detail" hidden>
           <div id="detail-bar">
-            <button id="detail-back" class="dp-button">← 返回</button>
+            <button id="detail-back" class="dp-button"><span class="icon" data-icon="back"></span>返回</button>
             <span id="detail-id"></span>
           </div>
           <div id="detail-title"></div>

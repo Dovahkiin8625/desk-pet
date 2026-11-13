@@ -8,6 +8,15 @@
  * 数据从 onTick 来，动作走 window.* 那几个方法。
  */
 
+import { hydrateIcons } from '/src/renderer/ui/icons.js';
+import { bindTheme } from '/src/renderer/ui/theme.js';
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变（小部件是独立窗口，得自己接）。
+bindTheme(window.plugin);
+
 const cpuBar = document.getElementById('cpu-bar');
 const cpuVal = document.getElementById('cpu-val');
 const memBar = document.getElementById('mem-bar');

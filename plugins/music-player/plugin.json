@@ -1,7 +1,7 @@
 {
   "id": "music-player",
   "name": "音乐播放器",
-  "icon": "🎵",
+  "icon": "music",
   "description": "播放本地音乐，带桌面小部件与桌面歌词",
   "keywords": ["music", "player", "yinyue", "gequ", "gq", "ci", "cixiao", "lyrics", "音乐", "播放器", "歌曲", "歌词", "小部件"],
   "skill": {

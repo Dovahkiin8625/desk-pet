@@ -110,6 +110,9 @@
         width: 26px;
         height: 26px;
         padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 15px;
         line-height: 1;
         color: var(--dp-text-soft);
@@ -153,6 +156,9 @@
         width: 24px;
         height: 24px;
         padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 15px;
         line-height: 1;
         color: var(--dp-text-soft);
@@ -229,6 +235,8 @@
         opacity: 0;
         transition: opacity 0.12s;
         padding: 0 6px;
+        display: flex;
+        align-items: center;
         font-size: 14px;
         line-height: 1;
         color: var(--dp-text-faint);
@@ -245,7 +253,7 @@
         color: var(--dp-danger);
       }
       #playlists li.on .rm:hover {
-        background: rgba(0, 0, 0, 0.08);
+        background: var(--dp-surface-hover);
         color: var(--dp-accent-ink);
       }
       #pl-new-row {
@@ -325,6 +333,9 @@
       }
       #play-all {
         padding: 6px 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-size: 13px;
         border: 1px solid var(--dp-accent-strong);
         border-radius: 999px;
@@ -346,6 +357,9 @@
         width: 28px;
         height: 28px;
         padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 15px;
         line-height: 1;
         color: var(--dp-text-soft);
@@ -460,6 +474,8 @@
         opacity: 0;
         transition: opacity 0.12s;
         padding: 0 7px;
+        display: flex;
+        align-items: center;
         font-size: 14px;
         line-height: 1;
         color: var(--dp-text-faint);
@@ -476,7 +492,7 @@
         color: var(--dp-danger);
       }
       #list li.on .rm:hover {
-        background: rgba(0, 0, 0, 0.08);
+        background: var(--dp-surface-hover);
         color: var(--dp-accent-ink);
       }
       #empty {
@@ -590,6 +606,9 @@
         width: 32px;
         height: 32px;
         padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 14px;
         line-height: 1;
         color: var(--dp-text);
@@ -621,7 +640,7 @@
         background: var(--dp-bg);
         border: 1px solid var(--dp-border);
         border-radius: var(--dp-radius);
-        box-shadow: 0 8px 24px rgba(40, 34, 24, 0.18);
+        box-shadow: 0 8px 24px var(--dp-shadow);
       }
       #menu[hidden] {
         display: none;
@@ -668,7 +687,7 @@
         background: var(--dp-bg);
         border: 1px solid var(--dp-border);
         border-radius: var(--dp-radius-lg);
-        box-shadow: 0 14px 36px rgba(40, 34, 24, 0.3);
+        box-shadow: 0 14px 36px var(--dp-shadow-strong);
       }
       #song-close {
         position: absolute;
@@ -677,6 +696,9 @@
         width: 26px;
         height: 26px;
         padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 14px;
         line-height: 1;
         color: var(--dp-text-soft);
@@ -843,14 +865,14 @@
   <body data-view="playlists">
     <div id="app">
       <header id="topbar">
-        <button id="back" type="button" title="回到歌单">‹</button>
-        <span id="brand">🎵</span>
+        <button id="back" type="button" title="回到歌单"><span class="icon" data-icon="back"></span></button>
+        <span id="brand" class="icon" data-icon="music"></span>
         <span id="title">音乐播放器</span>
         <div id="search">
-          <span class="ico">🔍</span>
+          <span class="ico icon" data-icon="search"></span>
           <input id="filter" type="text" placeholder="搜歌名或歌手" autocomplete="off" />
         </div>
-        <button id="gear" type="button" title="设置" aria-label="设置">⚙</button>
+        <button id="gear" type="button" title="设置" aria-label="设置"><span class="icon" data-icon="settings"></span></button>
       </header>
 
       <div id="body">
@@ -858,7 +880,7 @@
           <div id="side-head">
             <span>播放列表</span>
             <span class="spacer"></span>
-            <button id="pl-new" type="button" title="新建歌单">＋</button>
+            <button id="pl-new" type="button" title="新建歌单"><span class="icon" data-icon="plus"></span></button>
           </div>
           <div id="pl-new-row" hidden>
             <input id="pl-name" type="text" placeholder="歌单名字" maxlength="40" />
@@ -871,18 +893,16 @@
         <main id="main">
           <div id="main-head">
             <div id="main-cover" title="换封面">
-              <span id="main-cover-fallback">♪</span>
+              <span id="main-cover-fallback" class="icon" data-icon="note"></span>
               <img id="main-cover-img" alt="" hidden />
             </div>
             <div id="main-text">
               <div id="main-name">默认列表</div>
               <div id="main-count">0 首</div>
             </div>
-            <button id="play-all" type="button" disabled>▶ 播放全部</button>
-            <button id="pl-song" class="add" type="button" title="从本地选歌加进这个歌单">♫</button>
-            <button id="pl-folder" class="add" type="button" title="把一个文件夹里的歌加进这个歌单">
-              📁
-            </button>
+            <button id="play-all" type="button" disabled><span class="icon" data-icon="play"></span>播放全部</button>
+            <button id="pl-song" class="add" type="button" title="从本地选歌加进这个歌单"><span class="icon" data-icon="music"></span></button>
+            <button id="pl-folder" class="add" type="button" title="把一个文件夹里的歌加进这个歌单"><span class="icon" data-icon="folder"></span></button>
           </div>
           <ul id="list"></ul>
           <div id="empty">这个列表还没有歌。用上面的按钮把歌加进来。</div>
@@ -892,7 +912,7 @@
       <footer id="bar">
         <div id="now" title="点开看这一首">
           <div id="now-cover">
-            <span id="now-cover-fallback">♪</span>
+            <span id="now-cover-fallback" class="icon" data-icon="note"></span>
             <img id="now-cover-img" alt="" hidden />
           </div>
           <div id="now-text">
@@ -909,9 +929,9 @@
           </div>
         </div>
         <div id="controls">
-          <button id="prev" type="button" title="上一首">⏮</button>
-          <button id="play" type="button" title="播放 / 暂停">▶</button>
-          <button id="next" type="button" title="下一首">⏭</button>
+          <button id="prev" type="button" title="上一首"><span class="icon" data-icon="prev"></span></button>
+          <button id="play" type="button" title="播放 / 暂停"><span class="icon" data-icon="play"></span></button>
+          <button id="next" type="button" title="下一首"><span class="icon" data-icon="next"></span></button>
         </div>
       </footer>
     </div>
@@ -923,9 +943,9 @@
 
     <div id="song-page" hidden>
       <div id="song-card">
-        <button id="song-close" type="button" title="关掉">✕</button>
+        <button id="song-close" type="button" title="关掉"><span class="icon" data-icon="close"></span></button>
         <div id="song-cover">
-          <span id="song-cover-fallback">♪</span>
+          <span id="song-cover-fallback" class="icon" data-icon="note"></span>
           <img id="song-cover-img" alt="" hidden />
         </div>
         <div id="song-name">还没在放</div>

@@ -2,6 +2,7 @@ import { readJson, writeJson } from './store.js';
 import { SCALE_RANGE } from '../shared/viewport.js';
 import { DOCK_SIDES } from './edgeDock.js';
 import { HOTKEY_SLOTS } from '../shared/hotkeys.js';
+import { DEFAULT_THEME, DEFAULT_MODE, MODES } from '../shared/theme.js';
 
 /** 各快捷键槽位的默认值（见 shared/hotkeys.js）。 */
 const DEFAULT_HOTKEYS = Object.fromEntries(HOTKEY_SLOTS.map((s) => [s.key, s.defaultValue]));
@@ -20,6 +21,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   scale: 1.0,
   opacity: 1.0,
   visible: true,
+  // 界面主题：themes 目录里的 css 文件（加一个文件就是一个新主题）。
+  theme: DEFAULT_THEME,
+  // 明暗：浅色 / 深色 / 跟随系统。
+  mode: DEFAULT_MODE,
   // —— 系统与工程化（第六部分）——
   // 开机自启默认关：开机就跑一个桌宠是用户没要求的行为。
   autoLaunch: false,
@@ -80,6 +85,10 @@ export function sanitizeSettings(raw) {
   out.scale = clampNumber(raw.scale, SCALE_RANGE.min, SCALE_RANGE.max, DEFAULT_SETTINGS.scale);
   out.opacity = clampNumber(raw.opacity, OPACITY_RANGE.min, OPACITY_RANGE.max, DEFAULT_SETTINGS.opacity);
   if (typeof raw.visible === 'boolean') out.visible = raw.visible;
+  // 主题：主题是 themes 目录里的 css 文件，认不出来的（文件被删了）
+  // 由主进程退回目录里的第一个——这里只管别把垃圾写进磁盘。
+  if (typeof raw.theme === 'string' && raw.theme.trim() !== '') out.theme = raw.theme.trim();
+  if (MODES.includes(raw.mode)) out.mode = raw.mode;
   // —— 系统与工程化（第六部分）——
   if (typeof raw.autoLaunch === 'boolean') out.autoLaunch = raw.autoLaunch;
   if (typeof raw.clickThrough === 'boolean') out.clickThrough = raw.clickThrough;

@@ -1,3 +1,5 @@
+import { iconSvg } from './icons.js';
+
 /**
  * 插件页面里「块」的画法。
  *
@@ -60,7 +62,7 @@ export function renderBlock(block, { onAction } = {}) {
           const remove = document.createElement('button');
           remove.className = 'remove';
           remove.type = 'button';
-          remove.textContent = '✕';
+          remove.append(iconSvg('close'));
           remove.title = '删除';
           remove.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -104,7 +106,9 @@ export function renderBlock(block, { onAction } = {}) {
       for (const item of block.items || []) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.textContent = item.label || '确定';
+        // 图标是可选的：有就画在文字前面（图标名见 shared/icons.js）。
+        if (item.icon) btn.append(iconSvg(item.icon));
+        btn.append(document.createTextNode(item.label || '确定'));
         if (item.primary) btn.classList.add('primary');
         btn.addEventListener('click', () => {
           onAction?.(item.id || '', '');

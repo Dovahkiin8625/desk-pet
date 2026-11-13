@@ -2,6 +2,8 @@ import { searchPlugins, searchItems } from '../../shared/fuzzy.js';
 import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
 import { renderPage } from '../ui/blocks.js';
 import { createDrawer } from '../ui/drawer.js';
+import { hydrateIcons, iconSvg } from '../ui/icons.js';
+import { applyThemeToFrame, bindTheme } from '../ui/theme.js';
 
 /**
  * 插件面板的页面。
@@ -19,11 +21,12 @@ import { createDrawer } from '../ui/drawer.js';
  * 查回来的结果再在本地打分排序。
  */
 
-/** 真实图标还没抽出来时的替身符号。 */
-const APP_ICON = '🖥';
-const FILE_ICON = '📄';
-const SETTINGS_ICON = '⚙️';
-const WEB_ICON = '🌐';
+/** 真实图标还没抽出来时的替身（图标名，见 src/shared/icons.js）。 */
+const APP_ICON = 'monitor';
+const FILE_ICON = 'file';
+const SETTINGS_ICON = 'settings';
+const WEB_ICON = 'globe';
+const CHAT_ICON = 'chat';
 
 /**
  * 「内容里命中」的文件的分数。
@@ -49,6 +52,13 @@ const closeEl = document.getElementById('close');
 const detachEl = document.getElementById('detach');
 const widgetEl = document.getElementById('widget');
 const pluginFrameEl = document.getElementById('plugin-frame');
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变。
+// 插件页面在 iframe 里（另一个文档），主题得转过去。
+bindTheme(window.panel, () => applyThemeToFrame(pluginFrameEl));
 
 /**
  * 设置抽屉：插件的配置项都在这里，不占正文。
@@ -280,7 +290,7 @@ function toRow(kind, hit) {
     row.id = String(plugin.id || '');
     row.name = String(plugin.name || '');
     row.desc = String(plugin.description || '');
-    row.icon = plugin.icon || '•';
+    row.icon = plugin.icon || 'plugin';
     return row;
   }
   if (kind === 'app') {
@@ -354,7 +364,7 @@ function renderResults() {
       id: 'chat',
       name: '和桌宠聊天',
       desc: '直接对桌宠说话',
-      icon: '💬',
+      icon: CHAT_ICON,
       score: 0,
       field: '',
       positions: [],
@@ -387,7 +397,7 @@ function renderResults() {
     iconBox.className = 'icon-box';
     const fallback = document.createElement('span');
     fallback.className = 'icon';
-    fallback.textContent = row.icon || '•';
+    fallback.append(iconSvg(row.icon || 'plugin'));
     iconBox.append(fallback);
     // 有路径的条目（程序、文件）能抽出真正的图标：先摆占位，图标到了再换。
     if (row.path) {
@@ -569,6 +579,8 @@ function renderPlugin(page) {
     if (pluginFrameEl.getAttribute('src') !== meta.pageUrl) {
       pluginFrameEl.setAttribute('src', meta.pageUrl);
     }
+    // 页面装好了：把当前主题给它（iframe 是另一个文档，主题不会自己穿过去）。
+    pluginFrameEl.addEventListener('load', () => applyThemeToFrame(pluginFrameEl), { once: true });
     // 面板的 surface 请求要带着插件 id（宿主才知道该把数据送给谁）。
     window.panel?.setCurrentPlugin?.(currentPluginId);
   } else {

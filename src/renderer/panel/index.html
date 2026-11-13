@@ -8,7 +8,6 @@
   <style>
     /* 颜色走 theme.css 的变量（上面链着那份）：
        改主题只改一处，这一页跟着变。 */
-    :root { color-scheme: light; }
     html {
       margin: 0; padding: 0;
       background: transparent;
@@ -40,9 +39,9 @@
       display: flex;
       flex-direction: column;
       background: var(--dp-bg);
-      border: 1px solid #d8d2c4;
-      border-radius: 14px;
-      box-shadow: 0 4px 10px rgba(40, 34, 24, 0.28);
+      border: 1px solid var(--dp-border);
+      border-radius: var(--dp-radius-lg);
+      box-shadow: 0 4px 10px var(--dp-shadow-strong);
       font: var(--dp-font);
       color: var(--dp-text);
       overflow: hidden;
@@ -100,7 +99,7 @@
       border-radius: 9px;
       cursor: pointer;
     }
-    #results li.active { background: #f1ead8; }
+    #results li.active { background: var(--dp-surface-active); }
     #results li:hover { background: var(--dp-surface); }
     /* 结果行左边的图标位：抽得出真图标时放图片，抽不出就放符号。 */
     #results .icon-box {
@@ -116,7 +115,7 @@
     #results .icon-img { width: 18px; height: 18px; object-fit: contain; }
     #results .icon-img[hidden] { display: none; }
     #results .name { font-weight: 600; }
-    #results .name mark { background: #f0dfa8; color: inherit; border-radius: 3px; padding: 0 1px; }
+    #results .name mark { background: var(--dp-accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
     #results .desc {
       margin-left: auto;
       color: var(--dp-text-soft);
@@ -136,7 +135,7 @@
     #search-status {
       padding: 7px 14px;
       border-top: 1px solid var(--dp-border-soft);
-      color: #7a6a4f;
+      color: var(--dp-text-soft);
       font-size: 12px;
       min-height: 30px;
     }
@@ -169,9 +168,9 @@
       background: transparent;
       color: var(--dp-text-soft);
       cursor: pointer;
-      font-size: 14px;
+      font-size: 15px;
     }
-    #plugin-head button:hover { background: #f1ead8; color: #3a352c; }
+    #plugin-head button:hover { background: var(--dp-surface-active); color: var(--dp-text); }
     /* 这个插件不支持的形态：按钮整个藏掉，不留一个点不动的灰按钮。 */
     #plugin-head button[hidden] { display: none; }
     #plugin-body {
@@ -186,7 +185,7 @@
     #plugin-status {
       padding: 7px 14px;
       border-top: 1px solid var(--dp-border-soft);
-      color: #7a6a4f;
+      color: var(--dp-text-soft);
       font-size: 12px;
       min-height: 30px;
     }
@@ -215,7 +214,7 @@
   <div id="panel" data-view="search">
     <section id="search">
       <div id="searchbar">
-        <span class="icon">✨</span>
+        <span class="icon" data-icon="sparkles"></span>
         <input id="query" type="text" placeholder="搜索插件、程序、文件、设置，或跟桌宠说点什么…" autocomplete="off" spellcheck="false" />
       </div>
       <div id="results-wrap">
@@ -227,13 +226,13 @@
 
     <section id="plugin" class="surface" hidden>
       <header id="plugin-head">
-        <button id="back" title="返回搜索">←</button>
+        <button id="back" title="返回搜索"><span class="icon" data-icon="back"></span></button>
         <span id="plugin-title"></span>
         <span class="spacer"></span>
-        <button id="settings" title="设置" hidden>⚙</button>
-        <button id="detach" title="在新窗口打开" hidden>↗</button>
-        <button id="widget" title="变成桌面小部件" hidden>▣</button>
-        <button id="close" title="关闭">✕</button>
+        <button id="settings" title="设置" hidden><span class="icon" data-icon="settings"></span></button>
+        <button id="detach" title="在新窗口打开" hidden><span class="icon" data-icon="external"></span></button>
+        <button id="widget" title="变成桌面小部件" hidden><span class="icon" data-icon="shrink"></span></button>
+        <button id="close" title="关闭"><span class="icon" data-icon="close"></span></button>
       </header>
       <div id="plugin-subtitle"></div>
       <div id="plugin-body"></div>

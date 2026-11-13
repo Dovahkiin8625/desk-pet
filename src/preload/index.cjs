@@ -3,6 +3,14 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 // 白名单 API：只暴露渲染层真正需要的能力，其余一律不开放。
 // Task 8 会追加 moveWindowBy，Task 9 会追加 onSettingsChanged。
 contextBridge.exposeInMainWorld('pet', {
+  // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
+  // 当前的主题：刚打开的窗口靠它知道自己该用哪一套配色。
+  theme: () => ipcRenderer.invoke('pet:theme'),
+  onTheme: (cb) => {
+    ipcRenderer.on('pet:theme', (_e, theme) => cb(theme));
+  },
+  // 有哪些主题可选（设置页的下拉框按这个填）。
+  themes: () => ipcRenderer.invoke('pet:themes'),
   getSettings: () => ipcRenderer.invoke('pet:getSettings'),
   saveSettings: (patch) => ipcRenderer.invoke('pet:saveSettings', patch),
   listModels: () => ipcRenderer.invoke('pet:listModels'),

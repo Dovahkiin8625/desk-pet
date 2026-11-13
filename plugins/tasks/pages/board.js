@@ -1,4 +1,6 @@
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+import { hydrateIcons } from '/src/renderer/ui/icons.js';
+import { bindTheme } from '/src/renderer/ui/theme.js';
 import {
   activeTasks,
   countByStatus,
@@ -34,6 +36,12 @@ import {
  */
 
 const surface = bindSurface();
+
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
+
+// 主题：跟着主进程推来的那一套变（小部件是独立窗口，得自己接）。
+bindTheme(window.plugin);
 
 const isWidget = surface.mode === 'widget';
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));

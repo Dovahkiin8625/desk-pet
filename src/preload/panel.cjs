@@ -66,6 +66,12 @@ ipcRenderer.on('panel:surface:data', (_e, payload) => deliverData(payload));
 ipcRenderer.on('panel:surface:tick', (_e, payload) => deliverTick(payload));
 
 contextBridge.exposeInMainWorld('panel', {
+  // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
+  // 当前的主题：刚打开的窗口靠它知道自己该是浅色还是深色。
+  theme: () => ipcRenderer.invoke('pet:theme'),
+  onTheme: (cb) => {
+    ipcRenderer.on('pet:theme', (_e, theme) => cb(theme));
+  },
   // 主进程要显示一个视图（搜索视图 or 插件界面）。
   onView: (cb) => {
     ipcRenderer.on('panel:view', (_e, view) => cb(view));

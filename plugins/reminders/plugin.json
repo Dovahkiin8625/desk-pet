@@ -1,7 +1,7 @@
 {
   "id": "reminders",
   "name": "提醒",
-  "icon": "⏰",
+  "icon": "bell",
   "description": "到点提醒你做事",
   "keywords": ["reminder", "remind", "alarm", "tixing", "tx", "naozhong", "闹钟", "备忘"],
   "skill": {

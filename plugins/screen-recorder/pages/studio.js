@@ -12,8 +12,11 @@
  * - 高度：面板的窗口是按内容撑开的，页面要报自己的高度。
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+import { hydrateIcons, iconSvg } from '/src/renderer/ui/icons.js';
 
 const surface = bindSurface();
+// 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
+hydrateIcons();
 
 /**
  * 面板里与独立窗口里，高度策略是**相反**的：
@@ -299,16 +302,18 @@ function renderWindowList() {
   for (const item of windows) {
     const li = document.createElement('li');
     li.classList.toggle('active', item.id === state.selectedWindowId);
-    const icon = document.createElement('img');
-    icon.className = 'win-icon';
-    icon.alt = '';
+    // 有图标就摆真图标，没有就摆一个占位的小方块：总比空着强。
+    // 占位那个是 **span** 不是 img——img 里的文字画不出来。
+    let icon;
     if (item.icon) {
+      icon = document.createElement('img');
+      icon.className = 'win-icon';
+      icon.alt = '';
       icon.src = item.icon;
     } else {
-      // 没有图标就用一个占位的小方块：总比空着强。
-      icon.classList.add('fallback');
-      icon.removeAttribute('src');
-      icon.textContent = '▣';
+      icon = document.createElement('span');
+      icon.className = 'win-icon fallback';
+      icon.append(iconSvg('square'));
     }
     const label = document.createElement('span');
     label.className = 'label';

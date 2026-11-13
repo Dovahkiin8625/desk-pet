@@ -104,5 +104,5 @@ export const SETTINGS_PAGES = [
   { id: 'control:programs', name: '程序和功能', target: 'control.exe /name Microsoft.ProgramsAndFeatures', hint: '控制面板' },
 ];
 
-/** 设置项的图标：一律用同一个符号（系统设置没有各自的图标可取）。 */
-export const SETTINGS_ICON = '⚙️';
+/** 设置项的图标：一律用同一个（系统设置没有各自的图标可取）。 */
+export const SETTINGS_ICON = 'settings';

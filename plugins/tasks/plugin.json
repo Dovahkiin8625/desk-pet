@@ -1,7 +1,7 @@
 {
   "id": "tasks",
   "name": "后台任务",
-  "icon": "⏳",
+  "icon": "list-checks",
   "description": "看后台任务在跑什么、到哪一步了，顺手停掉它、答它的审批",
   "keywords": ["task", "tasks", "background", "后台", "后台任务", "任务", "houtai", "renwu", "进度"],
   "entry": "main.js",
