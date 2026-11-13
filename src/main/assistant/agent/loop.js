@@ -122,6 +122,13 @@ export function createAgentLoop({
    * 模型会当成新要求重复执行。
    */
   steer = null,
+  /**
+   * 运行时的挂起接口（wait / wake）。
+   *
+   * 给那些**要等用户回话**的工具用：等答复的时候把并发槽让出去，
+   * 用户答完再拿回来（与审批闸门同一个套路）。
+   */
+  hooks = null,
 } = {}) {
   /**
    * 跑一次任务。
@@ -405,6 +412,8 @@ export function createAgentLoop({
       const out = await tool.run(args, {
         signal,
         taskId,
+        // **要等用户回话的工具靠它让出并发槽**（问用户、审批）。
+        hooks,
         // **工具要能异步地往记录里塞东西**（规格 §9）：
         // 外部 harness 可能跑很久，它不能占着这个循环等到结束。
         onEvent: (payload) => {

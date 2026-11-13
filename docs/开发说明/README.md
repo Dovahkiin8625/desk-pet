@@ -102,6 +102,7 @@ src/shared/panel.js        界面积木的形状
 src/main/plugins/paths.js  插件根目录（内置 + 用户）
 src/main/plugins/loader.js 发现与加载
 src/main/plugins/host.js   注册、ctx、生命周期
+src/main/plugins/tools.js  「打开插件界面」那个工具
 src/main/plugins/window.js BrowserWindow、壳与 iframe
 src/main/plugins/surface.js 界面路由与广播
 src/renderer/ui/           theme.css 设计系统 / blocks.js 积木 / pluginPage.js bindSurface

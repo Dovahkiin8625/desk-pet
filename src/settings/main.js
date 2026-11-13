@@ -128,6 +128,23 @@ const toolDrawerApproval = document.getElementById('toolDrawerApproval');
 const toolDrawerApprovalHint = document.getElementById('toolDrawerApprovalHint');
 const toolDrawerRisk = document.getElementById('toolDrawerRisk');
 
+// 插件（清单与它的详情抽屉）
+const pluginListEl = document.getElementById('pluginList');
+const pluginDrawer = document.getElementById('pluginDrawer');
+const pluginDrawerBackdrop = document.getElementById('pluginDrawerBackdrop');
+const pluginDrawerClose = document.getElementById('pluginDrawerClose');
+const pluginDrawerName = document.getElementById('pluginDrawerName');
+const pluginDrawerId = document.getElementById('pluginDrawerId');
+const pluginDrawerSource = document.getElementById('pluginDrawerSource');
+const pluginDrawerDesc = document.getElementById('pluginDrawerDesc');
+const pluginDrawerEnabled = document.getElementById('pluginDrawerEnabled');
+const pluginDrawerAgentField = document.getElementById('pluginDrawerAgentField');
+const pluginDrawerAgent = document.getElementById('pluginDrawerAgent');
+const pluginDrawerAgentHint = document.getElementById('pluginDrawerAgentHint');
+const pluginDrawerCaps = document.getElementById('pluginDrawerCaps');
+const pluginDrawerTools = document.getElementById('pluginDrawerTools');
+const pluginDrawerSkill = document.getElementById('pluginDrawerSkill');
+
 // 系统
 const autoLaunchBox = document.getElementById('autoLaunch');
 const clickThroughBox = document.getElementById('clickThrough');
@@ -265,6 +282,8 @@ function activateSection(key, { focus = false } = {}) {
   if (key === 'memory') void refreshFacts();
   // 插件清单也会过期：用户可能刚装了插件，或者在别处关了哪个。
   if (key === 'plugins') void refreshPlugins();
+  // 插件抽屉跟着它那一节走：切到别的分区就别留着它。
+  else if (!pluginDrawer.hidden) closePluginDrawer();
   // 系统状态也会过期：开机自启可能写注册表失败了，快捷键可能被别人占了。
   if (key === 'system') void refreshSystemState();
 }
@@ -940,6 +959,8 @@ function toolApprovalHint(readOnly) {
  * 左边滑出来的那一张卡：介绍、入参、启用开关与审批等级。
  */
 function openToolDrawer(t) {
+  // 两个抽屉不同时开着。
+  closePluginDrawer();
   toolDrawerName.textContent = t.label || t.name;
   toolDrawerId.textContent = t.name;
   toolDrawerDesc.textContent = t.description || '（这个工具没有写介绍。）';
@@ -1405,8 +1426,12 @@ toolBatchApproval.addEventListener('change', () => {
 // 抽屉：关掉它的三种方式——按钮、点遮罩、按 Esc。
 toolDrawerClose.addEventListener('click', closeToolDrawer);
 toolDrawerBackdrop.addEventListener('click', closeToolDrawer);
+pluginDrawerClose.addEventListener('click', closePluginDrawer);
+pluginDrawerBackdrop.addEventListener('click', closePluginDrawer);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !toolDrawer.hidden) closeToolDrawer();
+  if (e.key !== 'Escape') return;
+  if (!pluginDrawer.hidden) closePluginDrawer();
+  else if (!toolDrawer.hidden) closeToolDrawer();
 });
 
 // 抽屉里的「启用」：关掉的工具桌宠看不见，也不会去调。
@@ -1602,11 +1627,39 @@ clearFactsBtn.addEventListener('click', async () => {
 // 各管各的，这里不重复一份。
 // ---------------------------------------------------------------------------
 
-const pluginListEl = document.getElementById('pluginList');
+/** 最近一次拉到的插件清单（抽屉要按它对最新状态）。 */
+let pluginList = [];
+
+/**
+ * 开/关一个插件。
+ *
+ * 清单里的勾选框与抽屉里的开关走同一条路：
+ * 主进程说了算，界面只是把结果重画一遍。
+ */
+async function setPluginEnabled(id, enabled) {
+  const result = await window.pet.setPluginEnabled(id, enabled);
+  if (!result || result.ok !== true) {
+    throw new Error(result?.message || '主进程拒绝了这次开关');
+  }
+  await refreshPlugins();
+  await refreshAgentTools();
+  syncPluginDrawer();
+}
+
+/** 开/关「这个插件接给 agent」。 */
+async function setPluginAgentEnabled(id, enabled) {
+  const result = await window.pet.setPluginAgentEnabled(id, enabled);
+  if (!result || result.ok !== true) {
+    throw new Error(result?.message || '主进程拒绝了这次开关');
+  }
+  await refreshAgentTools();
+  syncPluginDrawer();
+}
 
 /** 画插件清单。 */
 function renderPlugins(list) {
   pluginListEl.textContent = '';
+  pluginList = list;
   let on = 0;
   for (const p of list) {
     if (p.enabled) on += 1;
@@ -1640,19 +1693,14 @@ function renderPlugins(list) {
     box.className = 'p-enable';
     box.checked = Boolean(p.enabled);
     box.title = p.enabled ? '关掉它' : '打开它';
+    // 勾选框**不打开抽屉**：整行才是抽屉的入口，勾选框是另一件事。
+    box.addEventListener('click', (e) => e.stopPropagation());
     box.addEventListener('change', async () => {
       // 勾选框已经动了：界面先跟上，别等 IPC 回来才变。
       li.classList.toggle('off', !box.checked);
       try {
-        const result = await window.pet.setPluginEnabled(p.id, box.checked);
-        if (!result || result.ok !== true) {
-          throw new Error(result?.message || '主进程拒绝了这次开关');
-        }
+        await setPluginEnabled(p.id, box.checked);
         show(box.checked ? `「${p.name}」开起来了` : `「${p.name}」关掉了`);
-        // 重画一遍：关掉的插件它的窗口也跟着关了，状态要从主进程重新拉。
-        await refreshPlugins();
-        // 插件开不开决定它的工具在不在 agent 的表里。
-        await refreshAgentTools();
       } catch (err) {
         // 没生效就把勾选框拨回去：界面不能显示一个没发生的状态。
         box.checked = !box.checked;
@@ -1669,22 +1717,19 @@ function renderPlugins(list) {
       const agent = document.createElement('label');
       agent.className = 'p-agent';
       agent.title = '把这个插件的工具与技能接给 agent';
+      agent.addEventListener('click', (e) => e.stopPropagation());
       const agentBox = document.createElement('input');
       agentBox.type = 'checkbox';
       agentBox.checked = Boolean(p.agentEnabled);
+      agentBox.addEventListener('click', (e) => e.stopPropagation());
       agentBox.addEventListener('change', async () => {
         try {
-          const result = await window.pet.setPluginAgentEnabled(p.id, agentBox.checked);
-          if (!result || result.ok !== true) {
-            throw new Error(result?.message || '主进程拒绝了这次开关');
-          }
+          await setPluginAgentEnabled(p.id, agentBox.checked);
           show(
             agentBox.checked
               ? `「${p.name}」接给 agent 了`
               : `「${p.name}」不再接给 agent`
           );
-          // 它的工具进出了 agent 的工具表，「工具」页要重画。
-          await refreshAgentTools();
         } catch (err) {
           agentBox.checked = !agentBox.checked;
           show(`开关失败：${err?.message || err}`, 'error');
@@ -1697,6 +1742,15 @@ function renderPlugins(list) {
     }
 
     li.append(box);
+
+    // 行尾的箭头：提示这行能点开（点开是看详情，不是开关）。
+    const arrow = document.createElement('span');
+    arrow.className = 'p-arrow';
+    arrow.append(iconSvg('forward'));
+
+    li.append(arrow);
+    // 整行点开抽屉：看这个插件的详情。
+    li.addEventListener('click', () => openPluginDrawer(p));
     pluginListEl.append(li);
   }
   setSummary('plugins', `${on}/${list.length}`);
@@ -1733,6 +1787,168 @@ async function refreshAgentTools() {
   }
   renderTools();
 }
+
+/**
+ * 把插件的详情填进抽屉。
+ *
+ * 抽屉里的开关与清单里的勾选框是**同一件事**：
+ * 填进去的值必须是清单里的那份（插件可能刚被别处改过）。
+ */
+function fillPluginDrawer(p) {
+  pluginDrawerName.textContent = p.name || p.id;
+  pluginDrawerId.textContent = p.id;
+  pluginDrawerSource.textContent = p.source === 'user' ? '用户' : '内置';
+  pluginDrawerDesc.textContent = p.description || '（这个插件没有写介绍。）';
+
+  pluginDrawerEnabled.checked = Boolean(p.enabled);
+  // 没有工具也没有技能的插件没什么可接的——不给这个开关。
+  pluginDrawerAgentField.hidden = !p.hasAgent;
+  pluginDrawerAgent.checked = Boolean(p.agentEnabled);
+  // 关掉的插件永远不接给 agent——这一格得是灰的。
+  pluginDrawerAgent.disabled = !p.enabled;
+  pluginDrawerAgentHint.textContent = p.enabled
+    ? '接给 agent 之后，它的工具与技能才进 agent 的表。'
+    : '插件关着时不接给 agent。';
+
+  renderPluginCaps(p);
+  renderPluginAgentBits(p);
+}
+
+/** 抽屉里的「能力」表：这个插件能变成什么形态。 */
+function renderPluginCaps(p) {
+  pluginDrawerCaps.textContent = '';
+  const caps = [
+    ['自带页面', p.hasPage ? '有' : '没有'],
+    ['桌面小部件', p.hasWidget ? '有' : '没有'],
+  ];
+  const keywords = Array.isArray(p.keywords) ? p.keywords.filter(Boolean) : [];
+  if (keywords.length) caps.push(['搜索关键词', keywords.join('、')]);
+
+  for (const [label, value] of caps) {
+    const row = document.createElement('div');
+    row.className = 'cap-item';
+    const l = document.createElement('span');
+    l.className = 'cap-label';
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'cap-value';
+    v.textContent = value;
+    row.append(l, v);
+    pluginDrawerCaps.appendChild(row);
+  }
+}
+
+/** 抽屉里「给 agent 的」那一段：它给了哪些工具、有没有技能说明。 */
+function renderPluginAgentBits(p) {
+  pluginDrawerTools.textContent = '';
+  const tools = Array.isArray(p.tools) ? p.tools : [];
+  for (const t of tools) {
+    const li = document.createElement('li');
+    li.className = 'param-item';
+    const name = document.createElement('span');
+    name.className = 'param-name';
+    name.textContent = t.name;
+    li.appendChild(name);
+    if (t.label && t.label !== t.name) {
+      const label = document.createElement('span');
+      label.className = 'param-type';
+      label.textContent = t.label;
+      li.appendChild(label);
+    }
+    const desc = document.createElement('span');
+    desc.className = 'param-desc';
+    desc.textContent = RISK_TEXT[t.risk] || '';
+    li.appendChild(desc);
+    pluginDrawerTools.appendChild(li);
+  }
+  if (!tools.length) {
+    const li = document.createElement('li');
+    li.className = 'drawer-empty';
+    li.textContent = '它没有给 agent 提供工具。';
+    pluginDrawerTools.appendChild(li);
+  }
+
+  pluginDrawerSkill.textContent = '';
+  const skill = p.skill;
+  const box = document.createElement('div');
+  if (skill) {
+    const line = document.createElement('p');
+    line.className = 'drawer-desc';
+    const code = document.createElement('code');
+    code.textContent = skill.name;
+    line.appendChild(code);
+    if (skill.description) {
+      line.appendChild(document.createTextNode(`：${skill.description}`));
+    }
+    box.appendChild(line);
+  } else {
+    const line = document.createElement('p');
+    line.className = 'drawer-empty';
+    line.textContent = '它没有技能说明。';
+    box.appendChild(line);
+  }
+  pluginDrawerSkill.appendChild(box);
+}
+
+/** 打开插件抽屉：右边滑出来的那一张卡。 */
+function openPluginDrawer(p) {
+  // 两个抽屉不同时开着。
+  closeToolDrawer();
+  fillPluginDrawer(p);
+  pluginDrawer.dataset.pluginId = p.id;
+  pluginDrawerBackdrop.hidden = false;
+  pluginDrawer.hidden = false;
+}
+
+/** 关抽屉。 */
+function closePluginDrawer() {
+  pluginDrawer.hidden = true;
+  pluginDrawerBackdrop.hidden = true;
+  pluginDrawer.dataset.pluginId = '';
+}
+
+/**
+ * 抽屉开着的时候插件的状态变了：抽屉里的内容也得跟上。
+ *
+ * 不跟上的话，用户会看着一个没发生的状态（比如插件已经关了，
+ * 抽屉里的「注册到 agent」还亮着）。
+ */
+function syncPluginDrawer() {
+  const id = pluginDrawer.dataset.pluginId;
+  if (!id || pluginDrawer.hidden) return;
+  const p = pluginList.find((x) => x.id === id);
+  if (p) fillPluginDrawer(p);
+}
+
+// 抽屉里的「启用」：关掉的插件不出现在面板的搜索结果里。
+pluginDrawerEnabled.addEventListener('change', async () => {
+  const id = pluginDrawer.dataset.pluginId;
+  if (!id) return;
+  const name = pluginDrawerName.textContent || id;
+  const want = pluginDrawerEnabled.checked;
+  try {
+    await setPluginEnabled(id, want);
+    show(want ? `「${name}」开起来了` : `「${name}」关掉了`);
+  } catch (err) {
+    pluginDrawerEnabled.checked = !want;
+    show(`开关失败：${err?.message || err}`, 'error');
+  }
+});
+
+// 抽屉里的「注册到 agent」：它的工具与技能接不接给 agent。
+pluginDrawerAgent.addEventListener('change', async () => {
+  const id = pluginDrawer.dataset.pluginId;
+  if (!id) return;
+  const name = pluginDrawerName.textContent || id;
+  const want = pluginDrawerAgent.checked;
+  try {
+    await setPluginAgentEnabled(id, want);
+    show(want ? `「${name}」接给 agent 了` : `「${name}」不再接给 agent`);
+  } catch (err) {
+    pluginDrawerAgent.checked = !want;
+    show(`开关失败：${err?.message || err}`, 'error');
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 系统分区

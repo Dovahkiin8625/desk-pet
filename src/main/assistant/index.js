@@ -32,6 +32,7 @@ import { createAck, ACK_HOLD_MS } from './chat/ack.js';
 import { createReplyBubble } from './chat/stream.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools, killProcessTree } from './agent/tools/builtin.js';
+import { createAskTools } from './agent/tools/ask.js';
 import { createSkillRegistry, createSkillTools } from './agent/skills.js';
 import { createHarnessRunner } from './agent/harness.js';
 import { createAgentFacade } from './agent/facade.js';
@@ -174,8 +175,10 @@ export function createAssistant({  userDataDir,
   // 告诉过了就别再应一声——刚说过的话不用再说一遍。
   let thinkNoticeShown = false;
   // 审批请求的序号：每一次审批都要有自己的 id
-  // （挂着的审批会排队，答复按 id 认——见 bubbleApproval.js）。
+  // （挂着的审批会排队，答复按 id 认——见 bubbleAsk.js）。
   let approvalSeq = 0;
+  // 选择卡的序号：每一次问用户都要有自己的 id（同一个道理）。
+  let askSeq = 0;
 
   // 对话后端注册表。
   //
@@ -245,6 +248,28 @@ export function createAssistant({  userDataDir,
   );
 
   // ------------------------------------------------------------------
+  // 「问用户」这个工具
+  //
+  // 后台任务拿不准的时候问一句：气泡里弹一张选择卡，
+  // 用户点一个，任务就知道该往哪边走了。
+  //
+  // 问的**只有执行层**：前台那一层要的是秒级回应，
+  // 它自己拿不准的时候是把事交出去，不是问用户。
+  // ------------------------------------------------------------------
+  toolRegistry.registerAll(
+    createAskTools({
+      ask: ({ question, options, taskId }) =>
+        bubble.showChoice({
+          id: `${taskId || 'task'}-ask-${++askSeq}`,
+          taskId,
+          title: '要你定一下',
+          question,
+          options,
+        }),
+    })
+  );
+
+  // ------------------------------------------------------------------
   // agent 后端：多步循环，会调工具。
   //
   // 状态是异步加载的（start() 之后才有），所以这里全是**取值函数**。
@@ -257,6 +282,13 @@ export function createAssistant({  userDataDir,
     // **`skill.read` 被关掉时就不列技能**：模型没有读正文的入口，
     // 列了也只是让它去调一个调不通的工具。
     getSkills: () => (toolRegistry.get('skill.read') ? skillRegistry.list() : []),
+    // 能打开界面的插件：执行层要知道「系统状态」这样的界面自己能开。
+    // 只要名字——提示词里要的是「这类界面有哪些」，不是整条插件记录。
+    getPlugins: () =>
+      (getPlugins?.() || [])
+        .filter((p) => p && p.enabled !== false)
+        .map((p) => String(p.name || ''))
+        .filter(Boolean),
     getGate: () => null,
     getWorkspace: () => state?.agent?.workspace || '',
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
@@ -335,7 +367,7 @@ export function createAssistant({  userDataDir,
   const agentTasks = createAgentTasks({
     backend: agentBackend,
     // 问用户：审批气泡。挂着的审批可以有好几个（排队），
-    // 所以每一次请求都要有自己的 id（inbox 按 id 认，见 bubbleApproval.js）。
+    // 所以每一次请求都要有自己的 id（inbox 按 id 认，见 bubbleAsk.js）。
     ask: ({ taskId, tool, args, risk }) =>
       bubble.showApproval({
         id: `${taskId}-${++approvalSeq}`,

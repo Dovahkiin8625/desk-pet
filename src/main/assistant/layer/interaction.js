@@ -4,6 +4,7 @@ import { createModelCaller } from '../chat/caller.js';
 import { createStreamSplitter, parseReply, META_MARKER } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
 import { buildInteractionPrompt } from './prompt.js';
+import { promisesAction } from './promise.js';
 import { createSpeechFilter, sanitizeSpeech } from './speech.js';
 import { TOOL_RISK } from '../../../shared/assistant.js';
 
@@ -36,6 +37,9 @@ export const INTERACTION_MAX_STEPS = 2;
  * 用户自己调大的值照旧尊重，所以取「两者里大的那个」。
  */
 export const INTERACTION_MIN_MAX_TOKENS = 1024;
+
+/** 替用户把事交出去时，桌宠先说的那句。 */
+const HANDOVER_REPLY = '我去查一下，结果出来告诉你。';
 
 /**
  * 造一个交互层后端。
@@ -70,6 +74,50 @@ export function createInteractionBackend({
   logger = null,
 } = {}) {
   /**
+   * 把用户这一句交出去做。
+   *
+   * **交底要带上桌宠答应的那句**：后台那边看不到这一回合的对话，
+   * 只有交底里那句，它才知道桌宠到底承诺了什么。
+   *
+   * @param {object} options
+   * @param {Array} options.tools 这一轮的工具
+   * @param {boolean} options.dispatchEnabled 能不能派单
+   * @param {object} options.turn 这一轮的上下文（历史与用户原话）
+   * @param {string} options.trigger 谁发起的
+   * @param {string} [options.promise] 桌宠已经答应用户的那句
+   * @returns {Promise<{ok: boolean, answer: string}>}
+   */
+  async function handOver({ tools, dispatchEnabled, turn, trigger, promise = '' }) {
+    const userText = String(turn?.userText || '').trim();
+    // **主动搭话不派单**：那是桌宠自己起的话头，用户没要求什么。
+    if (!dispatchEnabled || trigger !== 'user' || !userText) return { ok: false, answer: '' };
+    const submit = tools.find((t) => t.name === 'task.submit');
+    if (!submit) return { ok: false, answer: '' };
+    const title = userText.length > 20 ? `${userText.slice(0, 20)}…` : userText;
+    // **两行加起来不超过 200 字**（派单说明的长度上限，工具自己会拦）：
+    // 用户原话在交底之外还会原样传给后台，这里留够位置给「桌宠答应的那句」。
+    const brief = [
+      `用户的请求：${userText.slice(0, 100)}`,
+      promise ? `桌宠答应用户的：${promise.slice(0, 80)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    try {
+      const out = await submit.run({
+        title,
+        brief,
+        reply: promise || HANDOVER_REPLY,
+      });
+      return {
+        ok: true,
+        answer: String(out?.data?.answer || '').trim() || promise || HANDOVER_REPLY,
+      };
+    } catch {
+      return { ok: false, answer: '' };
+    }
+  }
+
+  /**
    * 这一轮没答上来时的兜底。
    *
    * **不能把模型的窝囊甩给用户**：一句「我没能在这 2 步之内做完这件事」，
@@ -89,27 +137,9 @@ export function createInteractionBackend({
     if (run.outcome !== AGENT_OUTCOME.MAX_STEPS) return fallbackText(run);
     if (dispatched) return '活儿派出去了，结果出来告诉你。';
 
-    const userText = String(turn?.userText || '').trim();
-    // 主动搭话不是用户的请求：别替用户派单。
-    if (!dispatchEnabled || trigger !== 'user' || !userText) {
-      return '这件事我在这儿一次做不完，先停下了。';
-    }
-
-    const submit = tools.find((t) => t.name === 'task.submit');
-    if (!submit) return '这件事我在这儿一次做不完，先停下了。';
-    const reply = '我去查一下，结果出来告诉你。';
-    try {
-      const out = await submit.run({
-        title: userText.length > 20 ? `${userText.slice(0, 20)}…` : userText,
-        // 派单说明限长 200 字（工具自己会拦），截在这里；
-        // 用户原话由 task.submit 原样传给后台任务，不会丢。
-        brief: `用户的请求：${userText.slice(0, 190)}`,
-        reply,
-      });
-      return String(out?.data?.answer || '').trim() || reply;
-    } catch {
-      return '这件事我没能在这儿办起来。';
-    }
+    const out = await handOver({ tools, dispatchEnabled, turn, trigger });
+    if (out.ok) return out.answer;
+    return '这件事我在这儿一次做不完，先停下了。';
   }
 
   return {
@@ -241,16 +271,24 @@ export function createInteractionBackend({
       if (tailSafe) onDelta?.(tailSafe);
 
       const parsed = parseReply(run.text || '');
-      const raw =
-        parsed.text ||
-        (await rescueWithoutAnswer({
+      let raw = parsed.text;
+      if (!raw) {
+        raw = await rescueWithoutAnswer({
           run,
           tools,
           dispatched,
           dispatchEnabled,
           turn,
           trigger,
-        }));
+        });
+      } else if (!dispatched && trigger === 'user' && promisesAction(raw)) {
+        // **说了要去做，却没把事交出去**：模型自己把话说了，事却没交——
+        // 用户那边一点动静都没有，还以为桌宠在忙。
+        // 替它把事交出去，让那句话成真。
+        const out = await handOver({ tools, dispatchEnabled, turn, trigger, promise: raw });
+        // 交不出去就如实说：不能留一句「我去」在那儿骗用户。
+        raw = out.ok ? raw : '这件事我现在做不了。';
+      }
       return {
         // **答复也过一遍过滤器**：提示词是第一道防线，这里是第二道。
         text: sanitizeSpeech(raw, { toolNames }),

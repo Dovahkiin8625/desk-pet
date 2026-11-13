@@ -1465,7 +1465,12 @@ app.whenReady().then(async () => {
     panel?.onPetHidden();
   });
   // 桌宠重新出现：把藏起来期间排队的消息播出来。
-  win.on('show', () => assistant?.onPetVisible());
+  win.on('show', () => {
+    assistant?.onPetVisible();
+    // 挂着的卡片（要用户回话）也要重新摆出来：
+    // 桌宠藏着的时候它被一起收走了，用户没看见那个问题。
+    bubble?.onPetVisible();
+  });
 
   tray = createTray({
     iconPath: join(ROOT, 'assets', 'icons', 'tray.png'),

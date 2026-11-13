@@ -8,18 +8,22 @@ const actionsEl = document.getElementById('actions');
 /**
  * 桌宠的说话气泡。
  *
- * 两种形态：
+ * 气泡上画的东西分四类（主进程按 `kind` 送过来）：
  * - 一句完整的话（`onShow`）；
  * - **流式**的聊天回复（`onStreamOpen` → 一串 `onDelta` → `onStreamEnd`），
- *   文字一个字一个字冒出来。
+ *   文字一个字一个字冒出来；
+ * - **审批卡**（`onCard`）：要用户点头，四个按钮；
+ * - **选择卡**（`onCard`）：要用户挑一个，一串选项按钮。
+ *
+ * 后两种是**卡片**：不自动消失，而且能点。
  *
  * 这里只负责「显示什么」，不关心消息从哪来。
  */
 
 /** 正在进行的流：null 表示没有。 */
 let streamId = null;
-/** 当前挂着的审批 id：null 表示没有审批在等。 */
-let approvalId = null;
+/** 当前挂着的卡片 id：null 表示没有卡片在等。 */
+let cardId = null;
 /** 流式文本的追加节点：用文本节点比 `textContent +=` 快得多。 */
 let streamNode = null;
 
@@ -103,29 +107,48 @@ function render(message) {
     bubble.classList.add('hidden');
     return;
   }
+  resetCard();
   bubble.classList.remove('hidden');
   bubble.classList.remove('streaming');
   bubble.dataset.kind = message.kind || 'say';
   titleEl.textContent = message.title || '';
   textEl.textContent = message.text || '';
-  // 普通消息会把审批气泡顶掉：按钮要跟着收走，
-  // 不然用户点的是一个已经作废的审批。
-  clearActions();
-  streamId = null;
-  streamNode = null;
   reportSize(true);
 }
 
 /**
- * 审批气泡的四个按钮。
+ * 渲染一张卡片（审批 / 选择）。
+ *
+ * 两种卡片都占同样的位置：标题 + 正文 + 一排按钮。
+ * 差别只在按钮：审批是四个固定的决议，选择是模型给的几个选项。
+ */
+function renderCard(card) {
+  resetCard();
+  cardId = card?.id ?? null;
+  const kind = card?.kind || 'say';
+  bubble.classList.remove('hidden');
+  bubble.dataset.kind = kind;
+  titleEl.textContent = card?.title || '';
+  if (kind === 'choice') {
+    textEl.textContent = card?.question || '';
+    renderOptions(card);
+  } else {
+    textEl.textContent = card?.text || '';
+    renderApprovalButtons(card);
+  }
+  reportSize(true);
+}
+
+/**
+ * 审批卡片的四个按钮。
  *
  * **四个按钮的语义不对称**：允许（这次放行）、拒绝（这次不给）、
  * 自动（本任务内同风险的后续操作都放行）、取消任务（整个任务停掉）。
  */
-function renderApproval(payload) {
-  approvalId = payload?.approvalId ?? null;
+function renderApprovalButtons(card) {
   clearActions();
-  if (!approvalId) return;
+  const id = card?.id ?? null;
+  if (!id) return;
   const buttons = [
     { decision: 'allow', text: '允许', title: '这一次放行' },
     { decision: 'deny', text: '拒绝', title: '这一次不给（模型会换条路）' },
@@ -138,16 +161,34 @@ function renderApproval(payload) {
     button.title = item.title;
     button.dataset.decision = item.decision;
     button.addEventListener('click', () => {
-      window.bubble?.respondApproval?.({ id: approvalId, decision: item.decision });
-      approvalId = null;
+      window.bubble?.respondCard?.({ id, answer: item.decision });
+      cardId = null;
       clearActions();
     });
     actionsEl.append(button);
   }
-  bubble.classList.remove('hidden');
-  titleEl.textContent = payload?.title || '';
-  textEl.textContent = payload?.text || '';
-  reportSize(true);
+}
+
+/**
+ * 选择卡片的选项按钮：一个选项一个按钮。
+ *
+ * 选项是模型给的原话：用户看到什么，回给后台的就是什么。
+ */
+function renderOptions(card) {
+  clearActions();
+  const id = card?.id ?? null;
+  if (!id) return;
+  for (const option of card?.options || []) {
+    const button = document.createElement('button');
+    button.textContent = option;
+    button.dataset.choice = option;
+    button.addEventListener('click', () => {
+      window.bubble?.respondCard?.({ id, answer: option });
+      cardId = null;
+      clearActions();
+    });
+    actionsEl.append(button);
+  }
 }
 
 /** 收走按钮行。 */
@@ -155,15 +196,23 @@ function clearActions() {
   actionsEl.textContent = '';
 }
 
+/** 把气泡恢复到「什么都没有」的状态。 */
+function resetCard() {
+  cardId = null;
+  clearActions();
+  streamId = null;
+  streamNode = null;
+}
+
 /** 开一个流式消息（先是个空壳）。 */
 function openStream(payload) {
   streamId = payload?.streamId ?? null;
   titleEl.textContent = payload?.title || '';
   textEl.textContent = '';
-  // 流的正文会把审批的正文顶掉：按钮要跟着收走。
+  // 流的正文会把卡片的正文顶掉：按钮要跟着收走。
   // 不然用户点的是「允许」，看到的却是另一段话——
   // 等于让用户批准一个他没看过的东西。
-  approvalId = null;
+  cardId = null;
   clearActions();
   // 用文本节点追加：每次 `textContent +=` 都会把整段重新解析一遍。
   streamNode = document.createTextNode('');
@@ -212,12 +261,12 @@ window.bubble?.onDelta?.((payload) => appendDelta(payload));
 window.bubble?.onStreamEnd?.((payload) => endStream(payload));
 window.bubble?.onStreamCancel?.((payload) => cancelStream(payload));
 
-// 审批气泡：主进程说「有个审批等你点头」。
-window.bubble?.onApproval?.((payload) => renderApproval(payload));
+// 卡片：主进程说「有张卡片等你回话」（审批 / 选择）。
+window.bubble?.onCard?.((payload) => renderCard(payload));
 
-// 审批办完了（无论点了哪个按钮）：按钮收走。
-window.bubble?.onApprovalDone?.(() => {
-  approvalId = null;
+// 卡片办完了（无论点了哪个按钮）：按钮收走。
+window.bubble?.onCardDone?.(() => {
+  cardId = null;
   clearActions();
 });
 
@@ -228,7 +277,7 @@ window.bubble?.onHide?.(() => {
   bubble.classList.add('hidden');
   streamId = null;
   streamNode = null;
-  approvalId = null;
+  cardId = null;
   clearActions();
 });
 

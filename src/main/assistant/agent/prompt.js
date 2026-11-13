@@ -52,6 +52,7 @@ const POLICY_TEXT = {
  * @param {string[]} [options.facts] 长期记忆
  * @param {object[]} [options.tools] 工具描述符
  * @param {object[]} [options.skills] 技能清单（渐进式披露的第一级：只有名字与说明）
+ * @param {string[]} [options.plugins] 能打开界面的插件（名字）
  * @param {string} [options.workspace] 工作目录（空 = 用户主目录）
  * @param {object} [options.approval] {policy, allowAlways}
  * @param {Date} [options.now]
@@ -61,6 +62,7 @@ export function buildAgentSystemPrompt({
   facts = [],
   tools = [],
   skills = [],
+  plugins = [],
   workspace = '',
   approval = {},
   now = new Date(),
@@ -72,6 +74,7 @@ export function buildAgentSystemPrompt({
   const when = now instanceof Date ? now : new Date(now);
   const toolList = Array.isArray(tools) ? tools.filter((t) => t && t.name) : [];
   const skillList = Array.isArray(skills) ? skills.filter((s) => s && s.name) : [];
+  const pluginList = Array.isArray(plugins) ? plugins.filter(Boolean).map((p) => String(p)) : [];
   const policy = String(approval?.policy || 'graded');
   const allowAlways = Array.isArray(approval?.allowAlways) ? approval.allowAlways : [];
   const workDir = String(workspace || '').trim();
@@ -116,6 +119,11 @@ export function buildAgentSystemPrompt({
     );
   }
 
+  // 能打开的插件界面：用户说「打开某某插件」时，模型得知道开哪个。
+  if (pluginList.length) {
+    lines.push('你能打开的插件界面：', ...pluginList.map((name) => `- ${name}`), '');
+  }
+
   lines.push(
     `审批策略：${POLICY_TEXT[policy] || POLICY_TEXT.graded}`,
     allowAlways.length ? `永久放行的工具：${allowAlways.join('、')}` : '',
@@ -126,6 +134,8 @@ export function buildAgentSystemPrompt({
     '- 一轮里可以调多个工具，它们各自会给你结果。',
     '- 工具报错时读懂错误，换个参数或换条路再试；同一个错连着出三次就别试了。',
     '- 工具的结果里可能有噪声，自己挑出有用的部分。',
+    '- 拿不准用户到底想要什么，就用问用户那个工具问一句：' +
+      '把犹豫的地方说清楚，给几个能挑的选项。别自己猜。',
     '',
     '回答规则：',
     '- 这是桌宠回给用户的一句话：中文口语，1~3 句，不超过 80 字。',

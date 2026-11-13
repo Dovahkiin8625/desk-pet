@@ -258,6 +258,8 @@ export function createAgentTasks({
             signal: scope.signal,
             // 任务号：工具（外部 harness）要靠它写日志。
             taskId: scope.taskId,
+            // 运行时的挂起接口：要等用户回话的工具靠它让出并发槽。
+            hooks: scope.hooks,
             // 追加的要求：执行层在步骤边界取走。
             // scope.steer 取走即清空（见 runtime.js）。
             steer: scope.steer,

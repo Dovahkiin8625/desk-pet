@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createInteractionBackend } from '../../src/main/assistant/layer/interaction.js';
+import { createTaskTools } from '../../src/main/assistant/layer/taskTools.js';
 import { AGENT_OUTCOME } from '../../src/main/assistant/agent/loop.js';
 import { TOOL_RISK } from '../../src/shared/assistant.js';
 
@@ -195,6 +196,167 @@ test('提示词：写着我手头在做的事，且没有工具名', async () =>
   assert.ok(system.includes('t-1'), '编号要留着，停掉那件事时要用');
   assert.ok(!system.includes('fs.list'), '提示词里不许出现工具名');
   assert.ok(!system.includes('task.submit'), '提示词里不许出现工具名');
+});
+
+test('说了要去做却没交出去：替它把事交出去', async () => {
+  // 模型只回了一句话（「好嘞，我去给你放一首」），一个字都没交出去——
+  // 用户那边一点动静都没有。桌面宠不能拿一句空话糊弄用户。
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([say('好嘞，我去给你放一首，别切窗口啦。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        run: async (args) => {
+          submitted.push(args);
+          return {
+            text: '交出去了',
+            data: { taskId: 't-9', answer: String(args?.reply || '').trim() },
+          };
+        },
+      }),
+    ],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '放首歌' }],
+    config: CONFIG,
+    turn: { userText: '放首歌', history: [] },
+  });
+  assert.equal(submitted.length, 1, '桌宠说要去做，却没把事交出去');
+  assert.match(submitted[0].brief, /放首歌/, '交底里要带着用户的原话');
+  assert.match(submitted[0].brief, /我去给你放一首/, '交底里要留着桌宠答应的那句');
+  // 答复还是那句承诺——现在它是真的了。
+  assert.equal(result.text, '好嘞，我去给你放一首，别切窗口啦。');
+});
+
+test('只是聊天：不该派单', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([say('今天过得怎么样，想说就说，不想说也行。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '交出去了', data: { taskId: 't-9', answer: '' } };
+        },
+      }),
+    ],
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '今天过得怎么样' }],
+    config: CONFIG,
+    turn: { userText: '今天过得怎么样', history: [] },
+  });
+  assert.equal(submitted.length, 0, '聊天不该派出一个任务');
+});
+
+test('问句不算承诺：不该派单', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([say('要不要我放首歌给你当下背景？')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '交出去了', data: { taskId: 't-9', answer: '' } };
+        },
+      }),
+    ],
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '我有点累' }],
+    config: CONFIG,
+    turn: { userText: '我有点累', history: [] },
+  });
+  assert.equal(submitted.length, 0, '还在问用户，不该自己动起来');
+});
+
+test('交不出去：如实告诉用户，别留一句空承诺', async () => {
+  const { fetchImpl } = fakeFetch([say('好嘞，我去给你放一首。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        run: async () => {
+          throw new Error('交不出去');
+        },
+      }),
+    ],
+  });
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: '放首歌' }],
+    config: CONFIG,
+    turn: { userText: '放首歌', history: [] },
+  });
+  assert.equal(result.text, '这件事我现在做不了。');
+});
+
+test('主动搭话里的承诺：不替用户派单', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([say('好嘞，我去给你放一首。')]);
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: () => [
+      submitTool({
+        run: async (args) => {
+          submitted.push(args);
+          return { text: '交出去了', data: { taskId: 't-9', answer: '' } };
+        },
+      }),
+    ],
+  });
+  await backend.chat({
+    messages: [{ role: 'user', content: '（主动搭话）' }],
+    config: CONFIG,
+    trigger: 'proactive',
+    turn: { userText: '', history: [] },
+  });
+  assert.equal(submitted.length, 0, '主动搭话没有用户的请求，不该替用户派单');
+});
+
+test('兜底派单：交底不长于 200 字（派单说明有上限，超了工具会拒）', async () => {
+  const submitted = [];
+  const { fetchImpl } = fakeFetch([say('好嘞，我去给你放一首。')]);
+  // **用真的派单工具**：长度上限是它管的，假的工具测不出来。
+  const backend = createInteractionBackend({
+    fetchImpl,
+    getTaskTools: (turn) =>
+      createTaskTools({
+        tasks: {
+          submit: (job) => {
+            submitted.push(job);
+            return { ok: true, taskId: 't-9' };
+          },
+          list: () => [],
+        },
+        turn,
+        dispatchEnabled: true,
+      }),
+  });
+  const long = '放首歌'.repeat(60);
+  const result = await backend.chat({
+    messages: [{ role: 'user', content: long }],
+    config: CONFIG,
+    turn: { userText: long, history: [] },
+  });
+  assert.equal(submitted.length, 1, '没派出去');
+  assert.ok(
+    submitted[0].prompt.length <= 200,
+    `交底太长了：${submitted[0].prompt.length} 字`
+  );
+  assert.match(result.text, /我去给你放一首/);
+});
+
+test('提示词：不再说「你只说一声我去」', async () => {
+  // 那句话给了模型一个台阶：只回一句「我去」也算交差了。
+  const { calls, fetchImpl } = fakeFetch([say('你好。')]);
+  const backend = createInteractionBackend({ fetchImpl });
+  await backend.chat({ messages: [{ role: 'user', content: '你好' }], config: CONFIG });
+  const system = calls[0].body.messages[0].content;
+  assert.ok(!system.includes('你只说一声'), system);
+  assert.ok(system.includes('只说「我去」不算数'), system);
 });
 
 test('提示词：没有在做的事时写「现在没有别的事在忙」', async () => {

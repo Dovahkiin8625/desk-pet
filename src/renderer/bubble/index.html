@@ -83,7 +83,7 @@
     #text { white-space: pre-wrap; word-break: break-word; }
     #text:empty { display: none; }
 
-    /* 审批气泡的四个按钮：允许 / 拒绝 / 自动 / 取消任务。 */
+    /* 卡片的按钮行：审批是四个按钮并排，选择是一个一个竖着排。 */
     #actions {
       display: flex;
       gap: 8px;
@@ -105,6 +105,17 @@
     #actions button[data-decision="allow"] { color: var(--dp-ok); }
     #actions button[data-decision="deny"] { color: var(--dp-danger); }
     #actions button[data-decision="cancel"] { color: var(--dp-text-soft); }
+
+    /* 选择卡：选项是一句话，竖着排才读得完。 */
+    #bubble[data-kind="choice"] #actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    #bubble[data-kind="choice"] #actions button {
+      text-align: left;
+      line-height: 1.5;
+      padding: 8px 12px;
+    }
 
     /* 流式回复：末尾跟一个闪烁的光标，让用户知道「还在写」。 */
     #bubble.streaming #text::after {

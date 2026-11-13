@@ -225,13 +225,16 @@
       list-style: none; margin: 0 0 14px; padding: 0;
       display: flex; flex-direction: column; gap: 6px;
     }
+    /* 插件行：整行点开抽屉（跟工具行一样）。 */
     .plugin-row {
       display: flex; align-items: center; gap: 10px;
       padding: 9px 11px;
       border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
       background: var(--surface);
+      cursor: pointer;
     }
     .plugin-row.off { background: var(--surface-sunken); }
+    .plugin-row:hover { background: var(--surface-hover); }
     .plugin-row.off .p-name { color: var(--muted); }
     .p-icon { flex: none; font-size: 16px; line-height: 1; }
     .p-text { flex: 1 1 auto; min-width: 0; }
@@ -247,6 +250,8 @@
       flex: none; display: flex; align-items: center; gap: 5px;
       font-size: 12px; color: var(--muted-2); cursor: pointer;
     }
+    /* 行尾的箭头：提示这行能点开。 */
+    .p-arrow { flex: none; color: var(--muted-3); font-size: 12px; }
 
     /* ---------- 可放行的工具 ---------- */
     .tool-list {
@@ -365,6 +370,11 @@
     .param-type { margin-left: 6px; color: var(--muted-2); font-size: 11px; }
     .param-req { margin-left: 6px; color: var(--accent-ink); font-size: 11px; }
     .param-desc { display: block; color: var(--muted-2); font-size: 12px; }
+    /* 插件抽屉里的「能力」表：左边一项，右边一个值。 */
+    .cap-list { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+    .cap-item { display: flex; gap: 10px; font-size: 13px; }
+    .cap-label { flex: none; width: 76px; color: var(--muted-2); }
+    .cap-value { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 
     /* ---------- 控件 ---------- */
     select, input[type="text"], input[type="password"], input[type="number"], textarea {
@@ -977,7 +987,7 @@
 
         <section class="panel" id="panel-plugins" role="tabpanel" aria-labelledby="tab-plugins" hidden>
           <h1>插件</h1>
-          <p class="panel-sub">插件是磁盘上的目录，装上就能用。关掉的插件不出现在面板的搜索结果里。</p>
+          <p class="panel-sub">插件是磁盘上的目录，装上就能用。点一行看它的详情。关掉的插件不出现在面板的搜索结果里。</p>
           <ul class="plugin-list" id="pluginList"></ul>
           <p class="hint">
             想装自己的插件？把插件目录放进
@@ -1092,6 +1102,49 @@
           <p class="drawer-empty" id="toolDrawerApprovalHint"></p>
         </div>
         <p class="drawer-empty" id="toolDrawerRisk"></p>
+      </section>
+    </div>
+  </aside>
+
+  <div class="drawer-backdrop" id="pluginDrawerBackdrop" hidden></div>
+  <aside class="drawer" id="pluginDrawer" hidden aria-label="插件详情">
+    <div class="drawer-head">
+      <div class="drawer-title">
+        <h2 id="pluginDrawerName"></h2>
+        <code id="pluginDrawerId"></code>
+        <span class="p-src" id="pluginDrawerSource"></span>
+      </div>
+      <button type="button" class="drawer-close" id="pluginDrawerClose" aria-label="关闭"><span class="icon" data-icon="close"></span></button>
+    </div>
+    <div class="drawer-body">
+      <section class="drawer-section">
+        <h3>介绍</h3>
+        <p class="drawer-desc" id="pluginDrawerDesc"></p>
+      </section>
+      <section class="drawer-section">
+        <h3>状态</h3>
+        <div class="drawer-field">
+          <label class="drawer-toggle">
+            <input type="checkbox" id="pluginDrawerEnabled">
+            <span>启用</span>
+          </label>
+        </div>
+        <div class="drawer-field" id="pluginDrawerAgentField">
+          <label class="drawer-toggle">
+            <input type="checkbox" id="pluginDrawerAgent">
+            <span>注册到 agent</span>
+          </label>
+          <p class="drawer-empty" id="pluginDrawerAgentHint"></p>
+        </div>
+      </section>
+      <section class="drawer-section">
+        <h3>能力</h3>
+        <div class="cap-list" id="pluginDrawerCaps"></div>
+      </section>
+      <section class="drawer-section">
+        <h3>给 agent 的</h3>
+        <ul class="param-list" id="pluginDrawerTools"></ul>
+        <div id="pluginDrawerSkill"></div>
       </section>
     </div>
   </aside>

@@ -25,6 +25,7 @@ import { createAgentFacade } from '../assistant/agent/facade.js';
 import { appUrl } from '../protocol.js';
 import { discoverPlugins, loadPluginFactory } from './loader.js';
 import { bundledPluginsDir, userPluginsDir as userPluginsPath } from './paths.js';
+import { createPluginOpenTool } from './tools.js';
 
 /**
  * 插件宿主。
@@ -457,6 +458,17 @@ export async function createPluginHost({
       agentEnabled: isAgentEnabled(r.manifest.id),
       // 有没有东西可以接给 agent（工具或技能）——没有就不必给开关。
       hasAgent: Boolean(r.manifest.tools?.length || r.manifest.skill),
+      // 它**声明**了什么：设置窗口的插件抽屉要给用户看这个
+      //（与「现在注册在 agent 表里的那些」不是一回事：
+      //  插件关了或不接给 agent 时，它的工具并不在表里）。
+      tools: (r.manifest.tools || []).map((t) => ({
+        name: t.name,
+        label: t.label,
+        risk: t.risk,
+      })),
+      skill: r.manifest.skill
+        ? { name: r.manifest.skill.name, description: r.manifest.skill.description }
+        : null,
     }));
   }
 
@@ -907,6 +919,21 @@ export async function createPluginHost({
     await syncPluginTools();
     // 插件的技能说明挂进 agent 的技能表。
     await syncPluginSkills();
+    // 宿主自己的工具：让后台任务能按名字把某个插件的界面打开
+    // （用户发一句话就能开面板）。
+    //
+    // **它没有 owner**：插件被关掉时不该被摘掉——
+    // 它属于宿主，不属于任何一个插件。
+    tools?.register(
+      createPluginOpenTool({
+        getPlugins: () => list(),
+        openWindow: (id) =>
+          windowOpener?.open(id, PLUGIN_WINDOW_MODE.WINDOW) || {
+            ok: false,
+            message: '窗口还没准备好',
+          },
+      })
+    );
     // 插件刚加载出来：之前算过的页面地址（如果有）全部作废。
     invalidatePageUrls();
     return records.size;

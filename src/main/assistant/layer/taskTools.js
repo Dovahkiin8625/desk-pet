@@ -101,7 +101,9 @@ export function createTaskTools({
       label: '开始做一件事',
       description:
         '把一件事交出去做——你自己干不了、或者要花时间的事都走这里。' +
-        '要什么结果写在 brief 里；要跟用户说的那句话写在 reply 里。做完会另行通知你。',
+        '要什么结果写在 brief 里；要跟用户说的那句话写在 reply 里。做完会另行通知你。' +
+        '用户让你动手做任何事（放歌、查天气、记事、找文件、跑命令……）都要走这里，' +
+        '不要只用一句话口头答应——用户看不到你到底做了什么。',
       parameters: {
         type: 'object',
         properties: {

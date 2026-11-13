@@ -99,7 +99,8 @@ export function buildInteractionPrompt({
       '你能做的：',
       '- 直接答：聊天、回答你知道的事、报上面那些事的状态。',
       dispatchEnabled
-        ? '- 其它一切（查文件、跑命令、用插件、上网找东西）都交给手头去做，你只说一声「我去」。'
+        ? '- 其它一切（查文件、跑命令、用插件、上网找东西）都要交出去做：' +
+          '调用「把一件事交出去」那个工具，要什么结果写进 brief，你要说的话写进 reply。'
         : '- 现在只能聊天：答得上的直接答，答不上的老实说做不到。',
       plugins.length ? `- 你能：${plugins.join('、')}。` : '',
     ]
@@ -114,6 +115,10 @@ export function buildInteractionPrompt({
       dispatchEnabled
         ? '- 要交出去的时候，调用「把一件事交出去」那个工具：' +
           '结果要求写进 brief，你要说的话写进 reply。'
+        : '',
+      dispatchEnabled
+        ? '- 只说「我去」不算数：说了要去做，就得把事交出去——' +
+          '不然用户那边一点动静都没有，还以为你在忙。'
         : '',
       dispatchEnabled
         ? '- 交出去之后，做完了它会自己回来告诉你，你不用转述结果。'

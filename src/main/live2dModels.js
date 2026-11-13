@@ -1,4 +1,4 @@
-import { readFile, readdir, stat, mkdir, copyFile, rm, lstat } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdir, copyFile, rm, lstat, open } from 'node:fs/promises';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { readJson, writeJson } from './store.js';
 import { detectCubismVersion, settingsFieldForVersion } from '../shared/live2d.js';
@@ -156,6 +156,57 @@ async function readJsonOrNull(path) {
   }
 }
 
+/** 读文件开头的几个字节；读不到返回空串。 */
+async function readMagic(path, len = 4) {
+  try {
+    const handle = await open(path, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await handle.read(buf, 0, len, 0);
+      return buf.subarray(0, bytesRead).toString('latin1');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 这是 Unity AssetBundle 导出的 Live2D 模型吗？
+ *
+ * 这类模型的设置文件长得也有 controllers / motions / hit_areas，
+ * 但模型本体在 skeleton_/atlases_ 这些 Unity 资源里，
+ * 没有 moc 也没有纹理——本程序渲染不了。
+ */
+function isUnityAssetModel(json) {
+  return !!json && typeof json === 'object'
+    && json.skeleton !== undefined
+    && json.atlases !== undefined;
+}
+
+/**
+ * 候选设置文件的可信度：它引用的模型与纹理有多少**真的在这个目录里**。
+ *
+ * 有些游戏会随模型附带一份**样例**设置文件（内容也像设置文件，
+ * 指向的却是游戏自带的样板模型，文件根本不在这个目录里）。
+ * 只看内容挑不出真身，得看它引用的文件在不在。
+ */
+async function scoreSettingsFile(modelRoot, json, version) {
+  const mocRef = version === 4 ? json?.FileReferences?.Moc : json?.model;
+  const textures = version === 4 ? json?.FileReferences?.Textures : json?.textures;
+  const refs = [mocRef, ...(Array.isArray(textures) ? textures : [])].filter(
+    (r) => typeof r === 'string' && r !== ''
+  );
+  if (refs.length === 0) return 0;
+  let hit = 0;
+  for (const ref of refs) {
+    const p = resolveInside(modelRoot, ref);
+    if (p && (await fileExists(p))) hit += 1;
+  }
+  return hit / refs.length;
+}
+
 /**
  * 在目录里找模型设置文件，返回**模型根目录**、文件名与格式版本。
  *
@@ -169,6 +220,8 @@ async function readJsonOrNull(path) {
  *
  * 找法是「逐个 JSON 读一遍，看内容像不像设置文件」：
  * 文件名靠不住（Cubism 2 的可能叫 model0.json、也可能叫别的）。
+ * 内容像还不够——同一个目录里可能有好几份像的，
+ * 引用文件真的存在的那份才是模型自己的。
  */
 export async function findModelSettingsFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -196,18 +249,31 @@ export async function findModelSettingsFile(dir) {
     }
   }
 
-  // 逐个读，按内容判别。Cubism 4 优先（更新的格式先用）。
+  // 逐个读，按内容判别。
   const hits = [];
+  let unity = null;
   for (const c of candidates) {
     const json = await readJsonOrNull(join(c.modelRoot, c.file));
     const version = detectCubismVersion(json);
-    if (version === 0) continue;
-    hits.push({ ...c, version, name: typeof json?.name === 'string' ? json.name : '' });
+    if (version === 0) {
+      // Unity AssetBundle 导出的模型：记下来，好给出准确的原因，
+      // 而不是一句「没找到设置文件」。
+      if (!unity && isUnityAssetModel(json)) unity = { ...c, unity: true };
+      continue;
+    }
+    hits.push({
+      ...c,
+      version,
+      score: await scoreSettingsFile(c.modelRoot, json, version),
+      name: typeof json?.name === 'string' ? json.name : '',
+    });
   }
-  if (hits.length === 0) return null;
+  if (hits.length === 0) return unity;
 
-  // 根目录的优先于子目录的；同一层里 Cubism 4 优先于 Cubism 2。
+  // 引用文件真的存在的那份优先；再是根目录优先于子目录，
+  // 同一层里 Cubism 4 优先于 Cubism 2。
   hits.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
     const depthA = a.modelRoot === dir ? 0 : 1;
     const depthB = b.modelRoot === dir ? 0 : 1;
     if (depthA !== depthB) return depthA - depthB;
@@ -304,6 +370,17 @@ export async function inspectModelDir(modelRoot, settingsName) {
       errors.push(`${settingsName} 里的模型文件路径越出了模型目录：${mocRef}`);
     } else if (!(await fileExists(moc))) {
       errors.push(`缺少模型文件 ${mocRef}`);
+    } else {
+      // 文件在，但未必是 moc：字节头不对的要么是文件坏了，
+      // 要么是游戏的 Live2D 资源被加密过（解包工具没能解密）。
+      // 这种文件在渲染层只会得到一句 "Invalid moc data"，看不出原因。
+      const magic = await readMagic(moc, 4);
+      const expected = version === 4 ? 'MOC3' : 'moc';
+      if (!magic.startsWith(expected)) {
+        errors.push(
+          `模型文件 ${mocRef} 不是有效的 moc（文件可能已损坏，或被游戏的资源加密过）`
+        );
+      }
     }
   }
 
@@ -387,6 +464,26 @@ async function collectFiles(dir, budget = { bytes: 0, files: 0 }, base = dir, ou
   return out;
 }
 
+/**
+ * 去掉设置文件里空的纹理引用，返回是否改动了文件。
+ *
+ * 有的游戏在资源清单里留了空条目（textures 数组末尾多一个空字符串）。
+ * 渲染层会照着去加载那个空文件名，纹理加载直接失败，
+ * 而报错只有一句「Texture loading error」，看不出是哪一条引用出的问题。
+ */
+async function stripEmptyTextureRefs(destRoot, settingsName, version) {
+  const json = await readJsonOrNull(join(destRoot, settingsName));
+  if (!json) return false;
+  const list = version === 4 ? json.FileReferences?.Textures : json.textures;
+  if (!Array.isArray(list)) return false;
+  const cleaned = list.filter((t) => typeof t === 'string' && t !== '');
+  if (cleaned.length === list.length) return false;
+  if (version === 4) json.FileReferences.Textures = cleaned;
+  else json.textures = cleaned;
+  await writeJson(destRoot, settingsName, json);
+  return true;
+}
+
 /** 把 id 规整成能当目录名、也能当 URL 片段的形式。 */
 export function slugifyModelId(name) {
   const s = String(name || '')
@@ -424,8 +521,15 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
         '请选择包含 .model3.json（Cubism 4）或 .model.json（Cubism 2）的文件夹。'
     );
   }
+  if (found.unity) {
+    throw new Error(
+      `所选文件夹里的 ${found.file} 是 Unity AssetBundle 导出的 Live2D 模型` +
+        '（模型本体在 skeleton_ / atlases_ 这类 Unity 资源里），' +
+        '不是 Cubism 模型，无法加载。请换用 Cubism 2 / Cubism 4 格式的模型。'
+    );
+  }
   if (found.ambiguous) {
-    console.warn('[desk-pet] 所选目录里有多个模型设置文件，取第一个：', found.file);
+    console.warn('[desk-pet] 所选目录里有多个模型设置文件，取其中最可信的：', found.file);
   }
   // 设置文件在注册表里的字段名按格式分：model3 是 Cubism 4，model2 是 Cubism 2。
   const formatField = settingsFieldForVersion(found.version);
@@ -469,6 +573,13 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
     const check = await inspectModelDir(destRoot, found.file);
     if (!check.ok) {
       throw new Error(`模型文件不完整：\n${check.errors.map((e) => `· ${e}`).join('\n')}`);
+    }
+
+    // 设置文件里混着空引用（游戏的资源清单没清干净）时，
+    // 渲染层会照着去加载一个空文件名，纹理加载直接失败。
+    // 那是清单的垃圾，不是模型的一部分——导入时清掉。
+    if (await stripEmptyTextureRefs(destRoot, found.file, found.version)) {
+      console.warn('[desk-pet] 设置文件里有空的纹理引用，已在导入时清除：', found.file);
     }
 
     // 清单里的 Name 优先；没有就用文件夹名。

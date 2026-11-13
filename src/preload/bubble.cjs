@@ -27,17 +27,17 @@ contextBridge.exposeInMainWorld('bubble', {
   onPlacement: (cb) => {
     ipcRenderer.on('pet:bubblePlacement', (_e, placement) => cb(placement));
   },
-  // —— 审批气泡（要用户点头）——
-  // 主进程要弹一条带按钮的审批。
-  onApproval: (cb) => {
-    ipcRenderer.on('pet:bubbleApproval', (_e, payload) => cb(payload));
+  // —— 卡片（要用户回话）——
+  // 主进程要弹一张卡片：审批（这么干行不行）或选择（你要哪个）。
+  onCard: (cb) => {
+    ipcRenderer.on('pet:bubbleCard', (_e, payload) => cb(payload));
   },
-  // 审批办完了：把气泡收起来。
-  onApprovalDone: (cb) => {
-    ipcRenderer.on('pet:bubbleApprovalDone', (_e, payload) => cb(payload));
+  // 卡片办完了：把气泡收起来。
+  onCardDone: (cb) => {
+    ipcRenderer.on('pet:bubbleCardDone', (_e, payload) => cb(payload));
   },
   // 用户按了按钮。
-  respondApproval: (payload) => ipcRenderer.send('pet:bubbleApprovalResponse', payload),
+  respondCard: (payload) => ipcRenderer.send('pet:bubbleCardResponse', payload),
   // —— 流式消息（AI 对话的回复）——
   // 开一个空壳。
   onStreamOpen: (cb) => {

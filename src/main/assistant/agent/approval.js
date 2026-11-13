@@ -202,14 +202,18 @@ function normalizeDecision(raw) {
  *
  * 中止给的是「没等到确认」而不是「拒绝」：用户没点过按钮，
  * 说成拒绝是冤枉人（记录里也会留下假的拒绝）。
+ *
+ * @param {Promise} pending 等答复的那个承诺
+ * @param {AbortSignal} [signal] 任务的信号
+ * @param {string} [fallback] 中止时给什么（选择卡给空串：没人回答）
  */
-function raceAbort(pending, signal) {
+export function raceAbort(pending, signal, fallback = APPROVAL_DECISION.SUPERSEDE) {
   if (!signal) return pending;
-  if (signal.aborted) return Promise.resolve(APPROVAL_DECISION.SUPERSEDE);
+  if (signal.aborted) return Promise.resolve(fallback);
   return Promise.race([
     pending,
     new Promise((resolve) => {
-      signal.addEventListener('abort', () => resolve(APPROVAL_DECISION.SUPERSEDE), { once: true });
+      signal.addEventListener('abort', () => resolve(fallback), { once: true });
     }),
   ]);
 }
