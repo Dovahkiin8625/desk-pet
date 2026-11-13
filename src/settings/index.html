@@ -437,6 +437,8 @@
       padding: 6px 9px;
       margin: 0 0 var(--gap);
     }
+    /* 批量导入的逐个结果：一条一行，别挤成一段。 */
+    #importReport { white-space: pre-wrap; }
     .mask { color: var(--ok); font-size: 12px; }
     .facts {
       list-style: none; margin: 0 0 14px; padding: 0;
@@ -582,7 +584,9 @@
               「导入模型…」会把你自己的 Live2D 模型文件夹复制到用户数据目录，
               重启后依然在列表里。Cubism 4（.model3.json + .moc3）与
               Cubism 2（.model.json + .moc）都支持。
+              选一个装着若干个模型的父文件夹也可以，会一个一个导进来。
             </p>
+            <p class="hint error" id="importReport" hidden></p>
           </div>
 
           <div class="field">

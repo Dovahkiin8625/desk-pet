@@ -173,16 +173,68 @@ async function readMagic(path, len = 4) {
 }
 
 /**
- * 这是 Unity AssetBundle 导出的 Live2D 模型吗？
- *
- * 这类模型的设置文件长得也有 controllers / motions / hit_areas，
- * 但模型本体在 skeleton_/atlases_ 这些 Unity 资源里，
- * 没有 moc 也没有纹理——本程序渲染不了。
+ * 这是不是图片文件？看字节头，不看扩展名——
+ * 解包出来的资源常常没有扩展名（Textures_0_0 而不是 Textures_0_0.png）。
  */
-function isUnityAssetModel(json) {
+async function isImageFile(path) {
+  const magic = await readMagic(path, 12);
+  if (magic.startsWith('\x89PNG')) return true;
+  if (magic.startsWith('\xff\xd8\xff')) return true;
+  if (magic.startsWith('GIF8')) return true;
+  if (magic.startsWith('RIFF') && magic.slice(8, 12) === 'WEBP') return true;
+  if (magic.startsWith('BM')) return true;
+  return false;
+}
+
+/**
+ * 这是**不是 Cubism** 的模型格式？
+ *
+ * 有些游戏（棕色尘埃2、NIKKE 等）用的根本不是 Cubism，而是 Spine：
+ * 设置文件里没有 moc、没有纹理，只有 skeleton（骨骼）与 atlases（图集），
+ * 动画数据在 skeleton_*.json 与 .atlas 里。本程序渲染不了。
+ */
+function isForeignGameModel(json) {
   return !!json && typeof json === 'object'
     && json.skeleton !== undefined
     && json.atlases !== undefined;
+}
+
+/**
+ * 说清这是哪种非 Cubism 格式——给用户看的，得具体。
+ *
+ * Spine 的 skeleton 文件里有个 "spine" 字段（版本号），
+ * 看到它就能确定是 Spine；否则只说是游戏自有格式。
+ *
+ * 清单里点名的 skeleton 文件有时根本不存在（游戏自己都指向了
+ * skeleton_0，实际发的却是 skeleton_1/3/6），所以还要在目录里
+ * 扫一遍 skeleton*.json。
+ */
+async function describeForeignFormat(modelRoot, json) {
+  const candidates = [];
+  const skeletonRef = typeof json.skeleton === 'string' ? json.skeleton : '';
+  // 解包出来的资源常常没有扩展名：skeleton_0 与 skeleton_0.json 都要试。
+  if (skeletonRef) candidates.push(skeletonRef, `${skeletonRef}.json`);
+  try {
+    const entries = await readdir(modelRoot, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isFile() && /^skeleton/i.test(e.name)) candidates.push(e.name);
+    }
+  } catch {
+    // 目录读不了就只按清单里点名的那个判断。
+  }
+  for (const name of candidates) {
+    const p = resolveInside(modelRoot, name);
+    if (!p) continue;
+    const skeleton = await readJsonOrNull(p);
+    if (skeleton && typeof skeleton === 'object') {
+      const spine = skeleton.spine ?? skeleton.skeleton?.spine;
+      if (spine) return 'Spine 骨骼动画（skeleton_*.json + .atlas 图集）';
+    }
+    // Spine 的骨骼也可能是**二进制**的：文件头里带着版本号（3.8.99、4.1.24…）。
+    const head = await readMagic(p, 256);
+    if (/\d+\.\d+\.\d+/.test(head)) return 'Spine 骨骼动画（skeleton_*.json + .atlas 图集）';
+  }
+  return '游戏自有的 Live2D 运行时格式（skeleton / atlases 资源）';
 }
 
 /**
@@ -208,6 +260,58 @@ async function scoreSettingsFile(modelRoot, json, version) {
 }
 
 /**
+ * 一个目录里的候选设置文件：逐个读，按内容判别，按可信度打分。
+ *
+ * 返回 hits（像设置文件的）与 foreign（非 Cubism 格式的）。
+ */
+async function collectSettingsHits(dir) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const hits = [];
+  let foreign = null;
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.toLowerCase().endsWith('.json')) continue;
+    const c = { modelRoot: dir, file: e.name };
+    const json = await readJsonOrNull(join(dir, e.name));
+    const version = detectCubismVersion(json);
+    if (version === 0) {
+      // 非 Cubism 格式：记下来，好给出准确的原因，
+      // 而不是一句「没找到设置文件」。
+      if (!foreign && isForeignGameModel(json)) {
+        foreign = { ...c, foreign: true, reason: await describeForeignFormat(dir, json) };
+      }
+      continue;
+    }
+    hits.push({
+      ...c,
+      version,
+      score: await scoreSettingsFile(dir, json, version),
+      name: typeof json?.name === 'string' ? json.name : '',
+    });
+  }
+  return { hits, foreign };
+}
+
+/** 候选之间怎么排序：引用文件真的存在的那份优先；再是 Cubism 4 优先于 2；最后按文件名。 */
+function compareHits(a, b) {
+  if (a.score !== b.score) return b.score - a.score;
+  if (a.version !== b.version) return b.version - a.version;
+  return a.file.localeCompare(b.file);
+}
+
+/**
+ * 只在**这一个目录**里找模型设置文件（不看子目录）。
+ *
+ * 找不到时返回 null——批量导入要靠它区分
+ * 「这个目录自己就是一个模型」与「这个目录里装着若干个模型」。
+ */
+export async function findSettingsInDir(dir) {
+  const { hits, foreign } = await collectSettingsHits(dir);
+  if (hits.length === 0) return foreign;
+  hits.sort(compareHits);
+  return { ...hits[0], ambiguous: hits.length > 1 };
+}
+
+/**
  * 在目录里找模型设置文件，返回**模型根目录**、文件名与格式版本。
  *
  * 模型根目录 = 设置文件自己的目录。这一点不是洁癖：
@@ -227,60 +331,65 @@ export async function findModelSettingsFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
 
   // 候选：根目录下的 .json 文件，再加一层子目录下的。
-  const candidates = [];
-  for (const e of entries) {
-    if (e.isFile() && e.name.toLowerCase().endsWith('.json')) {
-      candidates.push({ modelRoot: dir, file: e.name });
-    }
-  }
+  const root = await collectSettingsHits(dir);
+  const hits = root.hits.map((h) => ({ ...h, depth: 0 }));
+  let foreign = root.foreign;
+
   for (const e of entries) {
     if (!e.isDirectory() || e.isSymbolicLink()) continue;
-    const sub = join(dir, e.name);
-    let subEntries;
-    try {
-      subEntries = await readdir(sub, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const se of subEntries) {
-      if (se.isFile() && se.name.toLowerCase().endsWith('.json')) {
-        candidates.push({ modelRoot: sub, file: se.name });
-      }
-    }
+    const sub = await collectSettingsHits(join(dir, e.name));
+    for (const h of sub.hits) hits.push({ ...h, depth: 1 });
+    if (!foreign && sub.foreign) foreign = sub.foreign;
   }
-
-  // 逐个读，按内容判别。
-  const hits = [];
-  let unity = null;
-  for (const c of candidates) {
-    const json = await readJsonOrNull(join(c.modelRoot, c.file));
-    const version = detectCubismVersion(json);
-    if (version === 0) {
-      // Unity AssetBundle 导出的模型：记下来，好给出准确的原因，
-      // 而不是一句「没找到设置文件」。
-      if (!unity && isUnityAssetModel(json)) unity = { ...c, unity: true };
-      continue;
-    }
-    hits.push({
-      ...c,
-      version,
-      score: await scoreSettingsFile(c.modelRoot, json, version),
-      name: typeof json?.name === 'string' ? json.name : '',
-    });
-  }
-  if (hits.length === 0) return unity;
+  if (hits.length === 0) return foreign;
 
   // 引用文件真的存在的那份优先；再是根目录优先于子目录，
   // 同一层里 Cubism 4 优先于 Cubism 2。
   hits.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
-    const depthA = a.modelRoot === dir ? 0 : 1;
-    const depthB = b.modelRoot === dir ? 0 : 1;
-    if (depthA !== depthB) return depthA - depthB;
+    if (a.depth !== b.depth) return a.depth - b.depth;
     if (a.version !== b.version) return b.version - a.version;
     return a.file.localeCompare(b.file);
   });
   return { ...hits[0], ambiguous: hits.length > 1 };
+}
+
+/**
+ * 用户选中的文件夹里装着几个模型？
+ *
+ * - 'single'：这个目录自己就是一个模型（根目录里有设置文件）。
+ * - 'batch'：这个目录是个**模型仓库**，一层子目录里各有一个模型。
+ * - 'none'：哪儿都没有模型。
+ *
+ * 区分前两者是必要的：以前选了「装着很多模型」的父目录，
+ * 只会导入排在最前面的那一个，用户以为导入失败。
+ *
+ * 非 Cubism 格式的模型（Spine 之类）不算模型，但**原因要带出去**：
+ * 静默跳过等于让用户以为那个目录是空的。
+ */
+export async function scanModelDirs(dir) {
+  const own = await findSettingsInDir(dir);
+  if (own && !own.foreign) return { mode: 'single', dirs: [dir], foreignDirs: [] };
+
+  const dirs = [];
+  const foreignDirs = [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    if (!e.isDirectory() || e.isSymbolicLink()) continue;
+    const sub = join(dir, e.name);
+    const hit = await findSettingsInDir(sub);
+    if (!hit) continue;
+    if (hit.foreign) foreignDirs.push({ dir: sub, file: hit.file, reason: hit.reason });
+    else dirs.push(sub);
+  }
+  if (dirs.length > 0) return { mode: 'batch', dirs, foreignDirs };
+  // 根目录不是模型，但子目录里是「非 Cubism 格式」的模型：
+  // 也要把原因带出去，别只说一句「没找到」。
+  if (own?.foreign) {
+    return { mode: 'foreign', dirs: [], foreignDirs: [{ dir, file: own.file, reason: own.reason }] };
+  }
+  if (foreignDirs.length > 0) return { mode: 'foreign', dirs: [], foreignDirs };
+  return { mode: 'none', dirs: [], foreignDirs: [] };
 }
 
 /**
@@ -387,6 +496,7 @@ export async function inspectModelDir(modelRoot, settingsName) {
   if (!Array.isArray(textures) || textures.length === 0) {
     errors.push(`${settingsName} 里没有指定纹理`);
   }
+  let encryptedTextures = 0;
   for (const t of Array.isArray(textures) ? textures : []) {
     if (typeof t !== 'string' || t === '') continue;
     const tex = resolveInside(modelRoot, t);
@@ -394,7 +504,15 @@ export async function inspectModelDir(modelRoot, settingsName) {
       errors.push(`${settingsName} 里的纹理路径越出了模型目录：${t}`);
     } else if (!(await fileExists(tex))) {
       errors.push(`缺少纹理 ${t}`);
+    } else if (!(await isImageFile(tex))) {
+      encryptedTextures += 1;
     }
+  }
+  if (encryptedTextures > 0) {
+    errors.push(
+      `纹理文件不是图片（${encryptedTextures} 个）：整个资源包都是加密的，` +
+        '解包工具没能解密——需要用带解密密钥的方式重新解包'
+    );
   }
 
   // 动作文件也要在：模型加载时找不到动作只会静默跳过，
@@ -521,11 +639,10 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
         '请选择包含 .model3.json（Cubism 4）或 .model.json（Cubism 2）的文件夹。'
     );
   }
-  if (found.unity) {
+  if (found.foreign) {
     throw new Error(
-      `所选文件夹里的 ${found.file} 是 Unity AssetBundle 导出的 Live2D 模型` +
-        '（模型本体在 skeleton_ / atlases_ 这类 Unity 资源里），' +
-        '不是 Cubism 模型，无法加载。请换用 Cubism 2 / Cubism 4 格式的模型。'
+      `所选文件夹里的 ${found.file} 不是 Cubism 模型（${found.reason || '非 Cubism 格式'}），` +
+        '桌宠用 Cubism Core 渲染不了它。请换用 Cubism 2 / Cubism 4 格式的模型。'
     );
   }
   if (found.ambiguous) {

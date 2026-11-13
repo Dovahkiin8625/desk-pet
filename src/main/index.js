@@ -9,6 +9,7 @@ import {
   userModelsDir,
   readMergedRegistry,
   importModelDir,
+  scanModelDirs,
   deleteImportedModel,
   removeBundledModel,
 } from './live2dModels.js';
@@ -544,9 +545,14 @@ function notifyModelsChanged(modelId) {
 }
 
 /**
- * 导入一个 Live2D 模型目录。
+ * 导入 Live2D 模型。
  *
- * 流程：选文件夹 → 复制到 userData → 校验 → 注册 → 切过去。
+ * 选中的文件夹有两种可能：
+ *   - 它自己就是一个模型（根目录里有设置文件）；
+ *   - 它是个「模型仓库」，一层子目录里各有一个模型
+ *     （解包工具的输出目录就是这样）——这种就**批量导入**，
+ *     免得用户一个一个点，也免得只导入到排在最前面的那一个。
+ *
  * 导入完直接切到新模型：让用户立刻看到效果，而不是「导入成功但桌宠没变」。
  */
 async function importModel(event) {
@@ -571,17 +577,48 @@ async function importModel(event) {
     return { ok: false, error: `无法打开文件夹选择器：${err?.message || err}` };
   }
 
+  let scan;
+  try {
+    scan = await scanModelDirs(picked);
+  } catch (err) {
+    return { ok: false, error: `无法读取所选文件夹：${err?.message || err}` };
+  }
+  if (scan.mode === 'none') {
+    return {
+      ok: false,
+      error:
+        '所选文件夹里没有找到 Live2D 模型设置文件——' +
+        '请选择包含 .model3.json（Cubism 4）或 .model.json（Cubism 2）的文件夹，' +
+        '或者直接选择装着若干个模型的一层父文件夹。',
+    };
+  }
+  if (scan.mode === 'foreign') {
+    const f = scan.foreignDirs[0];
+    return {
+      ok: false,
+      error:
+        `所选文件夹里的 ${f.file} 不是 Cubism 模型（${f.reason || '非 Cubism 格式'}），` +
+        '桌宠用 Cubism Core 渲染不了它。请换用 Cubism 2 / Cubism 4 格式的模型。',
+    };
+  }
+
+  const onProgress = (p) => {
+    if (settingsWin && !settingsWin.isDestroyed()) {
+      settingsWin.webContents.send('pet:importProgress', p);
+    }
+  };
+
+  if (scan.mode === 'batch') {
+    return importModelsInBatch(scan.dirs, scan.foreignDirs, onProgress);
+  }
+
   let model;
   try {
     model = await importModelDir({
       sourceDir: picked,
       rootDir: ROOT,
       userDataDir: app.getPath('userData'),
-      onProgress: (p) => {
-        if (settingsWin && !settingsWin.isDestroyed()) {
-          settingsWin.webContents.send('pet:importProgress', p);
-        }
-      },
+      onProgress,
     });
   } catch (err) {
     // 导入失败必须留痕：否则用户只看到一句「导入失败」，无从排查。
@@ -605,6 +642,64 @@ async function importModel(event) {
     };
   }
   return { ok: true, model, switched: true };
+}
+
+/**
+ * 批量导入：把一个文件夹里的各个模型逐个导进来。
+ *
+ * 一个失败不打断其余的——一批模型里总有几个是游戏自己那套
+ * 非 Cubism 格式的，用户要的是能用的那部分。
+ *
+ * foreignDirs 是那些**根本不是 Cubism** 的目录：它们不会走到
+ * importModelDir（那样只会得到一句「不是 Cubism 模型」），
+ * 这里直接把原因摆进失败清单。
+ */
+async function importModelsInBatch(dirs, foreignDirs, onProgress) {
+  const models = [];
+  const failures = [];
+  for (const dir of dirs) {
+    const name = basename(dir);
+    try {
+      const model = await importModelDir({
+        sourceDir: dir,
+        rootDir: ROOT,
+        userDataDir: app.getPath('userData'),
+        onProgress,
+      });
+      models.push(model);
+    } catch (err) {
+      console.warn('[desk-pet] 模型导入失败：', name, err?.message);
+      failures.push({ name, error: err?.message || String(err) });
+    }
+  }
+  for (const f of foreignDirs || []) {
+    failures.push({
+      name: basename(f.dir),
+      error:
+        `${f.file} 不是 Cubism 模型（${f.reason || '非 Cubism 格式'}），` +
+        '桌宠用 Cubism Core 渲染不了它',
+    });
+  }
+
+  if (models.length === 0) {
+    return {
+      ok: false,
+      error:
+        `所选文件夹里的 ${dirs.length} 个模型都没能导入：\n` +
+        failures.map((f) => `· ${f.name}：${f.error}`).join('\n'),
+    };
+  }
+
+  notifyModelsChanged(models[0].id);
+  const switched = await switchModelTo(models[0].id);
+  return {
+    ok: true,
+    batch: true,
+    models,
+    failures,
+    switched: switched.ok,
+    error: switched.ok ? undefined : `模型已导入，但切换失败：${switched.error || '未知原因'}`,
+  };
 }
 
 /**

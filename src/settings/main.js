@@ -24,6 +24,7 @@ import { normalizeMode } from '../shared/theme.js';
 
 const modelSelect = document.getElementById('model');
 const importModelBtn = document.getElementById('importModel');
+const importReport = document.getElementById('importReport');
 const deleteModelBtn = document.getElementById('deleteModel');
 const scaleInput = document.getElementById('scale');
 const opacityInput = document.getElementById('opacity');
@@ -205,6 +206,28 @@ function showPending(msg) {
   status.dataset.state = 'pending';
   status.dataset.kind = 'pending';
   status.textContent = msg;
+}
+
+/**
+ * 导入结果的逐条明细（放得下，不自动消失）。
+ *
+ * 状态栏那一句只够说「导入了几个」；哪个模型没导进来、为什么，
+ * 得有一处能一直看着的地方。
+ */
+function setImportReport(text) {
+  if (!importReport) return;
+  importReport.textContent = text || '';
+  importReport.hidden = !text;
+}
+
+/** 导入失败的原因常常是多行的（逐条列问题）：摊成一行，读起来才连贯。 */
+function flattenError(text) {
+  const parts = String(text || '')
+    .split('\n')
+    .map((line) => line.trim().replace(/^[·•]\s*/, ''))
+    .filter(Boolean);
+  if (parts.length > 0) parts[0] = parts[0].replace(/：$/, '');
+  return parts.join('；');
 }
 
 function formatScale(v) {
@@ -2355,6 +2378,9 @@ importModelBtn.addEventListener('click', async () => {
   }
   importModelBtn.disabled = false;
 
+  // 上一次的逐个结果没有意义了，清掉。
+  setImportReport('');
+
   // 用户在文件夹选择器里点了取消：不是错误，别弹红色提示。
   if (result?.canceled) {
     show('');
@@ -2362,6 +2388,24 @@ importModelBtn.addEventListener('click', async () => {
   }
   if (!result || result.ok !== true) {
     show(`导入失败：${result?.error || '未知原因'}`, 'error');
+    setImportReport(flattenError(result?.error || '未知原因'));
+    return;
+  }
+  // 批量导入（选了一个装着若干个模型的父文件夹）：
+  // 一半成功一半失败是常态，把两件事分开说。
+  if (result.batch) {
+    await refreshModelOptions(result.models?.[0]?.id);
+    refreshNavSummaries();
+    const failed = result.failures || [];
+    if (failed.length === 0) {
+      show(`已导入 ${result.models.length} 个模型，并切换到 ${result.models[0]?.name || ''}`);
+      return;
+    }
+    setImportReport(
+      `${failed.length} 个模型没能导入：\n` +
+        failed.map((f) => `· ${f.name}：${flattenError(f.error)}`).join('\n')
+    );
+    show(`已导入 ${result.models.length} 个模型，${failed.length} 个失败`);
     return;
   }
   // 注册表变了：重新拉一次，下拉框里才有新形象。
