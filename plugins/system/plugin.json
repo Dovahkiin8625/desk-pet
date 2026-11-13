@@ -31,6 +31,7 @@
   ],
   "window": {
     "title": "系统状态",
+    "page": "pages/status.html",
     "width": 640,
     "height": 480,
     "refreshMs": 1000

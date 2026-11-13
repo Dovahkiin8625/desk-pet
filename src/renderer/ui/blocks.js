@@ -205,13 +205,23 @@ export function renderBlock(block, { onAction } = {}) {
  * @param {object} page 页面描述
  * @param {object} options
  * @param {HTMLElement} options.body 块的容器
+ * @param {HTMLElement} [options.drawer] 设置抽屉的容器（没有就画在正文末尾）
  * @param {Function} [options.onAction]
  */
-export function renderPage(page, { body, onAction } = {}) {
+export function renderPage(page, { body, drawer, onAction } = {}) {
   if (!body) return;
   body.textContent = '';
   for (const block of page?.blocks || []) {
     const node = renderBlock(block, { onAction });
     if (node) body.append(node);
+  }
+  // 设置项：画在右边的抽屉里。
+  //
+  // 没有抽屉可画（老界面）时退回正文末尾——设置不能因为没有抽屉就丢了。
+  const target = drawer || body;
+  if (target !== body) target.textContent = '';
+  for (const block of page?.drawer || []) {
+    const node = renderBlock(block, { onAction });
+    if (node) target.append(node);
   }
 }

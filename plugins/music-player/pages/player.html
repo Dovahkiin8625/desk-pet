@@ -89,6 +89,9 @@
       }
       #filter {
         width: 100%;
+        /* 不加这一句，输入框会宽出容器 40px（padding 与边框算在外面），
+           正好压住右边的齿轮按钮，点不着。 */
+        box-sizing: border-box;
         padding: 6px 10px 6px 28px;
         font: inherit;
         font-size: 13px;
@@ -100,6 +103,24 @@
       #filter:focus {
         outline: 2px solid var(--dp-accent);
         outline-offset: 1px;
+      }
+      /* 齿轮：设置都在右边的抽屉里。 */
+      #gear {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        font-size: 15px;
+        line-height: 1;
+        color: var(--dp-text-soft);
+        background: transparent;
+        border: none;
+        border-radius: 7px;
+        cursor: pointer;
+      }
+      #gear:hover {
+        background: var(--dp-surface-hover);
+        color: var(--dp-text);
       }
       /* ---------------- 歌单 + 歌曲 ---------------- */
       #body {
@@ -591,22 +612,6 @@
       #play:hover {
         background: var(--dp-accent-strong);
       }
-      #lyrics {
-        font-size: 12px;
-      }
-      #mode {
-        width: auto;
-        padding: 0 8px;
-        font-size: 12px;
-      }
-      #lyrics[aria-pressed='true'] {
-        background: var(--dp-accent);
-        color: var(--dp-accent-ink);
-      }
-      #vol {
-        width: 84px;
-        accent-color: var(--dp-accent-strong);
-      }
       /* ---------------- 浮层 ---------------- */
       #menu {
         position: fixed;
@@ -805,9 +810,6 @@
           flex: none;
           margin-left: 0;
         }
-        #vol {
-          width: 56px;
-        }
         #song-cover {
           width: 104px;
           height: 104px;
@@ -848,6 +850,7 @@
           <span class="ico">🔍</span>
           <input id="filter" type="text" placeholder="搜歌名或歌手" autocomplete="off" />
         </div>
+        <button id="gear" type="button" title="设置" aria-label="设置">⚙</button>
       </header>
 
       <div id="body">
@@ -906,12 +909,9 @@
           </div>
         </div>
         <div id="controls">
-          <button id="mode" type="button" title="播放模式：顺序播放">⇄</button>
           <button id="prev" type="button" title="上一首">⏮</button>
           <button id="play" type="button" title="播放 / 暂停">▶</button>
           <button id="next" type="button" title="下一首">⏭</button>
-          <button id="lyrics" type="button" aria-pressed="false" title="桌面歌词">词</button>
-          <input id="vol" type="range" min="0" max="100" title="音量" />
         </div>
       </footer>
     </div>

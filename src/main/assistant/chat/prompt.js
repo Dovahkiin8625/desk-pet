@@ -8,6 +8,7 @@ import {
   chatKindOf,
 } from '../../../shared/assistant.js';
 import { normalizeMemory } from './memory.js';
+import { snapshotSection } from '../snapshot.js';
 
 /**
  * 人设、系统提示词与回复解析。
@@ -29,8 +30,16 @@ import { normalizeMemory } from './memory.js';
 /** 正文与元数据之间的标记符。 */
 export const META_MARKER = '<<META>>';
 
-/** 主动搭话时替用户发的那句话。 */
-export const PROACTIVE_TRIGGER = '（现在是主动搭话的时刻，用户没有说话。找个由头说一句话。）';
+/**
+ * 主动搭话时替用户发的那句话。
+ *
+ * **它要立住一条规矩**：历史是过去，「此刻」才是现在。
+ * 没有这一条，模型会从历史里挖一件早就结束的事当成现状——
+ * 用户早就手动停掉的音乐，被说成「还在播放」。
+ */
+export const PROACTIVE_TRIGGER =
+  '（主动搭话：用户此刻没有说话。说一句现在能说的话。' +
+  '历史里出现过、但「此刻正在发生的事」里没写的事，就当它已经过去了——别提它现在还在怎样。）';
 
 /** 心情增量的上下限。 */
 const MAX_MOOD = 10;
@@ -58,7 +67,7 @@ export function metaContractLines() {
 /**
  * 组装系统提示词：人设 + 记忆 + 输出契约。
  */
-export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() } = {}) {
+export function buildSystemPrompt({ persona = {}, facts = [], now = new Date(), snapshot = [] } = {}) {
   const name = String(persona.name || '小桌').trim() || '小桌';
   const style = String(persona.style || '').trim();
   const backstory = String(persona.backstory || '').trim();
@@ -76,9 +85,29 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() }
     ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
+    snapshotSection(snapshot),
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/** 早于这个时刻的时间戳是坏数据（多半是 0 或 1），算不出相对时间。 */
+const MIN_PLAUSIBLE_AT = Date.UTC(2001, 0, 1);
+
+/**
+ * 相对时间（「刚刚」「12 分钟前」）。
+ *
+ * **历史必须带时间**：不带的话，模型分不清「刚才」和「三天前」，
+ * 只能把整段历史当成此刻正在发生的事。
+ */
+function relativeTime(at, now = Date.now()) {
+  const t = Number(at);
+  if (!Number.isFinite(t) || t < MIN_PLAUSIBLE_AT) return '';
+  const diff = now - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  return `${Math.floor(diff / 86_400_000)} 天前`;
 }
 
 /**
@@ -89,17 +118,26 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date() }
  *
  * **只取最近若干条**：磁盘上留的条数按分类分路（见 memory.js），
  * 提示词里只带 12 条——「记多少」与「发多少」是两回事。
+ *
+ * **每条都带相对时间**：模型得看得出这条是刚才说的还是三小时前说的。
  */
-export function buildHistoryMessages({ history = [], layer = LAYER.INTERACTION } = {}) {
+export function buildHistoryMessages({
+  history = [],
+  layer = LAYER.INTERACTION,
+  now = Date.now(),
+} = {}) {
   const kinds = CHAT_KIND_FOR_LAYER[layer] || CHAT_KIND_FOR_LAYER[LAYER.INTERACTION];
   const list = Array.isArray(history) ? history : [];
   return list
     .filter((item) => item && item.text && kinds.includes(chatKindOf(item)))
     .slice(-PROMPT_HISTORY_MESSAGES)
-    .map((item) => ({
-      role: item.role === 'user' ? 'user' : 'assistant',
-      content: item.text,
-    }));
+    .map((item) => {
+      const when = relativeTime(item.at, now);
+      return {
+        role: item.role === 'user' ? 'user' : 'assistant',
+        content: when ? `[${when}] ${item.text}` : item.text,
+      };
+    });
 }
 
 /**
@@ -113,8 +151,9 @@ export function buildChatMessages({
   userText = '',
   trigger = 'user',
   layer = LAYER.INTERACTION,
+  now = Date.now(),
 } = {}) {
-  const messages = buildHistoryMessages({ history, layer });
+  const messages = buildHistoryMessages({ history, layer, now });
   messages.push({
     role: 'user',
     content: trigger === 'proactive' ? PROACTIVE_TRIGGER : String(userText ?? ''),

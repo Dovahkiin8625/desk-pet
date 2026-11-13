@@ -54,6 +54,11 @@ export function sampleMemoryPercent() {
   return Math.round(Math.min(100, Math.max(0, ((total - free) / total) * 100)));
 }
 
+/** 内存：总量与空闲（字节）。 */
+export function memoryUsage() {
+  return { total: os.totalmem(), free: os.freemem() };
+}
+
 /** 内存的「已用 / 总量」文本。 */
 export function formatMemory(total, free) {
   const gb = (bytes) => `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;

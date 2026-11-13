@@ -85,19 +85,30 @@ test.describe('插件自己的配置', () => {
     await rm(USER_DATA, { recursive: true, force: true });
   });
 
-  test('配置控件在插件自己的页面上；改完落盘', async () => {
+  test('配置控件在插件自己的抽屉里；改完落盘', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPluginPage(app, pet, '番茄钟', 'pomodoro');
 
+      // 配置项不进正文：正文留给内容，设置收在右边的抽屉里。
+      const inBody = await panel.evaluate(
+        () => document.querySelectorAll('#plugin-body .block-settings').length
+      );
+      expect(inBody, '配置控件不该混在正文里').toBe(0);
+
+      // 有配置项才亮出齿轮；点它抽屉才滑出来。
+      await expect(panel.locator('#settings')).toBeVisible();
+      await panel.click('#settings');
+      await expect(panel.locator('.dp-drawer')).toHaveClass(/open/);
+
       // 番茄钟声明了两个时长：默认 25 与 5。
       const values = await panel.evaluate(() =>
-        [...document.querySelectorAll('#plugin-body .block-settings .config-row')].map((row) => [
+        [...document.querySelectorAll('.dp-drawer-body .block-settings .config-row')].map((row) => [
           row.dataset.settingKey,
           row.querySelector('input,select').value,
         ])
       );
-      expect(values, '番茄钟的配置控件没画在它的页面上').toEqual([
+      expect(values, '番茄钟的配置控件没画在它的抽屉里').toEqual([
         ['focusMinutes', '25'],
         ['breakMinutes', '5'],
       ]);
@@ -105,7 +116,7 @@ test.describe('插件自己的配置', () => {
       // 改成 45 分钟。
       await panel.evaluate(() => {
         const input = document.querySelector(
-          '#plugin-body .block-settings .config-row[data-setting-key="focusMinutes"] input'
+          '.dp-drawer-body .block-settings .config-row[data-setting-key="focusMinutes"] input'
         );
         input.value = '45';
         input.dispatchEvent(new Event('change', { bubbles: true }));

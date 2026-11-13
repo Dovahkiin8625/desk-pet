@@ -304,6 +304,9 @@ export async function createPluginHost({
    * **插件的页面就是它自己的配置页**：清单里声明了配置项，
    * 宿主就把它画在那个插件的界面里——桌宠的【设置】不管这件事。
    *
+   * 配置控件画在**右边的抽屉**里，不占正文：
+   * 正文留给内容，设置收起来，要改再点齿轮（与剪贴板插件一个样子）。
+   *
    * 插件自带页面（iframe）时页面是它自己画的，宿主插不进手：
    * 那类插件的配置由它自己的页面负责。
    */
@@ -312,7 +315,7 @@ export async function createPluginHost({
     if (!(record.manifest.settings || []).length) return page;
     return {
       ...page,
-      blocks: [...page.blocks, settingsBlock(settingsItems(record))],
+      drawer: [...(page.drawer || []), settingsBlock(settingsItems(record))],
     };
   }
 

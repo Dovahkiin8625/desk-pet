@@ -13,8 +13,11 @@ export default function createWeatherPlugin() {
       subtitle: view.city ? `城市：${view.city}` : '还没设置城市',
       blocks: [
         view.text ? ctx.ui.textBlock(view.text) : ctx.ui.emptyBlock('还没有天气数据，点「查一下天气」'),
-        ctx.ui.inputBlock('city', '例如：北京', '设置城市', view.city),
         ctx.ui.buttonsBlock([{ id: 'refresh', label: '查一下天气', primary: true }]),
+      ],
+      // 设置项收在右边的抽屉里：正文只放天气本身。
+      drawer: [
+        ctx.ui.inputBlock('city', '例如：北京', '设置城市', view.city),
         ctx.ui.toggleBlock('enabled', '定时播报天气', view.enabled),
       ],
     });

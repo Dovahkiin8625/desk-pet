@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>系统状态</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      /*
+       * 系统状态的面板与独立窗口。
+       *
+       * 颜色、控件全部走 theme.css 的变量（页面里链着那份），
+       * 这里只管**排版**：三条用量怎么画、底下那行字怎么摆。
+       */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body.dp-page {
+        background: var(--dp-bg);
+      }
+      .status {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      /* 独立窗口：铺满整个视口（高度是用户拖出来的）。 */
+      body:not(.dp-panel) .status {
+        height: 100vh;
+      }
+
+      /* ---------------- 三条用量 ---------------- */
+      .meters {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+      }
+      /* 独立窗口里内容少，让它居中；面板里就贴着上面。 */
+      body:not(.dp-panel) .meters {
+        justify-content: center;
+      }
+      .card {
+        padding: 16px 18px;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius-lg);
+        background: var(--dp-surface);
+      }
+      .meter {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 48px;
+        align-items: center;
+        gap: 4px 12px;
+      }
+      .meter + .meter {
+        margin-top: 16px;
+      }
+      .meter .name {
+        font-size: 13px;
+        color: var(--dp-text-soft);
+      }
+      .meter .track {
+        height: 10px;
+        border-radius: 999px;
+        background: var(--dp-border-soft);
+        overflow: hidden;
+      }
+      .meter .track i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--dp-accent), var(--dp-accent-strong));
+        transition: width 0.35s ease;
+      }
+      /* 用得狠了换个颜色：一眼就知道哪条红。 */
+      .meter.hot .track i {
+        background: #d08a6a;
+      }
+      .meter .value {
+        text-align: right;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+      }
+      /* 补充说明（显存多少、显卡叫什么）：占在条的下面。 */
+      .meter .note {
+        grid-column: 2 / -1;
+        font-size: 11px;
+        color: var(--dp-text-faint);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ---------------- 底下那行 ---------------- */
+      .gear {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        border: none;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--dp-text-soft);
+        cursor: pointer;
+        font-size: 15px;
+      }
+      .gear:hover {
+        background: var(--dp-surface-hover);
+      }
+      .gear[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="dp-page">
+    <div class="status">
+      <div class="meters">
+        <div class="card" id="meters"></div>
+      </div>
+
+      <footer class="dp-footer">
+        <span class="grow" id="info">正在读系统状态…</span>
+        <button type="button" class="gear" id="gearBtn" title="设置" aria-label="设置">⚙</button>
+      </footer>
+    </div>
+
+    <script type="module" src="status.js"></script>
+  </body>
+</html>

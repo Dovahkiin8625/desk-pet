@@ -1,4 +1,5 @@
 import { renderPage } from '../ui/blocks.js';
+import { createDrawer } from '../ui/drawer.js';
 
 /**
  * 插件的独立窗口。
@@ -27,6 +28,20 @@ const resetSizeEl = document.getElementById('reset-size');
 const closeEl = document.getElementById('close');
 const frameEl = document.getElementById('plugin-frame');
 
+/**
+ * 设置抽屉：插件的配置项都在这里，不占正文。
+ *
+ * 与面板共用同一份（src/renderer/ui/drawer.js）。
+ * 让开标题栏那一行：抽屉开着的时候，窗口的按钮照样点得着。
+ */
+const drawer = createDrawer({
+  button: document.getElementById('settings'),
+  top: () => document.getElementById('head').offsetHeight,
+});
+
+/** 最近一次画过的页面（换形态、重新画的时候要拿它决定齿轮要不要亮）。 */
+let lastPage = null;
+
 /** 当前是哪种形态：`window` 或 `widget`。 */
 let mode = window.plugin?.mode || 'window';
 /** 插件 id：动作要带着它回去。 */
@@ -47,16 +62,35 @@ function render(payload) {
     payload && typeof payload === 'object' && 'pluginId' in payload && 'data' in payload;
   const page = isEnvelope ? payload.data : payload;
   if (!page) return;
+  lastPage = page;
   titleEl.textContent = page.title || '';
   subtitleEl.textContent = page.subtitle || '';
   statusEl.textContent = page.status || '';
-  if (winEl.dataset.content === 'page') return; // 插件自带页面：内容在 iframe 里
+  if (winEl.dataset.content === 'page') {
+    // 插件自带页面：内容在 iframe 里，它自己管设置（宿主这个齿轮藏起来）。
+    drawer.setAvailable(false);
+    return;
+  }
   renderPage(page, {
     body: bodyEl,
+    // 设置项画在右边的抽屉里。
+    drawer: drawer.body,
     onAction: (actionId, value) => {
       window.plugin?.action?.(actionId, value);
     },
   });
+  applyDrawer();
+}
+
+/**
+ * 齿轮要不要亮。
+ *
+ * 有设置项才亮；小部件太小，抽屉塞不下——那里藏起来。
+ */
+function applyDrawer() {
+  const has = (lastPage?.drawer || []).length > 0;
+  const view = winEl.dataset.mode || 'window';
+  drawer.setAvailable(has && view !== 'widget');
 }
 
 /** 把窗口按钮的状态同步成当前的形态与置顶情况。 */
@@ -75,6 +109,8 @@ async function syncState() {
   // 插件自带页面时宿主不推页面描述，标题栏会空着——
   // 拿插件的名字顶上（宿主推来的页面描述里有更准的标题，推来了就用它的）。
   if (!titleEl.textContent) titleEl.textContent = state.title || '';
+  // 形态变了：齿轮的可见性跟着变（小部件里没有抽屉）。
+  applyDrawer();
 }
 
 pinEl.addEventListener('click', async () => {
@@ -100,6 +136,8 @@ closeEl.addEventListener('click', () => {
 // Esc 关掉窗口：小部件挂在桌面上时也能这么收起来。
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    // 抽屉开着的时候，Esc 先关抽屉（它先处理，标记了 defaultPrevented）。
+    if (e.defaultPrevented) return;
     e.preventDefault();
     window.plugin?.window?.close?.();
   }

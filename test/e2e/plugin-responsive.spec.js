@@ -152,7 +152,7 @@ test.describe('宽版与窄版', () => {
     }
   });
 
-  test('宽版里配置项是一行标签一行控件（别把标签挤没了）', async () => {
+  test('配置项在抽屉里：标签一行、控件一行（别把标签挤没了）', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPanel(app, pet);
@@ -171,6 +171,11 @@ test.describe('宽版与窄版', () => {
       await win.waitForFunction(() => document.querySelector('.block-settings .config-row'), null, {
         timeout: 10000,
       });
+      // 配置项在右边的抽屉里，不在正文里。
+      const inDrawer = await win.evaluate(
+        () => Boolean(document.querySelector('.dp-drawer-body .block-settings .config-row'))
+      );
+      expect(inDrawer, '配置项该在抽屉里').toBe(true);
       const direction = await win.evaluate(
         () => getComputedStyle(document.querySelector('.block-settings .config-row')).flexDirection
       );

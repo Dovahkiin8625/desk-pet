@@ -104,7 +104,11 @@ export async function fetchWeather(latitude, longitude, fetchImpl = fetch) {
  */
 export function weatherLine(city, weather) {
   if (!weather) return '天气暂时查不到';
-  const parts = [city || '这里', weather.text, `${weather.temperature}°C`];
-  if (weather.humidity !== null) parts.push(`湿度 ${weather.humidity}%`);
+  const parts = [city || '这里'];
+  // **每一项都要看有没有**：磁盘上的旧数据可能缺字段，
+  // 拼出来是「北京　undefined　undefined°C」——那种话不能给用户看。
+  if (weather.text) parts.push(weather.text);
+  if (Number.isFinite(weather.temperature)) parts.push(`${weather.temperature}°C`);
+  if (Number.isFinite(weather.humidity)) parts.push(`湿度 ${weather.humidity}%`);
   return parts.join('　');
 }

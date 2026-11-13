@@ -49,6 +49,7 @@ export const INTERACTION_MIN_MAX_TOKENS = 1024;
  * @param {Function} [options.getPersona]
  * @param {Function} [options.getFacts]
  * @param {Function} [options.getNow]
+ * @param {Function} [options.getSnapshot] () => 此刻正在发生的事（一行一条）
  * @param {Function} [options.getTaskStates] () => 手头在做的事
  * @param {Function} [options.getMaxSteps] () => 步数上限
  * @param {Function} [options.appendRecord] 写一条分类记录（聊天历史页要显示这一回合的过程）
@@ -62,6 +63,7 @@ export function createInteractionBackend({
   getPersona = () => ({}),
   getFacts = () => [],
   getNow = () => new Date(),
+  getSnapshot = () => [],
   getTaskStates = () => [],
   getMaxSteps = () => INTERACTION_MAX_STEPS,
   appendRecord = () => {},
@@ -168,6 +170,7 @@ export function createInteractionBackend({
         persona: getPersona(),
         facts: getFacts(),
         now: getNow(),
+        snapshot: getSnapshot() || [],
         taskStates: getTaskStates() || [],
         pluginNames: plugins.map((p) => (typeof p === 'string' ? p : p?.name)).filter(Boolean),
         dispatchEnabled,

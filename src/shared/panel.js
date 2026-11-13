@@ -60,11 +60,14 @@ export const BLOCK_KIND = Object.freeze({
  * 插件页面的形状：
  *
  * ```
- * { pluginId, title, subtitle, status, blocks: [...] }
+ * { pluginId, title, subtitle, status, blocks: [...], drawer: [...] }
  * ```
  *
  * `status` 是插件页面底部的一行提示（刚做完某个动作的结果），
  * `blocks` 里每块的 `kind` 决定它怎么画。
+ *
+ * `drawer` 是**设置项**：它们不进正文，画在右边那个抽屉里
+ * （清单里声明的配置项由宿主放进去，见 src/main/plugins/host.js）。
  */
 
 /** 一段文字。 */
@@ -162,13 +165,15 @@ export function messagesBlock(items) {
 }
 
 /** 造一个插件页面。 */
-export function makePage({ pluginId = '', title = '', subtitle = '', status = '', blocks = [] } = {}) {
+export function makePage({ pluginId = '', title = '', subtitle = '', status = '', blocks = [], drawer = [] } = {}) {
   return {
     pluginId: String(pluginId),
     title: String(title),
     subtitle: String(subtitle),
     status: String(status),
     blocks: Array.isArray(blocks) ? blocks : [],
+    // 设置项：画在右边的抽屉里，不占正文。
+    drawer: Array.isArray(drawer) ? drawer : [],
   };
 }
 

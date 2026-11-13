@@ -1,4 +1,5 @@
 import { metaContractLines } from '../chat/prompt.js';
+import { snapshotSection } from '../snapshot.js';
 import { TASK_STATUS_TEXT } from '../agent/record.js';
 import { TASK_STATUS } from '../../../shared/assistant.js';
 
@@ -33,6 +34,7 @@ const MAX_TASK_LINES = 5;
  * @param {object} [options.persona] 人设
  * @param {string[]} [options.facts] 长期记忆
  * @param {Date} [options.now]
+ * @param {string[]} [options.snapshot] 此刻正在发生的事
  * @param {Array} [options.taskStates] 手头在做的事 `{taskId, title, status, lastStepLabel, elapsedMs}`
  * @param {string[]} [options.pluginNames] 能干的活儿的名字
  * @param {boolean} [options.dispatchEnabled] 能不能派单
@@ -42,6 +44,7 @@ export function buildInteractionPrompt({
   persona = {},
   facts = [],
   now = new Date(),
+  snapshot = [],
   taskStates = [],
   pluginNames = [],
   dispatchEnabled = true,
@@ -84,6 +87,10 @@ export function buildInteractionPrompt({
     `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ` +
       `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
   );
+
+  // **「此刻」与「手头在做的事」是两回事**：
+  // 前者是机器此刻的样子，后者是桌宠自己派出去的活儿。
+  sections.push(snapshotSection(snapshot));
 
   sections.push(['你手头在做的事：', taskLines(taskStates)].join('\n'));
 

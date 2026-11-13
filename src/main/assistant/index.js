@@ -18,6 +18,7 @@ import * as todos from './todos.js';
 import * as reminders from './reminders.js';
 import * as pomodoro from './pomodoro.js';
 import * as systemStatus from './systemStatus.js';
+import { buildSnapshotLines } from './snapshot.js';
 import * as gpu from './gpu.js';
 import * as weather from './weather.js';
 import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
@@ -434,6 +435,8 @@ export function createAssistant({  userDataDir,
     getPersona: () => state?.llm?.persona || {},
     getFacts: () => state?.chat?.facts || [],
     getNow: () => new Date(),
+    // **「此刻正在发生的事」**：每轮现采一次。
+    getSnapshot: () => snapshotLines(),
     // **状态写进提示词**：用户问「某某怎么样了」，模型看一眼就能答，
     // 一次工具往返都不用花（规格 §4.4）。
     getTaskStates: () => agentTasks.list(),
@@ -1001,6 +1004,7 @@ export function createAssistant({  userDataDir,
   function statusView() {
     const cpu = systemStatus.sampleCpuPercent();
     const memory = systemStatus.sampleMemoryPercent();
+    const mem = systemStatus.memoryUsage();
     const thermal = safeThermalState();
     const onBattery = safeOnBattery();
     // GPU 是异步采的：这里读的是最近一次的结果，采不到就是 null。
@@ -1009,6 +1013,8 @@ export function createAssistant({  userDataDir,
       text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery, gpu: gpuInfo }),
       cpu,
       memory,
+      // 内存多少G（界面里画「15.9 / 26.1 GB」用的）。
+      memoryText: systemStatus.formatMemory(mem.total, mem.free),
       thermal,
       thermalText: systemStatus.thermalText(thermal),
       onBattery,
@@ -1031,6 +1037,21 @@ export function createAssistant({  userDataDir,
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 「此刻正在发生的事」——提示词里给模型看的一段实时状态。
+   *
+   * **主动搭话全靠它**：没有这一段，模型只能从历史里挖一件早就结束的事
+   * 当成现状（用户早就手动停掉的音乐，被说成「还在播放」）。
+   */
+  function snapshotLines(now = Date.now()) {
+    return buildSnapshotLines({
+      state: state || {},
+      now,
+      onBattery: safeOnBattery(),
+      thermal: safeThermalState(),
+    });
   }
 
   /** 过热提醒的开关。 */
@@ -1148,9 +1169,13 @@ export function createAssistant({  userDataDir,
     // buildChatMessages 自己会把当前这句话放到最后，
     // 历史里再带一遍的话，模型会看到同一句话出现两次。
     const history = state.chat.messages;
+    // **这一轮的「此刻」**：搭话时全靠它，
+    // 历史里的旧事不再被当成正在发生。
+    const now = Date.now();
     const system = buildSystemPrompt({
       persona: state.llm.persona,
       facts: state.chat.facts,
+      snapshot: snapshotLines(now),
     });
     const messages = buildChatMessages({
       history,
@@ -1159,6 +1184,7 @@ export function createAssistant({  userDataDir,
       // 上下文按**交互层**过滤：它看得见自己派过什么（dispatch），
       // 看不见任务与步骤那些「给人看的」记录（规格 §6）。
       layer: LAYER.INTERACTION,
+      now,
     });
 
     // 把用户说的话记下来：说过就是说过，

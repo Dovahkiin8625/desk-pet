@@ -333,7 +333,7 @@ test('宿主：清单里没有插件的配置——配置归插件自己的页�
   }
 });
 
-test('宿主：插件的配置块出现在插件自己的页面上', async () => {
+test('宿主：插件的配置块出现在插件自己的页面上（画在右边的抽屉里）', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-cfg-'));
   try {
     await makePlugin(
@@ -351,7 +351,9 @@ test('宿主：插件的配置块出现在插件自己的页面上', async () =>
     const host = await createPluginHost({ rootDir: root, userDataDir: root, assistant: {} });
     await host.load();
     const page = await host.open('pomodoro');
-    const block = page.blocks.at(-1);
+    // 配置项不进正文：正文留给内容，设置收在右边的抽屉里。
+    assert.equal(page.blocks.length, 0, '配置项不该混在正文里');
+    const block = page.drawer.at(-1);
     assert.equal(block.kind, 'settings');
     assert.equal(block.items.length, 1);
     assert.equal(block.items[0].key, 'focusMinutes');
@@ -361,8 +363,42 @@ test('宿主：插件的配置块出现在插件自己的页面上', async () =>
   }
 });
 
-test('宿主：在插件页面里改配置，值落盘', async () => {
+test('宿主：插件自己放的设置项与清单里的配置项都在抽屉里', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-cfg-'));
+  try {
+    await makePlugin(
+      root,
+      'pomodoro',
+      {
+        id: 'pomodoro',
+        name: '番茄钟',
+        settings: [{ key: 'focusMinutes', label: '专注时长', type: 'number', default: 25 }],
+      },
+      `export default function create() {
+         return {
+           page: () => ({
+             pluginId: 'pomodoro',
+             title: '番茄钟',
+             blocks: [],
+             drawer: [{ kind: 'toggle', id: 'beep', label: '响一下', checked: true }],
+           }),
+         };
+       }`
+    );
+    const host = await createPluginHost({ rootDir: root, userDataDir: root, assistant: {} });
+    await host.load();
+    const page = await host.open('pomodoro');
+    // 插件自己放的在前，清单里声明的追加在后——都在抽屉里。
+    assert.deepEqual(
+      page.drawer.map((block) => block.kind),
+      ['toggle', 'settings']
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：在插件页面里改配置，值落盘', async () => {  const root = await mkdtemp(join(tmpdir(), 'desk-pet-cfg-'));
   try {
     await makePlugin(
       root,

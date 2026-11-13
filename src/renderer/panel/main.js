@@ -1,6 +1,7 @@
 import { searchPlugins, searchItems } from '../../shared/fuzzy.js';
 import { PANEL_VIEW, SEARCH_VIEW_HEIGHT } from '../../shared/panel.js';
 import { renderPage } from '../ui/blocks.js';
+import { createDrawer } from '../ui/drawer.js';
 
 /**
  * 插件面板的页面。
@@ -48,6 +49,18 @@ const closeEl = document.getElementById('close');
 const detachEl = document.getElementById('detach');
 const widgetEl = document.getElementById('widget');
 const pluginFrameEl = document.getElementById('plugin-frame');
+
+/**
+ * 设置抽屉：插件的配置项都在这里，不占正文。
+ *
+ * 与插件的独立窗口共用同一份（src/renderer/ui/drawer.js）。
+ * 让开标题栏那一行：抽屉开着的时候，面板的「关闭」「分离」照样点得着。
+ */
+const drawer = createDrawer({
+  button: document.getElementById('settings'),
+  // 插件那一栏还没打开时标题栏是藏着的（量出来是 0）——所以每次打开时才量。
+  top: () => document.getElementById('plugin-head').offsetHeight,
+});
 
 /** 插件清单（主进程一次性下发）。 */
 let plugins = [];
@@ -551,6 +564,8 @@ function renderPlugin(page) {
     // 独立窗口那边也是「壳 + iframe」——两处结构一样，界面才是一套。
     pluginBodyEl.hidden = true;
     pluginFrameEl.hidden = false;
+    // 自己的页面有自己的抽屉（剪贴板、录屏就是这样）：宿主这个收起来。
+    drawer.setAvailable(false);
     if (pluginFrameEl.getAttribute('src') !== meta.pageUrl) {
       pluginFrameEl.setAttribute('src', meta.pageUrl);
     }
@@ -568,10 +583,13 @@ function renderPlugin(page) {
     // 面板与插件的独立窗口必须长得一模一样。
     renderPage(page, {
       body: pluginBodyEl,
+      // 设置项画在右边的抽屉里（清单里声明的那些 + 插件自己放的）。
+      drawer: drawer.body,
       onAction: (actionId, value) => {
         window.panel?.action?.(currentPluginId, actionId, value);
       },
     });
+    drawer.setAvailable((page?.drawer || []).length > 0);
 
     // 第一个输入框直接聚焦：用户刚打开「待办」，多半就是想往上写字。
     const firstInput = pluginBodyEl.querySelector('input[type="text"]');
@@ -607,6 +625,8 @@ function renderSearch() {
   pluginFrameEl.removeAttribute('src');
   pluginBodyEl.hidden = false;
   pluginContentHeight = 0;
+  // 抽屉也收起来：下一个插件的设置不该从上一个插件的抽屉里冒出来。
+  drawer.setAvailable(false);
   window.panel?.setCurrentPlugin?.('');
   searchEl.hidden = false;
   pluginEl.hidden = true;
@@ -638,6 +658,8 @@ function moveSelection(delta) {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    // 抽屉开着的时候，Esc 先关抽屉（它先处理，标记了 defaultPrevented）。
+    if (e.defaultPrevented) return;
     e.preventDefault();
     // 插件视图里 Esc 是「回到搜索」，搜索视图里是「关掉面板」。
     if (currentPluginId) window.panel?.back?.();

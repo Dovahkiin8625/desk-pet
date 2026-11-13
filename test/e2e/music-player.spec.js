@@ -336,7 +336,9 @@ test.describe('音乐播放器插件', () => {
       await expect(frame.locator('#np-title')).toHaveText('测试歌曲', { timeout: 20000 });
 
       // 歌词窗是插件自己开的窗（宿主那套容不下它）。
-      await frame.locator('#lyrics').click();
+      // 桌面歌词的开关在右边的抽屉里。
+      await frame.locator('#gear').click();
+      await frame.locator('#setLyrics').check();
       const lyrics = await findWindow(app, 'pages/lyrics.html');
       expect(lyrics, '桌面歌词窗没有出现').toBeTruthy();
       await lyrics.waitForLoadState('domcontentloaded');
@@ -363,18 +365,20 @@ test.describe('音乐播放器插件', () => {
       await expect(frame.locator('#pos')).not.toHaveText('00:00', { timeout: 20000 });
 
       // 起始音量是 0（测试配置里写的）。
-      await expect(frame.locator('#vol')).toHaveValue('0');
+      // 音量滑块在右边的抽屉里。
+      await frame.locator('#gear').click();
+      await expect(frame.locator('#setVolume')).toHaveValue('0');
 
       // 用户把滑块拖到 42。拖的过程中主进程还在每 500ms 推一次状态。
-      await frame.locator('#vol').evaluate((input) => {
+      await frame.locator('#setVolume').evaluate((input) => {
         input.value = '42';
         input.dispatchEvent(new Event('input', { bubbles: true }));
       });
       await panel.waitForTimeout(1200);
-      await expect(frame.locator('#vol')).toHaveValue('42');
+      await expect(frame.locator('#setVolume')).toHaveValue('42');
 
       // 松手：主进程要真的收到这个音量。
-      await frame.locator('#vol').evaluate((input) => {
+      await frame.locator('#setVolume').evaluate((input) => {
         input.dispatchEvent(new Event('change', { bubbles: true }));
       });
       await expect

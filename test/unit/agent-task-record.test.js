@@ -102,8 +102,9 @@ test('关键：这三种记录一律不进模型上下文', () => {
 
   const convo = buildChatMessages({ history: messages, userText: '再说一句' });
   const texts = convo.map((m) => m.content);
-  assert.ok(texts.includes('帮我查天气'));
-  assert.ok(texts.includes('今天晴'));
+  // 历史每条都带相对时间，所以按「包含」来断。
+  assert.ok(texts.some((t) => String(t).includes('帮我查天气')));
+  assert.ok(texts.some((t) => String(t).includes('今天晴')));
   assert.ok(!texts.some((t) => String(t).includes('fs.read')), '步骤不能进上下文');
   assert.ok(!texts.some((t) => String(t).includes('整理资料')), '任务状态不能进上下文');
   // 只有 user 与 reply 两种分类进**任何一层**的上下文；
