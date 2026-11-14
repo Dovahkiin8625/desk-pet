@@ -1,4 +1,5 @@
 import { detectCubismVersion } from '../../shared/live2d.js';
+import { SPINE_TYPE, isSpineManifest } from '../../shared/spine.js';
 
 // 格式判别规则在 src/shared/live2d.js：主进程与渲染层共用同一份，
 // 否则会出现「导入时认得是 Cubism 2，加载时当成 Cubism 4」。
@@ -208,6 +209,30 @@ export async function loadManifest(modelId, registry) {
     if (res.ok) manifestJson = await res.json();
   } catch {
     manifestJson = null;
+  }
+
+  // Spine 模型没有设置文件：骨架与图集在 pet.json 里点名。
+  // 注册表条目与 pet.json 任一说是 Spine 就走这条路。
+  if (entry.type === SPINE_TYPE || isSpineManifest(manifestJson)) {
+    if (!manifestJson?.spine) throw new Error(`Spine 模型缺少清单：${entryId}`);
+    return {
+      ...manifestJson,
+      id: entryId,
+      name: entry.name || manifestJson.name || entryId,
+      type: SPINE_TYPE,
+      modelFile: '',
+      cubismVersion: 0,
+      viewport: manifestJson.viewport || { width: 300, height: 560 },
+      fit: manifestJson.fit || { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
+      // Spine 没有表情：语义表情一律留空（交互层于是只播动作）。
+      expressions: {},
+      availableExpressions: [],
+      motions: manifestJson.motions || {},
+      motionGroups: manifestJson.motionGroups || {},
+      derived: false,
+      base: urlBase,
+      source: entry.source || 'bundled',
+    };
   }
 
   // 设置文件名（Cubism 4 是 .model3.json，Cubism 2 是 .model.json 之类）。

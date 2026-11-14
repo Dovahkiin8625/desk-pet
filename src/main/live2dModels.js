@@ -1,7 +1,9 @@
-import { readFile, readdir, stat, mkdir, copyFile, rm, lstat, open } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdir, copyFile, rm, lstat, open, writeFile } from 'node:fs/promises';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { readJson, writeJson } from './store.js';
 import { detectCubismVersion, settingsFieldForVersion } from '../shared/live2d.js';
+import { SPINE_TYPE } from '../shared/spine.js';
+import { findSpineVariant, isSpineGameConfig, planSpineImport } from './spineModels.js';
 
 // 用户导入的 Live2D 模型：**注册表、校验、导入、删除**都归这里管。
 //
@@ -50,13 +52,19 @@ function normalizeEntry(entry, { base, source }) {
   // 不能给它补一个 Cubism 4 的默认 model3 名字——补了的话
   // 渲染层会去找一个根本不存在的 .model3.json。
   const isCubism2 = typeof entry.model2 === 'string' && entry.model2 !== '';
+  // Spine 模型没有「设置文件」：它的骨架与图集在 pet.json 里点名。
+  const isSpine = entry.type === SPINE_TYPE;
   return {
     ...entry,
     id,
     // 名字缺失时退回 id：下拉框里出现「undefined」比显示 id 更糟。
     name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
     manifest: entry.manifest || `${id}/pet.json`,
-    model3: isCubism2 ? entry.model3 || '' : entry.model3 || `${id}.model3.json`,
+    model3: isSpine
+      ? entry.model3 || ''
+      : isCubism2
+        ? entry.model3 || ''
+        : entry.model3 || `${id}.model3.json`,
     // base 是 URL 前缀，source 决定这个形象能不能被删除。
     base,
     source,
@@ -189,20 +197,21 @@ async function isImageFile(path) {
 /**
  * 这是**不是 Cubism** 的模型格式？
  *
- * 有些游戏（棕色尘埃2、NIKKE 等）用的根本不是 Cubism，而是 Spine：
- * 设置文件里没有 moc、没有纹理，只有 skeleton（骨骼）与 atlases（图集），
- * 动画数据在 skeleton_*.json 与 .atlas 里。本程序渲染不了。
+ * 有些游戏用的是 Spine（棕色尘埃2、NIKKE 等）：设置文件里没有 moc、
+ * 没有纹理，只有 skeleton（骨骼）与 atlases（图集）。那种格式本程序**能**渲染
+ * （见 spineModels.js），这里只留「不是 Spine、也认不出来」的那些。
  */
 function isForeignGameModel(json) {
   return !!json && typeof json === 'object'
     && json.skeleton !== undefined
-    && json.atlases !== undefined;
+    && json.atlases !== undefined
+    && !isSpineGameConfig(json);
 }
 
 /**
  * 说清这是哪种非 Cubism 格式——给用户看的，得具体。
  *
- * Spine 的 skeleton 文件里有个 "spine" 字段（版本号），
+ * Spine 的骨架文件里有个 "spine" 字段（版本号），
  * 看到它就能确定是 Spine；否则只说是游戏自有格式。
  *
  * 清单里点名的 skeleton 文件有时根本不存在（游戏自己都指向了
@@ -228,11 +237,11 @@ async function describeForeignFormat(modelRoot, json) {
     const skeleton = await readJsonOrNull(p);
     if (skeleton && typeof skeleton === 'object') {
       const spine = skeleton.spine ?? skeleton.skeleton?.spine;
-      if (spine) return 'Spine 骨骼动画（skeleton_*.json + .atlas 图集）';
+      if (spine) return `Spine 骨骼动画（${spine}，运行时只读得懂 4.1）`;
     }
     // Spine 的骨骼也可能是**二进制**的：文件头里带着版本号（3.8.99、4.1.24…）。
     const head = await readMagic(p, 256);
-    if (/\d+\.\d+\.\d+/.test(head)) return 'Spine 骨骼动画（skeleton_*.json + .atlas 图集）';
+    if (/\d+\.\d+\.\d+/.test(head)) return 'Spine 骨骼动画（骨架版本不是 4.1，运行时读不懂）';
   }
   return '游戏自有的 Live2D 运行时格式（skeleton / atlases 资源）';
 }
@@ -262,18 +271,24 @@ async function scoreSettingsFile(modelRoot, json, version) {
 /**
  * 一个目录里的候选设置文件：逐个读，按内容判别，按可信度打分。
  *
- * 返回 hits（像设置文件的）与 foreign（非 Cubism 格式的）。
+ * 返回 hits（像设置文件的）与 foreign（非 Cubism、也不是 Spine 的）。
  */
 async function collectSettingsHits(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
   const hits = [];
   let foreign = null;
+  let spineConfigFile = '';
   for (const e of entries) {
     if (!e.isFile() || !e.name.toLowerCase().endsWith('.json')) continue;
     const c = { modelRoot: dir, file: e.name };
     const json = await readJsonOrNull(join(dir, e.name));
     const version = detectCubismVersion(json);
     if (version === 0) {
+      // Spine 配置：整个目录合成**一个**候选项（变体的挑选在目录内做）。
+      if (isSpineGameConfig(json)) {
+        if (!spineConfigFile) spineConfigFile = e.name;
+        continue;
+      }
       // 非 Cubism 格式：记下来，好给出准确的原因，
       // 而不是一句「没找到设置文件」。
       if (!foreign && isForeignGameModel(json)) {
@@ -283,10 +298,32 @@ async function collectSettingsHits(dir) {
     }
     hits.push({
       ...c,
+      kind: 'live2d',
       version,
       score: await scoreSettingsFile(dir, json, version),
       name: typeof json?.name === 'string' ? json.name : '',
     });
+  }
+  if (spineConfigFile) {
+    const variant = await findSpineVariant(dir);
+    if (variant) {
+      hits.push({
+        modelRoot: dir,
+        file: variant.configFile,
+        kind: 'spine',
+        version: 0,
+        score: 1,
+        variant,
+      });
+    } else if (!foreign) {
+      // 是 Spine 配置，但骨架版本读不了：说清楚为什么导不了。
+      foreign = {
+        modelRoot: dir,
+        file: spineConfigFile,
+        foreign: true,
+        reason: 'Spine 骨骼动画（没有找到 4.1 的骨架，运行时读不懂）',
+      };
+    }
   }
   return { hits, foreign };
 }
@@ -294,6 +331,7 @@ async function collectSettingsHits(dir) {
 /** 候选之间怎么排序：引用文件真的存在的那份优先；再是 Cubism 4 优先于 2；最后按文件名。 */
 function compareHits(a, b) {
   if (a.score !== b.score) return b.score - a.score;
+  if (a.kind !== b.kind) return a.kind === 'live2d' ? -1 : 1;
   if (a.version !== b.version) return b.version - a.version;
   return a.file.localeCompare(b.file);
 }
@@ -348,6 +386,7 @@ export async function findModelSettingsFile(dir) {
   hits.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
     if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.kind !== b.kind) return a.kind === 'live2d' ? -1 : 1;
     if (a.version !== b.version) return b.version - a.version;
     return a.file.localeCompare(b.file);
   });
@@ -645,6 +684,9 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
         '桌宠用 Cubism Core 渲染不了它。请换用 Cubism 2 / Cubism 4 格式的模型。'
     );
   }
+  if (found.kind === 'spine') {
+    return importSpineModelDir({ sourceDir, variant: found.variant, rootDir, userDataDir, onProgress });
+  }
   if (found.ambiguous) {
     console.warn('[desk-pet] 所选目录里有多个模型设置文件，取其中最可信的：', found.file);
   }
@@ -751,6 +793,55 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
     return { ...entry, base: USER_MODELS_URL_PREFIX, source: 'user' };
   } catch (err) {
     // 回滚：删掉已复制的目录。留下半截模型只会让下次导入撞上残留。
+    await rm(destRoot, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * 导入一个 **Spine** 模型目录。
+ *
+ * 与 Live2D 的导入流程同构，但复制的东西不一样：
+ * 游戏那套目录里还有一堆语音、别的角色、过场动画——全拷进来既慢又占地方。
+ * 这里只复制挑中的那一份骨架、图集与纹理，并把文件名整理成 Spine 的规矩
+ * （见 spineModels.js）。
+ */
+async function importSpineModelDir({ sourceDir, variant, rootDir, userDataDir, onProgress }) {
+  const name = basename(sourceDir);
+  const existing = await readMergedRegistry(rootDir, userDataDir, { includeRemoved: true });
+  const takenIds = existing.map((m) => m.id);
+  // 目录名是中文时 slug 之后什么都不剩：退回骨架文件名。
+  const base = slugifyModelId(name) || slugifyModelId(variant.skeleton.name) || 'spine';
+  const id = uniqueModelId(base, takenIds);
+
+  const destRoot = join(userModelsDir(userDataDir), id);
+  await mkdir(destRoot, { recursive: true });
+  try {
+    const plan = await planSpineImport(variant, { id, name });
+
+    let bytes = 0;
+    for (const f of plan.files) bytes += (await stat(f.from)).size;
+    if (bytes > MAX_TOTAL_BYTES) {
+      throw new Error(`模型文件超过 ${MAX_TOTAL_BYTES / 1024 / 1024}MB 上限，已中止复制。`);
+    }
+
+    onProgress?.({ phase: 'copy', copied: 0, total: plan.files.length, file: '' });
+    let copied = 0;
+    for (const f of plan.files) {
+      await copyFile(f.from, join(destRoot, f.to));
+      copied += 1;
+      onProgress?.({ phase: 'copy', copied, total: plan.files.length, file: basename(f.to) });
+    }
+    await writeFile(join(destRoot, 'model.atlas'), plan.atlasText, 'utf8');
+    await writeJson(destRoot, 'pet.json', plan.pet);
+
+    const entry = { id, name, type: SPINE_TYPE, manifest: `${id}/pet.json` };
+    const currentRegistry = await readUserRegistry(userDataDir);
+    await writeUserRegistry(userDataDir, [...currentRegistry, entry]);
+
+    onProgress?.({ phase: 'done', copied, total: copied, file: '' });
+    return { ...entry, base: USER_MODELS_URL_PREFIX, source: 'user' };
+  } catch (err) {
     await rm(destRoot, { recursive: true, force: true }).catch(() => {});
     throw err;
   }

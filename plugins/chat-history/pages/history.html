@@ -5,9 +5,12 @@
     <title>聊天记录</title>
     <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
     <style>
+      html {
+        height: 100%;
+      }
       body {
         margin: 0;
-        /* 独立窗口里按视口铺满；面板里按内容撑开（见 pluginPage.js 的说明）。 */
+        /* 独立窗口里按视口铺满；面板里也是定高，由 #list 自己滚。 */
         min-height: 100vh;
         font: var(--dp-font);
         color: var(--dp-text);
@@ -15,12 +18,18 @@
       }
       body.dp-panel {
         min-height: 0;
+        height: 100%;
+        overflow: hidden;
       }
       #wrap {
         display: flex;
         flex-direction: column;
         gap: var(--dp-gap);
         padding: 12px;
+      }
+      body.dp-panel #wrap {
+        height: 100%;
+        box-sizing: border-box;
       }
       #head {
         display: flex;
@@ -42,6 +51,11 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
+      }
+      body.dp-panel #list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
       }
       /* 分组：今天 / 昨天 / 更早按月。 */
       .day {
@@ -203,21 +217,6 @@
         color: var(--dp-text-faint);
         text-align: center;
         padding: 24px 0;
-      }
-      /* 宽版（独立窗口）：组里的对话块分两列，组标题跨两列。 */
-      @media (min-width: 560px) {
-        #list {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 10px 16px;
-          align-items: start;
-        }
-        .day {
-          display: contents;
-        }
-        .day-title {
-          grid-column: 1 / -1;
-        }
       }
     </style>
   </head>

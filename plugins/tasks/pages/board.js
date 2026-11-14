@@ -382,8 +382,24 @@ function render(payload) {
   reportHeight();
 }
 
-/** 报高度：面板的窗口是按内容撑开的。 */
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 620;
+/** 面板里只报一次：任务再多高度也不再变。 */
+let panelHeightReported = false;
+
+/**
+ * 报高度。
+ *
+ * 面板里报一个定值（plugin.json 的 window.height）：任务条数再多，
+ * 窗口也不跟着变长，多出来的在页面里滚。
+ */
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     const rect = document.body.getBoundingClientRect();
     surface.setHeight(Math.ceil(Math.max(rect.height, document.body.scrollHeight)));

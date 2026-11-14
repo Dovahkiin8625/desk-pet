@@ -9,7 +9,7 @@
  * 页面自己管三件事：
  * - 状态：主进程给什么就画什么（`data()` / `act()` 的回包 / `tick()`）；
  * - 动作：用户动了什么，送给主进程（`act()`）；
- * - 高度：面板的窗口是按内容撑开的，页面要报自己的高度。
+ * - 高度：面板里报一个定值（plugin.json 的 window.height），数据再多也不变。
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { hydrateIcons, iconSvg } from '/src/renderer/ui/icons.js';
@@ -19,10 +19,10 @@ const surface = bindSurface();
 hydrateIcons();
 
 /**
- * 面板里与独立窗口里，高度策略是**相反**的：
+ * 面板里与独立窗口里，高度策略不一样：
  *
- * - 面板的窗口按内容撑开：页面报多高，面板就开多高。
- *   所以面板里不能按视口高度铺满（铺满了就与面板互相卡住）。
+ * - 面板的窗口是定高的：页面报一个定值（plugin.json 的 window.height），
+ *   面板就按那个高度开窗。内容比视口高时在页面内部滚动。
  * - 独立窗口的高度是用户拖出来的：按视口铺满才对。
  *
  * CSS 靠 body 上的这个类分档（见 studio.css）。
@@ -630,8 +630,19 @@ surface.onTick((data) => {
 
 void loadMicDevices();
 
-// —— 报高度：面板的窗口是按内容撑开的 ——
+// —— 报高度：面板里报一个定值（plugin.json 的 window.height）——
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 620;
+/** 面板里只报一次：数据再多高度也不再变。 */
+let panelHeightReported = false;
+
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     // 量**内容**的高度，不是视口的。
     //
@@ -649,7 +660,7 @@ function reportHeight() {
   });
 }
 
-if (typeof ResizeObserver === 'function') {
+if (!surface.inPanel && typeof ResizeObserver === 'function') {
   new ResizeObserver(() => reportHeight()).observe(document.body);
 }
 window.addEventListener('resize', reportHeight);

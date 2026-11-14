@@ -116,12 +116,17 @@ function defaultOpen(node, key) {
  * 每来一条就重画整个列表的话，用户展开的东西会被收起来，
  * 视线也会被拽走：他刚展开想看的内容，一眨眼就没了。
  */
+/** 实际滚动的那个元素：面板里是 #list 自己滚，独立窗口里是整页。 */
+function scrollerEl() {
+  return surface.inPanel ? listEl : document.scrollingElement || document.documentElement;
+}
+
 function captureView() {
   const keys = assignKeys(listEl);
   for (const [node, key] of keys) {
     openStates.set(key, node.open);
   }
-  const scroller = document.scrollingElement || document.documentElement;
+  const scroller = scrollerEl();
   return {
     top: scroller ? scroller.scrollTop : 0,
     height: scroller ? scroller.scrollHeight : 0,
@@ -138,7 +143,7 @@ function restoreView(view) {
     }
     node.open = defaultOpen(node, key);
   }
-  const scroller = document.scrollingElement || document.documentElement;
+  const scroller = scrollerEl();
   if (!scroller) return;
   // 新的在上面：他本来停在最上面（正在看最新那条），视口就别动，
   // 新记录直接出现在眼前；往下滚过了，才锚住他正在读的那一条。
@@ -385,13 +390,26 @@ function render() {
   reportHeight();
 }
 
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 680;
+/** 面板里只报一次：数据再多高度也不再变。 */
+let panelHeightReported = false;
+
 /**
- * 报高度：面板的窗口是按内容撑开的。
+ * 报高度。
  *
- * 量**内容**的高度，不是视口的——视口至少那么高，
+ * 面板里报一个定值（plugin.json 的 window.height）：记录条数再多，
+ * 窗口也不跟着变长，多出来的在页面里滚。
+ * 独立窗口量**内容**的高度，不是视口的——视口至少那么高，
  * 报多了窗口就再也缩不回去。
  */
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     const rect = document.body.getBoundingClientRect();
     const height = Math.ceil(Math.max(rect.height, document.body.scrollHeight));

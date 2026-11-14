@@ -56,6 +56,8 @@ test.describe('Cubism 2 老模型', () => {
       await settings.waitForFunction(() => document.querySelectorAll('#model option').length > 0, null, {
         timeout: 15000,
       });
+      // 形象在「外观」这一节里：不切过去，「导入模型…」是看不见的。
+      await settings.click('#tab-appearance');
 
       await settings.click('#importModel');
 

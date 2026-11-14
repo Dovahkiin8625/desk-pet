@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>资讯</title>
+  <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      background: transparent;
+      overflow: hidden;
+      height: 100%;
+      font: var(--dp-font);
+      font-size: 12px;
+      color: var(--dp-text);
+    }
+    #feed {
+      -webkit-app-region: no-drag;
+      font: inherit;
+      color: var(--dp-text);
+      background: var(--dp-surface);
+      border: 1px solid var(--dp-border);
+      border-radius: 6px;
+      padding: 2px 6px;
+      max-width: 100%;
+    }
+    #list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .row {
+      -webkit-app-region: no-drag;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      text-align: left;
+      border: none;
+      background: transparent;
+      color: var(--dp-text);
+      font: inherit;
+      padding: 4px 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      flex: none;
+    }
+    .row:hover { background: var(--dp-surface-active); }
+    .row .rank { color: var(--dp-text-faint); flex: none; font-variant-numeric: tabular-nums; }
+    .row .title {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .row .hint { color: var(--dp-text-faint); flex: none; font-size: 10px; }
+    #empty {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--dp-text-soft);
+    }
+    #empty[hidden] { display: none; }
+    #foot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--dp-text-faint);
+      font-size: 11px;
+      flex: none;
+    }
+    #foot .spacer { flex: 1; }
+    #foot button {
+      -webkit-app-region: no-drag;
+      border: none; background: transparent; cursor: pointer;
+      color: var(--dp-text-faint); font: inherit;
+      padding: 2px 6px; border-radius: 5px;
+    }
+    #foot button:hover { background: var(--dp-accent-soft); color: var(--dp-text-soft); }
+  </style>
+</head>
+<body>
+  <div class="dp-widget-card">
+    <div class="dp-widget-head">
+      <span>资讯</span>
+      <span class="spacer"></span>
+      <button id="expand" title="变回独立窗口"><span class="icon" data-icon="frame"></span></button>
+      <button id="close" title="收起来"><span class="icon" data-icon="close"></span></button>
+    </div>
+    <select id="feed" aria-label="榜单"></select>
+    <div id="list"></div>
+    <div id="empty" hidden>暂时拉不到</div>
+    <div id="foot">
+      <span id="updated"></span>
+      <span class="spacer"></span>
+      <button id="refresh">刷新</button>
+    </div>
+  </div>
+
+  <script type="module" src="/plugins/zixun/widget.js"></script>
+</body>
+</html>

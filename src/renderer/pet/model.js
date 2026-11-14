@@ -1,5 +1,6 @@
 import { disposeTextures } from './texture.js';
 import { pickModelClass } from '../live2dRuntime.js';
+import { disposeSpineModel } from '../spine/model.js';
 
 /**
  * 加载 Live2D 模型。
@@ -27,6 +28,22 @@ export async function loadPetModel(manifest) {
 /** 销毁模型并显式释放纹理，避免多次切换后显存持续增长。 */
 export function disposePetModel(model) {
   if (!model) return 0;
+  // Spine 模型走 pixi 7，纹理不在 Live2D 那套里。
+  if (model.__kind === 'spine') {
+    let released = 0;
+    try {
+      released = disposeSpineModel(model);
+    } catch (err) {
+      console.warn('[desk-pet] Spine 模型释放失败：', err?.message);
+    }
+    try {
+      if (model.parent) model.parent.removeChild(model);
+      model.destroy({ children: true });
+    } catch {
+      /* ignore */
+    }
+    return released;
+  }
   let released = 0;
   try {
     released = disposeTextures(model);

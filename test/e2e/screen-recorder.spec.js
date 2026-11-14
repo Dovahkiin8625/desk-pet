@@ -477,8 +477,8 @@ test.describe('录屏插件', () => {
       const panel = await openRecorder(app, pet);
       const frame = studio(panel);
       await waitStudioReady(frame);
-      // 等预览图上屏：图片一到位，页面内容的高度就变了，
-      // 面板要跟着把窗口撑开——这一步是「显示得全」的关键。
+      // 等预览图上屏：这一步只是让页面加载完，
+      // 面板是定高的，窗口不会再跟着撑开。
       await new Promise((r) => setTimeout(r, 2500));
 
       // 面板窗口（主进程那边量到的实际高度）。

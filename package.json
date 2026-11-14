@@ -16,9 +16,12 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@esotericsoftware/spine-core": "^4.1.55",
+    "@esotericsoftware/spine-pixi": "^4.1.55",
     "live2dcubismcore": "1.0.2",
     "pixi-live2d-display": "0.4.0",
-    "pixi.js": "6.5.10"
+    "pixi.js": "6.5.10",
+    "pixi7": "npm:pixi.js@^7.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

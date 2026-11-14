@@ -1,7 +1,7 @@
 // 设置页的分区与「它记住的事」的端到端验证。
 //
 // 这里钉三件事：
-//   1. 分区重排后是六个，「外观」与「桌面助理」并成了「桌宠」；
+//   1. 分区是六个：形象与大小在「外观」，它什么时候出声在「语音」；
 //   2. 记忆能**逐条**删——删一条不牵连别的，聊天记录也不受影响；
 //   3. 「先应一声」的等待时长能改，改了落盘。
 import { test, expect, _electron as electron } from '@playwright/test';
@@ -91,7 +91,7 @@ test.describe('设置页分区与记忆', () => {
     await rm(USER_DATA, { recursive: true, force: true });
   });
 
-  test('分区是七个，外观与桌面助理并成了「桌宠」', async () => {
+  test('分区是六个：形象与大小在「外观」，出声的时机在「语音」', async () => {
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA);
     try {
@@ -100,20 +100,30 @@ test.describe('设置页分区与记忆', () => {
       const labels = await settings.evaluate(() =>
         Array.from(document.querySelectorAll('#nav .nav-tab .nav-label')).map((el) => el.textContent.trim())
       );
-      expect(labels, '分区和设计对不上').toEqual(['桌宠', '外观', '语音', '对话', '记忆', '插件', '系统']);
+      expect(labels, '分区和设计对不上').toEqual(['外观', '语音', '对话', '记忆', '插件', '系统']);
+      // 「桌宠」那一节已经没了。
+      expect(await settings.locator('#tab-pet').count(), '还有「桌宠」这一节').toBe(0);
 
-      // 「桌宠」这一节里既有形象，也有它什么时候出声。
-      await settings.click('#tab-pet');
-      await settings.waitForSelector('#panel-pet:not([hidden])', { timeout: 10000 });
-      expect(await settings.isVisible('#model'), '桌宠这一节里没有形象').toBe(true);
-      expect(await settings.isVisible('#chime'), '桌宠这一节里没有整点报时').toBe(true);
-      expect(await settings.isVisible('#greeting'), '桌宠这一节里没有启动问候').toBe(true);
-
-      // 「外观」这一节里是主题与明暗。
+      // 「外观」这一节里是形象、它的大小、主题与明暗。
       await settings.click('#tab-appearance');
       await settings.waitForSelector('#panel-appearance:not([hidden])', { timeout: 10000 });
+      expect(await settings.isVisible('#model'), '外观这一节里没有形象').toBe(true);
+      expect(await settings.isVisible('#scale'), '外观这一节里没有缩放').toBe(true);
+      expect(await settings.isVisible('#opacity'), '外观这一节里没有透明度').toBe(true);
       expect(await settings.locator('input[name="mode"]').count(), '外观这一节里没有明暗').toBe(3);
       expect(await settings.locator('#themeSelect option').count(), '外观这一节里没有主题清单').toBeGreaterThan(0);
+
+      // 「语音」这一节里管它什么时候出声。
+      await settings.click('#tab-voice');
+      await settings.waitForSelector('#panel-voice:not([hidden])', { timeout: 10000 });
+      expect(await settings.isVisible('#chime'), '语音这一节里没有整点报时').toBe(true);
+      expect(await settings.isVisible('#greeting'), '语音这一节里没有启动问候').toBe(true);
+      expect(await settings.isVisible('#sound'), '语音这一节里没有提示音').toBe(true);
+
+      // 插件的事归插件自己管：设置页里不再重复一份提示。
+      const bodyText = await settings.textContent('body');
+      expect(bodyText).not.toContain('双击一下桌宠');
+      expect(bodyText).not.toContain('插件的设置归插件自己管');
     } finally {
       await app.close();
     }

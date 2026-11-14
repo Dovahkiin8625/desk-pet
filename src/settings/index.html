@@ -194,6 +194,8 @@
       border-top: 1px solid var(--border-hair);
     }
     .group-title { font-size: 13px; font-weight: 600; color: var(--accent-ink); margin: 0 0 12px; }
+    /* 面板开头的分组：上面已经是标题，不必再来一道分隔线。 */
+    .panel > .group:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
 
     /* ---------- 二级标签（对话分区里的一组组设置） ---------- */
     /* 标签**不换行**：换行后折下去的那个看着像个小标题，
@@ -521,15 +523,9 @@
     <div class="shell">
       <!-- role=tablist 直接落在 nav 上：中间夹一层普通 div 会切断 ARIA 父子关系。 -->
       <nav class="nav" id="nav" role="tablist" aria-orientation="vertical" aria-label="设置分类">
-        <button type="button" class="nav-tab" id="tab-pet" role="tab"
-                data-section="pet" aria-controls="panel-pet"
-                aria-selected="true" tabindex="0">
-          <span class="nav-label">桌宠</span>
-          <span class="nav-summary" data-summary="pet">—</span>
-        </button>
         <button type="button" class="nav-tab" id="tab-appearance" role="tab"
                 data-section="appearance" aria-controls="panel-appearance"
-                aria-selected="false" tabindex="-1">
+                aria-selected="true" tabindex="0">
           <span class="nav-label">外观</span>
           <span class="nav-summary" data-summary="appearance">—</span>
         </button>
@@ -567,9 +563,9 @@
 
       <main class="pane" id="pane">
         <!-- 同一时刻只有一个面板可见，所以文档里正好有一个 h1。 -->
-        <section class="panel" id="panel-pet" role="tabpanel" aria-labelledby="tab-pet">
-          <h1>桌宠</h1>
-          <p class="panel-sub">它长什么样，在桌面上占多大，什么时候出声。</p>
+        <section class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
+          <h1>外观</h1>
+          <p class="panel-sub">它长什么样，在桌面上占多大，界面什么颜色。</p>
 
           <div class="field stack">
             <label for="model">形象</label>
@@ -589,21 +585,54 @@
             <p class="hint error" id="importReport" hidden></p>
           </div>
 
-          <div class="field">
-            <label for="scale">缩放</label>
-            <div class="control range">
-              <input type="range" id="scale" min="0.5" max="2" step="0.05">
-              <span class="val" id="scaleVal"></span>
+          <div class="group">
+            <h2 class="group-title">在桌面上</h2>
+
+            <div class="field">
+              <label for="scale">缩放</label>
+              <div class="control range">
+                <input type="range" id="scale" min="0.5" max="2" step="0.05">
+                <span class="val" id="scaleVal"></span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="opacity">透明度</label>
+              <div class="control range">
+                <input type="range" id="opacity" min="0.2" max="1" step="0.05">
+                <span class="val" id="opacityVal"></span>
+              </div>
             </div>
           </div>
 
-          <div class="field">
-            <label for="opacity">透明度</label>
-            <div class="control range">
-              <input type="range" id="opacity" min="0.2" max="1" step="0.05">
-              <span class="val" id="opacityVal"></span>
+          <div class="group">
+            <h2 class="group-title">界面配色</h2>
+
+            <div class="field">
+              <label for="themeSelect">主题</label>
+              <div class="control">
+                <select id="themeSelect"></select>
+              </div>
             </div>
+
+            <div class="field">
+              <label>明暗</label>
+              <div class="control">
+                <div class="seg" role="radiogroup" aria-label="明暗">
+                  <label><input type="radio" name="mode" value="light"><span>浅色</span></label>
+                  <label><input type="radio" name="mode" value="dark"><span>深色</span></label>
+                  <label><input type="radio" name="mode" value="system"><span>跟随系统</span></label>
+                </div>
+              </div>
+            </div>
+            <p class="hint">「跟随系统」跟着 Windows 的深浅色设置走。</p>
+            <p class="hint">换个主题整个应用一起换：面板、插件窗口与气泡都跟着变。</p>
           </div>
+        </section>
+
+        <section class="panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+          <h1>语音</h1>
+          <p class="panel-sub">它什么时候出声，出声时怎么配。</p>
 
           <div class="group">
             <h2 class="group-title">它什么时候出声</h2>
@@ -621,42 +650,7 @@
                 <label for="sound"><span class="t-label">提示音</span></label>
               </div>
             </div>
-
-            <p class="hint">
-              待办、提醒、番茄钟在<b>插件面板</b>里：<b>双击一下桌宠</b>，输入关键词就能找到。
-              剪贴板、天气、过热提醒的开关在<b>各自的插件页面</b>里——
-              插件的设置归插件自己管，这里不重复一份。
-            </p>
           </div>
-        </section>
-
-        <section class="panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance" hidden>
-          <h1>外观</h1>
-          <p class="panel-sub">界面的配色。面板、插件窗口与气泡会一起换。</p>
-
-          <div class="field">
-            <label for="themeSelect">主题</label>
-            <div class="control">
-              <select id="themeSelect"></select>
-            </div>
-          </div>
-
-          <div class="field">
-            <label>明暗</label>
-            <div class="control">
-              <div class="seg" role="radiogroup" aria-label="明暗">
-                <label><input type="radio" name="mode" value="light"><span>浅色</span></label>
-                <label><input type="radio" name="mode" value="dark"><span>深色</span></label>
-                <label><input type="radio" name="mode" value="system"><span>跟随系统</span></label>
-              </div>
-            </div>
-          </div>
-          <p class="hint">「跟随系统」跟着 Windows 的深浅色设置走。</p>
-        </section>
-
-        <section class="panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
-          <h1>语音</h1>
-          <p class="panel-sub">桌宠说话时用 MiniMax 合成语音。</p>
 
           <div class="toggle solo">
             <input type="checkbox" id="ttsEnabled">

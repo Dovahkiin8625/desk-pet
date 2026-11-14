@@ -18,7 +18,7 @@ const surface = bindSurface();
 // 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
 hydrateIcons();
 
-// 面板里与独立窗口里，高度策略是**相反**的（见 body.dp-panel）。
+// 面板里报定高、内部自己滚；独立窗口按视口铺满（见 body.dp-panel）。
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
 
 const $ = (id) => document.getElementById(id);
@@ -655,8 +655,8 @@ void surface.data().then((data) => applyState(data));
 // 报高度
 // ---------------------------------------------------------------------------
 
-/** 面板里插件页面的固定高度（像素）。 */
-const PANEL_HEIGHT = 460;
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 640;
 
 /** 上次报给宿主的高度。 */
 let reportedHeight = 0;

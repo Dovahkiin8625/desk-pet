@@ -859,4 +859,42 @@ test.describe('聊天记录插件', () => {
       await app.close();
     }
   });
+
+  test('面板里高度固定：记录再多，窗口也不变高', async () => {
+    // 以前面板照内容撑开：记录一多，窗口能顶到屏幕外面去。
+    // 现在面板里的页面报一个常数（清单里的 window.height）——
+    // 短记录开一次、长记录开一次，面板窗口的高度必须一样。
+    const panelHeight = async () => {
+      const { app, pet } = await launch();
+      try {
+        const panel = await openPanel(app, pet);
+        await panel.fill('#query', '聊天记录');
+        await panel.waitForFunction(
+          () => window.__panel?.resultIds?.includes('chat-history'),
+          null,
+          { timeout: 10000 }
+        );
+        await panel.click('#results li:has-text("聊天记录")');
+        await panel.waitForFunction(() => window.__panel?.pluginId === 'chat-history', null, {
+          timeout: 10000,
+        });
+        // 等首份数据渲染出来（页面渲染完才报高度）。
+        await panel.frameLocator('#plugin-frame').locator('.turn').first().waitFor();
+        const bounds = await app.evaluate(({ BrowserWindow }) => {
+          const win = BrowserWindow.getAllWindows().find((w) =>
+            w.webContents.getURL().includes('/renderer/panel/index.html')
+          );
+          return win?.getBounds() || null;
+        });
+        expect(bounds, '拿不到面板窗口').toBeTruthy();
+        return bounds.height;
+      } finally {
+        await app.close();
+      }
+    };
+    const short = await panelHeight();
+    await seedChatTall();
+    const tall = await panelHeight();
+    expect(tall, '记录变多之后面板也变高了').toBe(short);
+  });
 });

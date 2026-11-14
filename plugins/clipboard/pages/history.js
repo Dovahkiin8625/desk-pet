@@ -6,7 +6,7 @@
  *
  * - **画**：主进程给什么就画什么（`data()` 的首份、推来的新状态、动作的回包）；
  * - **送动作**：双击一条就贴出去、点图钉就固定、点 ✕ 就删掉；
- * - **报高度**：面板的窗口是按内容撑开的，页面要报自己的高度。
+ * - **报高度**：面板里报一个定值（plugin.json 的 window.height），数据再多也不变。
  *
  * 搜索在**本地**做：历史全都在手上，筛选不必过一次 IPC——
  * 每敲一个字就往返一次，键盘会跟手得像在等网络。
@@ -21,9 +21,9 @@ const surface = bindSurface();
 hydrateIcons();
 
 /**
- * 面板里与独立窗口里，高度策略是**相反**的：
+ * 面板里与独立窗口里，高度策略不一样：
  *
- * - 面板的窗口按内容撑开：页面报多高，面板就开多高；
+ * - 面板的窗口是定高的：页面报一个定值（plugin.json 的 window.height）；
  * - 独立窗口的高度是用户拖出来的：按视口铺满才对。
  *
  * CSS 靠 body 上的这个类分档（见 history.css）。
@@ -414,10 +414,21 @@ surface.onTick((data) => {
 });
 
 // ---------------------------------------------------------------------------
-// 报高度：面板的窗口是按内容撑开的
+// 报高度：面板里报一个定值（plugin.json 的 window.height）
 // ---------------------------------------------------------------------------
 
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 560;
+/** 面板里只报一次：历史条数再多高度也不再变。 */
+let panelHeightReported = false;
+
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     // 量**内容**的高度，不是视口的。
     //
@@ -430,7 +441,7 @@ function reportHeight() {
   });
 }
 
-if (typeof ResizeObserver === 'function') {
+if (!surface.inPanel && typeof ResizeObserver === 'function') {
   new ResizeObserver(() => reportHeight()).observe(document.body);
 }
 window.addEventListener('resize', reportHeight);

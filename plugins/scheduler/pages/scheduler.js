@@ -6,7 +6,7 @@
  *
  * - **画**：主进程给什么就画什么（首份、周期推来的、动作的回包）；
  * - **送动作**：新增、删除、开关、立刻跑，都交给主进程；
- * - **报高度**：面板的窗口是按内容撑开的，页面要报自己的高度。
+ * - **报高度**：面板里报一个定值（plugin.json 的 window.height），数据再多也不变。
  *
  * **表单是页面自己的**：主进程只管数据，填了一半的表单不能被推来的数据冲掉，
  * 所以列表与表单分开画——列表跟着数据走，表单只跟着用户走。
@@ -359,14 +359,31 @@ void surface.data().then((data) => apply(data));
 // 高度
 // ---------------------------------------------------------------------------
 
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 620;
+/** 面板里只报一次：任务条数再多高度也不再变。 */
+let panelHeightReported = false;
+
+/**
+ * 报高度。
+ *
+ * 面板里报一个定值（plugin.json 的 window.height）：任务条数再多，
+ * 窗口也不跟着变长，多出来的在页面里滚。
+ */
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     const rect = document.body.getBoundingClientRect();
     surface.setHeight(Math.ceil(Math.max(rect.height, document.body.scrollHeight)));
   });
 }
 
-if (typeof ResizeObserver === 'function') {
+if (!surface.inPanel && typeof ResizeObserver === 'function') {
   new ResizeObserver(() => reportHeight()).observe(document.body);
 }
 window.addEventListener('resize', reportHeight);

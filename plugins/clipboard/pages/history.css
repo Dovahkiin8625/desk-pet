@@ -10,12 +10,12 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
 }
 
 /*
- * **别把 body 的滚动关掉**：面板的窗口有上限（按屏幕的工作区算），
- * 内容比上限还高时，多出来的那一截要能在 iframe 内部滚到。
- * 滚动交给下面那个 .list-wrap（它自己有 overflow）。
+ * 面板里 body 不滚：页面是定高的，滚动交给下面那个 .list-wrap
+ * （它自己有 overflow），顶栏与底部的设置按钮始终够得着。
  */
 body.dp-page {
   background: var(--dp-bg);
@@ -30,6 +30,14 @@ body.dp-page {
 /* 独立窗口：铺满整个视口（高度是用户拖出来的）。 */
 body:not(.dp-panel) .clip {
   height: 100vh;
+}
+
+/* 面板里：定高（plugin.json 的 window.height），列表自己滚。 */
+body.dp-panel {
+  overflow: hidden;
+}
+body.dp-panel .clip {
+  height: 100%;
 }
 
 /* ---------------------------------------------------------------------------
@@ -72,15 +80,6 @@ body:not(.dp-panel) .clip {
   min-height: 0;
   overflow-y: auto;
   padding: 6px 8px;
-}
-
-/*
- * 面板里：页面是**按内容撑开**的，列表不能无限长——
- * 不封顶的话，200 条历史会把面板撑到屏幕外面去。
- */
-body.dp-panel .list-wrap {
-  flex: none;
-  max-height: 320px;
 }
 
 .clip-list {
@@ -347,16 +346,4 @@ body.dp-panel .list-wrap {
   font-size: 12px;
   color: var(--dp-danger);
   line-height: 1.6;
-}
-
-/* 宽版（独立窗口）：条目分两列，分组标题跨两列。 */
-@media (min-width: 560px) {
-  .clip-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px 16px;
-  }
-  .clip-list .group {
-    grid-column: 1 / -1;
-  }
 }

@@ -19,11 +19,26 @@
       body.dp-page {
         background: var(--dp-bg);
       }
+      html {
+        height: 100%;
+      }
+      body.dp-panel {
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
       .wrap {
         display: flex;
         flex-direction: column;
         gap: 12px;
         padding: 12px;
+      }
+      body.dp-panel .wrap {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        box-sizing: border-box;
       }
       /* 独立窗口：铺满整个视口（高度是用户拖出来的）。 */
       body:not(.dp-panel) .wrap {

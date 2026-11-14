@@ -6,6 +6,9 @@
     <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
     <link rel="stylesheet" href="/src/renderer/ui/widget.css" />
     <style>
+      html {
+        height: 100%;
+      }
       body {
         margin: 0;
         min-height: 100vh;
@@ -15,12 +18,18 @@
       }
       body.dp-panel {
         min-height: 0;
+        height: 100%;
+        overflow: hidden;
       }
       #wrap {
         display: flex;
         flex-direction: column;
         gap: var(--dp-gap);
         padding: 12px;
+      }
+      body.dp-panel #wrap {
+        height: 100%;
+        box-sizing: border-box;
       }
       #head {
         display: flex;
@@ -219,6 +228,12 @@
         font-size: 12px;
         color: var(--dp-text-soft);
         min-height: 18px;
+      }
+      body.dp-panel #overview,
+      body.dp-panel #detail {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
       }
       /* —— 详情层 —— */
       #detail {

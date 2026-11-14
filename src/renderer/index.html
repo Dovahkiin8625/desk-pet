@@ -7,6 +7,28 @@
     html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
     #stage { position: absolute; inset: 0; }
   </style>
+
+  <!-- Spine 骨骼动画用的是官方运行时（spine-core + spine-pixi），
+       它要求 pixi 7，而桌宠的 Live2D 用的是 pixi 6。两套 pixi 不能共存于
+       同一份代码里（各自带一整套基类），所以这里用 import map 把
+       @pixi/* 全部指到 pixi 7 的单文件构建上：spine-pixi 拿到的
+       每一个 @pixi/* 都是同一个实例。它是按需加载的——
+       没有 Spine 模型时，这份 bundle 根本不会被下载。 -->
+  <script type="importmap">
+  {
+    "imports": {
+      "pixi7": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/assets": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/core": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/display": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/graphics": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/mesh": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@pixi/text": "/node_modules/pixi7/dist/pixi.min.mjs",
+      "@esotericsoftware/spine-core": "/node_modules/@esotericsoftware/spine-core/dist/index.js",
+      "@esotericsoftware/spine-pixi": "/node_modules/@esotericsoftware/spine-pixi/dist/index.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="stage"></div>

@@ -45,6 +45,29 @@ async function seedImportedModel() {
       fit: { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
     }),
   );
+  // 一个**加载不了**的导入模型：文件在库里，但 moc3 是坏的。
+  // 用户想删掉的往往正是这种形象——它切不过去。
+  const brokenDir = join(USER_DATA, 'live2d', 'models', 'broken');
+  await mkdir(brokenDir, { recursive: true });
+  await writeFile(join(brokenDir, 'Broken.moc3'), Buffer.from('not a real moc3 file'));
+  await writeFile(
+    join(brokenDir, 'Broken.model3.json'),
+    JSON.stringify({
+      Version: 3,
+      FileReferences: { Moc: 'Broken.moc3', Textures: [] },
+    }),
+  );
+  await writeFile(
+    join(brokenDir, 'pet.json'),
+    JSON.stringify({
+      id: 'broken',
+      name: 'Broken',
+      model3: 'Broken.model3.json',
+      viewport: { width: 300, height: 560 },
+      fit: { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
+    }),
+  );
+
   // 用户注册表。
   await writeFile(
     join(USER_DATA, 'live2d', 'registry.json'),
@@ -56,6 +79,12 @@ async function seedImportedModel() {
           name: 'TestChar',
           model3: 'TestChar.model3.json',
           manifest: 'testchar/pet.json',
+        },
+        {
+          id: 'broken',
+          name: 'Broken',
+          model3: 'Broken.model3.json',
+          manifest: 'broken/pet.json',
         },
       ],
     }),
@@ -117,6 +146,8 @@ test.describe('导入的 Live2D 模型', () => {
       await settings.waitForFunction(() => document.querySelectorAll('#model option').length > 0, null, {
         timeout: 15000,
       });
+      // 形象在「外观」这一节里：不切过去，下拉框是看不见的。
+      await settings.click('#tab-appearance');
 
       // 下拉框里有导入的形象，且标注了「（导入）」。
       const options = await settings.$$eval('#model option', (els) =>
@@ -140,6 +171,70 @@ test.describe('导入的 Live2D 模型', () => {
 
       // 「导入模型…」按钮在。
       await expect(settings.locator('#importModel')).toBeVisible();
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('加载失败的形象仍然能删掉', async () => {
+    const app = await electron.launch({
+      args: [ROOT],
+      env: {
+        ...process.env,
+        DESK_PET_USER_DATA: USER_DATA,
+        DESK_PET_E2E: '1',
+      },
+    });
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+
+      await app.evaluate(({ dialog }) => {
+        dialog.showMessageBox = async () => ({ response: 1 });
+      });
+
+      await pet.evaluate(() => window.pet.openSettings());
+      const settings = await app.waitForEvent('window');
+      await settings.waitForLoadState('domcontentloaded');
+      await settings.waitForFunction(() => document.querySelectorAll('#model option').length > 0, null, {
+        timeout: 15000,
+      });
+      // 形象在「外观」这一节里：不切过去，下拉框是看不见的。
+      await settings.click('#tab-appearance');
+
+      // 选中那个加载不了的形象。
+      await settings.selectOption('#model', 'broken');
+      // 切换失败：状态栏报出来。
+      await settings.waitForFunction(
+        () => document.getElementById('status')?.textContent?.includes('切换失败'),
+        null,
+        { timeout: 30000 },
+      );
+
+      // **下拉框必须停在它上面**：拨回屏幕上的那个形象，
+      // 它就再也选不中，「删除」按钮也就永远删不到它。
+      expect(await settings.inputValue('#model')).toBe('broken');
+      // 桌宠仍然跑着上一个能用的形象。
+      expect(await pet.evaluate(() => window.__pet.modelId)).toBe('testchar');
+
+      // 「删除」按钮可点，而且删的正是它。
+      await settings.waitForFunction(() => document.getElementById('deleteModel')?.disabled === false, null, {
+        timeout: 10000,
+      });
+      await settings.click('#deleteModel');
+      await settings.waitForFunction(
+        () => !Array.from(document.querySelectorAll('#model option')).some((o) => o.value === 'broken'),
+        null,
+        { timeout: 20000 },
+      );
+      // 文件也没了。
+      const exists = await app.evaluate(async ({ app: electronApp }) => {
+        const fs = process.getBuiltinModule('node:fs/promises');
+        const path = process.getBuiltinModule('node:path');
+        const dir = path.join(electronApp.getPath('userData'), 'live2d', 'models', 'broken');
+        return fs.stat(dir).then(() => true, () => false);
+      });
+      expect(exists).toBe(false);
     } finally {
       await app.close();
     }
@@ -189,6 +284,8 @@ test.describe('导入的 Live2D 模型', () => {
       await settings.waitForFunction(() => document.querySelectorAll('#model option').length > 0, null, {
         timeout: 15000,
       });
+      // 形象在「外观」这一节里：不切过去，下拉框是看不见的。
+      await settings.click('#tab-appearance');
 
       // 导入。
       await settings.click('#importModel');

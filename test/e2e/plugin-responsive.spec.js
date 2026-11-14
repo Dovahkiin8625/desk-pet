@@ -2,7 +2,7 @@
 //
 // 宽窄由**可用宽度**决定（断点 560px）：
 // - 面板窄（420 宽）→ 永远是窄版；
-// - 独立窗口宽（默认 640～860）→ 宽版：条目型内容分两列，一屏看完更多；
+// - 独立窗口宽（默认 640～860）→ 宽版：配置项排成两列，条目仍是单列；
 // - 用户把窗口拖到 560 以下 → 退回窄版。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { rm } from 'node:fs/promises';
@@ -66,7 +66,7 @@ test.describe('宽版与窄版', () => {
     await rm(USER_DATA, { recursive: true, force: true });
   });
 
-  test('宽窄由宽度决定：面板窄版、独立窗口宽版、拖窄了又变窄版', async () => {
+  test('列表是单列：面板里与独立窗口里都是一列', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPanel(app, pet);
@@ -82,14 +82,14 @@ test.describe('宽版与窄版', () => {
       await panel.press('#plugin-body input[type="text"]', 'Enter');
       await panel.waitForFunction(() => document.querySelector('.block-list'), null, { timeout: 10000 });
 
-      // 面板里：单列（容器查询不命中）。
+      // 面板里：单列。
       const inPanel = await panel.evaluate(() => {
         const list = document.querySelector('.block-list');
         return list ? getComputedStyle(list).columnCount : 'none';
       });
       expect(inPanel).toBe('auto');
 
-      // 独立窗口：两列。
+      // 独立窗口：也是单列。
       await panel.click('#detach');
       const win = await findWindow(app, '/renderer/plugin-window/index.html');
       expect(win, '待办的独立窗口没有出现').not.toBeNull();
@@ -98,26 +98,13 @@ test.describe('宽版与窄版', () => {
       const inWindow = await win.evaluate(
         () => getComputedStyle(document.querySelector('.block-list')).columnCount
       );
-      expect(inWindow).toBe('2');
-
-      // 拖窄到 560 以下：退回窄版。
-      await app.evaluate(({ BrowserWindow }) => {
-        const w = BrowserWindow.getAllWindows().find((x) =>
-          x.getURL().includes('/renderer/plugin-window/index.html')
-        );
-        w.setSize(500, 500);
-      });
-      await new Promise((r) => setTimeout(r, 400));
-      const narrowed = await win.evaluate(
-        () => getComputedStyle(document.querySelector('.block-list')).columnCount
-      );
-      expect(narrowed).toBe('auto');
+      expect(inWindow, '独立窗口里的列表该是单列').toBe('auto');
     } finally {
       await app.close();
     }
   });
 
-  test('两列是真的两列：条目分排在左右两栏', async () => {
+  test('单列是真的单列：条目上下排，不并排', async () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPanel(app, pet);
@@ -141,12 +128,12 @@ test.describe('宽版与窄版', () => {
         null,
         { timeout: 10000 }
       );
-      // 两条在不同的列上（横向位置差得开）——只验计算样式不够。
+      // 两条的横向位置一样——只验计算样式不够。
       const offsets = await win.evaluate(() =>
         Array.from(document.querySelectorAll('.block-list li')).map((li) => li.offsetLeft)
       );
       expect(offsets.length).toBeGreaterThanOrEqual(2);
-      expect(offsets[0]).not.toBe(offsets[1]);
+      expect(offsets[0]).toBe(offsets[1]);
     } finally {
       await app.close();
     }
@@ -186,17 +173,20 @@ test.describe('宽版与窄版', () => {
   });
 
   // 自带页面的插件：窄版是默认（面板里、小部件里），宽版在媒体查询里。
-  const CASES = [
+  // 宽版换的是**版面**（左右两栏），条目本身始终单列。
+  const WIDE_CASES = [
     { id: 'music-player', query: 'yinyue', sel: '#body' },
+    { id: 'tasks', query: 'houtai', sel: '#overview' },
+  ];
+  const SINGLE_CASES = [
     { id: 'chat-history', query: 'jl', sel: '#list' },
     { id: 'clipboard', query: 'jiban', sel: '.clip-list' },
-    { id: 'tasks', query: 'houtai', sel: '#overview' },
   ];
 
   test('插件自带页面：独立窗口里是宽版（两栏），面板里是窄版', async () => {
     const { app, pet } = await launch();
     try {
-      for (const c of CASES) {
+      for (const c of WIDE_CASES) {
         const panel = await openPanel(app, pet);
         await panel.fill('#query', c.query);
         await panel.waitForFunction((id) => window.__panel?.resultIds?.includes(id), c.id, {
@@ -247,6 +237,61 @@ test.describe('宽版与窄版', () => {
           .first()
           .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
         expect(narrowAgain.split(' ').length, `${c.id} 拖窄后没退回窄版`).toBe(1);
+
+        await win.click('#close');
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('插件自带页面：条目单列（聊天记录、剪贴板），面板与独立窗口一样', async () => {
+    const { app, pet } = await launch();
+    try {
+      for (const c of SINGLE_CASES) {
+        const panel = await openPanel(app, pet);
+        await panel.fill('#query', c.query);
+        await panel.waitForFunction((id) => window.__panel?.resultIds?.includes(id), c.id, {
+          timeout: 10000,
+        });
+        await panel.click(`#results li[data-plugin-id="${c.id}"]`);
+
+        // 面板里：条目竖着排一列。
+        await panel.waitForFunction(
+          (sel) => {
+            const doc = document.getElementById('plugin-frame')?.contentDocument;
+            return Boolean(doc?.querySelector(sel));
+          },
+          c.sel,
+          { timeout: 10000 }
+        );
+        const narrow = await panel.evaluate((sel) => {
+          const doc = document.getElementById('plugin-frame')?.contentDocument;
+          const el = doc?.querySelector(sel);
+          if (!el) return null;
+          const s = getComputedStyle(el);
+          return { display: s.display, direction: s.flexDirection };
+        }, c.sel);
+        expect(narrow?.display, `${c.id} 在面板里该是竖排`).toBe('flex');
+        expect(narrow?.direction, `${c.id} 在面板里该是一列`).toBe('column');
+
+        // 独立窗口里：还是单列。
+        await panel.click('#detach');
+        const win = await findWindow(app, '/renderer/plugin-window/index.html');
+        expect(win, `${c.id} 的独立窗口没有出现`).not.toBeNull();
+        await win.waitForLoadState('domcontentloaded');
+        const frame = win.frameLocator('#plugin-frame');
+        await frame.locator(c.sel).first().waitFor({ state: 'attached', timeout: 10000 });
+        const wide = await frame
+          .locator(c.sel)
+          .first()
+          .evaluate((el) => {
+            const s = getComputedStyle(el);
+            return { display: s.display, direction: s.flexDirection };
+          });
+        expect(wide.display, `${c.id} 在独立窗口里该是竖排`).toBe('flex');
+        expect(wide.direction, `${c.id} 在独立窗口里该是一列`).toBe('column');
 
         await win.click('#close');
         await new Promise((r) => setTimeout(r, 400));

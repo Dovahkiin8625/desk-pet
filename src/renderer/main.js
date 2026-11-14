@@ -1,4 +1,6 @@
 import { createStage } from './pet/stage.js';
+import { createSpineStage } from './spine/stage.js';
+import { loadSpineModel, deriveSpineMotions } from './spine/model.js';
 import { applyLive2DCoreCompat } from './live2dCoreCompat.js';
 import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
@@ -101,14 +103,22 @@ window.__pet = {
   clickThrough: false,
   // 这个点在不在形象上（null = 还没量出轮廓）。
   // 既是诊断面，也是测试的探针：可点击区域完全由它决定。
-  isOnFigure: (x, y) => (silhouette ? silhouette.contains(x, y) : null),
+  isOnFigure: (x, y) => {
+    const sil = currentSilhouette();
+    return sil ? sil.contains(x, y) : null;
+  },
 };
 
 let stage = null;
+// Spine 的舞台：Live2D 跑在 pixi 6 上，Spine 官方运行时要 pixi 7，
+// 两套 pixi 不能共存于同一份代码，所以 Spine 走**第二块画布**。
+// 它按需创建：没人用 Spine 模型时，这块画布根本不存在。
+let spineStage = null;
+// 每块画布各有一个轮廓测量器：量的是**自己那块画布**的渲染结果。
+let silhouette = null;
+let spineSilhouette = null;
 let currentModel = null;
 let currentManifest = null;
-// 可见轮廓测量器：把舞台离屏渲染一遍，读回 alpha，量出形象真正占的范围。
-let silhouette = null;
 // 轮廓刷新已经排队（同一帧只排一次）。
 let silhouetteRefreshQueued = false;
 // 「透明处不吃鼠标」当前是否生效。
@@ -290,13 +300,71 @@ function markInteraction() {
 }
 
 /**
+ * 当前**可见**的那块画布。
+ *
+ * 两块画布都铺满窗口，坐标空间一致；但只有一块是可见的：
+ * 隐藏的那块 getBoundingClientRect() 全是 0，偏移会算错。
+ */
+function activeCanvas() {
+  if (currentManifest?.type === 'spine') return spineStage?.canvas || stage?.app?.view;
+  return stage?.app?.view;
+}
+
+/** 当前形象所在的那块画布的轮廓测量器。 */
+function currentSilhouette() {
+  return currentManifest?.type === 'spine' ? spineSilhouette : silhouette;
+}
+
+/** 当前形象所在的那块画布的舞台。 */
+function activeStage() {
+  return currentManifest?.type === 'spine' ? spineStage : stage;
+}
+
+/**
+ * 让一块画布可见，另一块藏起来。
+ *
+ * 同一时刻只有一个形象在上屏：两个画布都可见的话，
+ * 上层那块会挡住下层的模型，而下层的模型还在占着轮廓与命中区。
+ */
+function showStage(target) {
+  const live2dCanvas = stage?.app?.view;
+  const spineCanvas = spineStage?.canvas;
+  if (live2dCanvas) live2dCanvas.style.display = target === spineStage ? 'none' : 'block';
+  if (spineCanvas) spineCanvas.style.display = target === spineStage ? 'block' : 'none';
+}
+
+/**
+ * 按需创建 Spine 的舞台（pixi 7 的第二块画布）。
+ *
+ * 没人用 Spine 模型时，这块画布根本不会被创建——
+ * pixi 7 的运行时是几百 KB 的 bundle，不该让只用 Live2D 的用户下载。
+ */
+async function ensureSpineStage() {
+  if (spineStage) return spineStage;
+  const container = document.getElementById('stage');
+  spineStage = await createSpineStage(container, {
+    onFit: () => scheduleSilhouetteRefresh(),
+  });
+  window.__pet.spineStage = spineStage;
+  spineSilhouette = createSilhouette({
+    app: spineStage.app,
+    onRefresh: (rect) => {
+      if (currentSilhouette() !== spineSilhouette) return;
+      refreshSilhouette(rect, spineSilhouette);
+    },
+  });
+  spineSilhouette.startAutoRefresh();
+  return spineStage;
+}
+
+/**
  * 画布在窗口里的偏移（CSS 像素）。
  *
  * 画布铺满窗口时它是 (0,0)，但不假设这一点：
  * 可见矩形要报给主进程，主进程拿它当**窗口内**坐标用。
  */
 function canvasOffset() {
-  const canvas = stage?.app?.view;
+  const canvas = activeCanvas();
   if (!canvas) return { x: 0, y: 0 };
   const rect = canvas.getBoundingClientRect();
   return { x: rect.left || 0, y: rect.top || 0 };
@@ -309,9 +377,9 @@ function canvasOffset() {
  * 模型的自然包围盒把贴图四周的透明留白也算进去了，
  * 拿它当「桌宠有多大」就会一直差一截。
  */
-function refreshSilhouette(rect = null) {
-  if (!silhouette) return null;
-  const measured = rect || silhouette.refresh();
+function refreshSilhouette(rect = null, sil = currentSilhouette()) {
+  if (!sil) return null;
+  const measured = rect || sil.refresh();
   if (!measured) return null;
   const offset = canvasOffset();
   const visible = {
@@ -405,8 +473,9 @@ function updateClickThrough(x, y) {
   // 这一趟交互（点击与拖拽）会当场断掉。
   if (isDragging || isPointerDown) return;
   // 量不出轮廓就别乱来——宁可保持旧行为，也不要把桌宠变成点不动。
-  if (!silhouette?.isReady()) return;
-  const onFigure = silhouette.contains(x, y);
+  const sil = currentSilhouette();
+  if (!sil?.isReady()) return;
+  const onFigure = sil.contains(x, y);
   if (onFigure === null) return;
   // **刚点过**：先别把窗口变成「不吃鼠标事件」。
   //
@@ -439,20 +508,21 @@ function recordTap() {
  * 所以是「站着晃」而不是「整个人转圈」。
  */
 function startDragWobble() {
-  if (dragWobble || !stage?.app?.ticker) return;
+  const target = activeStage();
+  if (dragWobble || !target?.app?.ticker) return;
   const tick = () => {
     const model = currentModel;
     if (!model || model.destroyed) return;
     model.rotation = Math.sin((performance.now() / 1000) * 9) * 0.05;
   };
-  stage.app.ticker.add(tick);
+  target.app.ticker.add(tick);
   dragWobble = tick;
 }
 
 /** 停止摇摆并把模型摆正。 */
 function stopDragWobble() {
   if (!dragWobble) return;
-  stage?.app?.ticker?.remove(dragWobble);
+  activeStage()?.app?.ticker?.remove(dragWobble);
   dragWobble = null;
   if (currentModel && !currentModel.destroyed) currentModel.rotation = 0;
 }
@@ -539,15 +609,28 @@ async function doMountModel(modelId, token) {
     return currentModel;
   }
 
+  const isSpine = manifest.type === 'spine';
+  // Spine 的舞台按需创建：只有真的要挂 Spine 模型时才建第二块画布。
+  const target = isSpine ? await ensureSpineStage() : stage;
+
   let model;
   try {
-    model = await loadPetModel(manifest);
+    model = isSpine ? await loadSpineModel(manifest, target) : await loadPetModel(manifest);
   } catch (err) {
     // 加载失败时旧模型仍挂在舞台上，用户不会看到桌宠凭空消失。
     // 但失败的加载可能已经把纹理塞进了全局缓存，必须清掉，
     // 否则反复失败的切换会不断堆积显存。
-    disposeTexturesUnderPath(`${manifest.base || '/assets/live2d/models'}/${manifest.id}/`);
+    if (!isSpine) {
+      disposeTexturesUnderPath(`${manifest.base || '/assets/live2d/models'}/${manifest.id}/`);
+    }
     throw err;
+  }
+
+  // Spine 的动作是**具名**的，语义键按名字映射到动画（清单里没写死）。
+  if (isSpine) {
+    const derived = deriveSpineMotions(model.__animations || []);
+    manifest.motions = { ...derived.motions, ...(manifest.motions || {}) };
+    manifest.motionGroups = { ...derived.motionGroups, ...(manifest.motionGroups || {}) };
   }
 
   // 缩放每次挂载时重读：userScale 是启动时抓的，
@@ -578,11 +661,13 @@ async function doMountModel(modelId, token) {
   }
   window.__pet.lastReleasedTextures = released;
 
-  stage.app.stage.addChild(model);
+  target.app.stage.addChild(model);
+  // 同一时刻只有一块画布可见：模型所在的画布显示，另一块藏起来。
+  showStage(target);
   // 口型驱动挂在**新模型**上：模型没有口型参数时 attachLipSync 返回 null，
   // 整个功能静默关闭。
   lipSync = attachLipSync(model);
-  const fit = stage.fitModel(model, manifest);
+  const fit = target.fitModel(model, manifest);
   currentModel = model;
   currentManifest = manifest;
   // 模型上屏了：启动失败时画的那块占位提示该撤掉了。
@@ -618,6 +703,8 @@ function showFailurePlaceholder(message) {
   try {
     const PIXI = window.PIXI;
     if (!PIXI || !stage?.app) return;
+    // 占位提示画在 Live2D 那块画布上：那块画布得是可见的。
+    showStage(stage);
     const box = new PIXI.Graphics();
     box.beginFill(0x2a2a36, 0.92).drawRoundedRect(24, 150, 252, 180, 12).endFill();
     box.lineStyle(2, 0xd06a6a).drawRoundedRect(24, 150, 252, 180, 12);
@@ -721,7 +808,7 @@ function registerChannels() {
       userScale = s.scale;
       window.__pet.scale = userScale;
       if (currentModel && currentManifest) {
-        stage.fitModel(currentModel, currentManifest);
+        activeStage()?.fitModel(currentModel, currentManifest);
       }
     }
     if (typeof s.opacity === 'number') {
@@ -808,7 +895,7 @@ function registerChannels() {
   window.pet.onCursorPoint?.((p) => {
     if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return;
     window.__pet.cursorPoint = { x: p.x, y: p.y };
-    const canvas = stage?.app?.view;
+    const canvas = activeCanvas();
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     // 主进程发的是**窗口内**坐标；画布未必铺满窗口（rect.left/top 不为 0）。
@@ -849,7 +936,10 @@ async function boot() {
   // 定时刷新之后要把新结果报给主进程——轮廓变了，夹紧位置也得跟着变。
   silhouette = createSilhouette({
     app: stage.app,
-    onRefresh: (rect) => refreshSilhouette(rect),
+    onRefresh: (rect) => {
+      if (currentSilhouette() !== silhouette) return;
+      refreshSilhouette(rect, silhouette);
+    },
   });
   // 轮廓会随待机动画微微变化，定期刷新一次。
   silhouette.startAutoRefresh();
@@ -884,7 +974,9 @@ async function boot() {
     showFailurePlaceholder(err?.message || err);
   }
 
-  const canvas = stage.app.view;
+  // 指针事件挂在**容器**上，而不是某一块画布：
+  // Live2D 与 Spine 各有一块画布，事件挂在容器上，两块画布的事件都能收到。
+  const canvas = container;
 
   /**
    * 文件拖放：把文件拖到桌宠身上。
@@ -1006,7 +1098,10 @@ async function boot() {
     getManifest: () => currentManifest,
     // 可点击区域由形象决定：点在透明留白上不算点到桌宠。
     // 量不出来时返回 null，交互层会退回旧行为。
-    isOnFigure: (x, y) => (silhouette ? silhouette.contains(x, y) : null),
+    isOnFigure: (x, y) => {
+      const sil = currentSilhouette();
+      return sil ? sil.contains(x, y) : null;
+    },
     // 拖拽状态：按下与拖拽期间不能改「透明处穿透」，
     // 松手后按指针位置恢复。
     onDragStateChange: (dragging, pressed) => {

@@ -1,0 +1,65 @@
+{
+  "id": "zixun",
+  "name": "资讯",
+  "icon": "globe",
+  "description": "百度、微博、知乎、抖音的热搜榜，人民网、IT之家、少数派的最新资讯",
+  "keywords": ["资讯", "zixun", "新闻", "热搜", "resou", "热榜", "头条", "百度", "微博", "知乎", "抖音", "news", "hot"],
+  "skill": {
+    "name": "zixun",
+    "description": "用户问今天有什么热点、最近有什么新闻/资讯的时候用它",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "zixun.hotsearch",
+      "label": "查热搜",
+      "description": "查某个平台当前的热搜榜（前 10 条）。platform 取 baidu / weibo / zhihu / douyin。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "enum": ["baidu", "weibo", "zhihu", "douyin"],
+            "description": "平台：baidu 百度、weibo 微博、zhihu 知乎、douyin 抖音"
+          }
+        },
+        "required": ["platform"]
+      },
+      "risk": "read"
+    },
+    {
+      "name": "zixun.news",
+      "label": "查最新新闻",
+      "description": "查某个来源最新的文章标题（默认 10 条）。source 取 people-politics（人民网·时政）/ people-world（人民网·国际）/ people-finance（人民网·财经）/ ithome（IT之家）/ sspai（少数派），不填默认 people-politics。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["people-politics", "people-world", "people-finance", "ithome", "sspai"],
+            "description": "新闻来源"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回几条，1-20，默认 10"
+          }
+        }
+      },
+      "risk": "read"
+    }
+  ],
+  "window": {
+    "title": "资讯",
+    "width": 620,
+    "height": 560,
+    "refreshMs": 0
+  },
+  "widget": {
+    "title": "资讯",
+    "width": 300,
+    "height": 400,
+    "page": "widget.html",
+    "refreshMs": 600000,
+    "alwaysOnTop": true
+  }
+}

@@ -6,7 +6,7 @@
  *
  * - **画**：主进程给什么就画什么（首份、每秒推来的新状态、动作的回包）；
  * - **送动作**：抽屉里那个开关要告诉主进程；
- * - **报高度**：面板的窗口是按内容撑开的，页面要报自己的高度。
+ * - **报高度**：面板里报一个定值（plugin.json 的 window.height），数据再多也不变。
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
@@ -18,8 +18,8 @@ const surface = bindSurface();
 hydrateIcons();
 
 /**
- * 面板里与独立窗口里，高度策略是**相反**的：
- * 面板的窗口按内容撑开，独立窗口的高度是用户拖出来的。
+ * 面板里与独立窗口里，高度策略不一样：
+ * 面板的窗口是定高的（页面报一个定值），独立窗口的高度是用户拖出来的。
  * CSS 靠 body 上的这个类分档（见 status.html）。
  */
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
@@ -156,7 +156,18 @@ surface.onData((data) => applyState(data));
 surface.onTick((data) => applyState(data));
 void surface.data().then((data) => applyState(data));
 
+/** 面板里插件页面的固定高度（= plugin.json 的 window.height）。 */
+const PANEL_HEIGHT = 480;
+/** 面板里只报一次：数据再多高度也不再变。 */
+let panelHeightReported = false;
+
 function reportHeight() {
+  if (surface.inPanel) {
+    if (panelHeightReported) return;
+    panelHeightReported = true;
+    surface.setHeight(PANEL_HEIGHT);
+    return;
+  }
   requestAnimationFrame(() => {
     // 量**内容**的高度，不是视口的（见插件开发指南）。
     const rect = document.body.getBoundingClientRect();
@@ -164,7 +175,7 @@ function reportHeight() {
   });
 }
 
-if (typeof ResizeObserver === 'function') {
+if (!surface.inPanel && typeof ResizeObserver === 'function') {
   new ResizeObserver(() => reportHeight()).observe(document.body);
 }
 window.addEventListener('resize', reportHeight);

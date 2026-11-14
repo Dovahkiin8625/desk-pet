@@ -265,7 +265,7 @@ function setRangeFill(input) {
 // ---------------------------------------------------------------------------
 
 /** 分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['pet', 'appearance', 'voice', 'chat', 'memory', 'plugins', 'system'];
+const SECTION_KEYS = ['appearance', 'voice', 'chat', 'memory', 'plugins', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -278,7 +278,7 @@ for (const key of SECTION_KEYS) {
   navSummaries.set(key, nav.querySelector(`[data-summary="${key}"]`));
 }
 
-let currentSection = 'pet';
+let currentSection = 'appearance';
 
 /**
  * 切到某个分区。
@@ -399,8 +399,9 @@ function setSummary(key, text) {
  * 控件才是唯一的事实来源，存第二份必然会漂。
  */
 function refreshNavSummaries() {
-  const modelName = modelSelect.selectedOptions?.[0]?.textContent?.trim();
-  setSummary('pet', modelName || '—');
+  // 外观：桌宠现在跑的是谁——切换失败时它与下拉框选中的不是同一个。
+  const modelName = modelOptionLabel(onScreenModelId) || modelSelect.selectedOptions?.[0]?.textContent?.trim();
+  setSummary('appearance', modelName || '—');
 
   // 语音与对话是三态，不是两态：用户最常见的坑是「开关开了但没填 Key」，
   // 只报「已开」反而把这个坑盖住了。
@@ -428,9 +429,6 @@ function refreshNavSummaries() {
     dockEnabledBox.checked,
   ];
   setSummary('system', `${systemFlags.filter(Boolean).length}/${systemFlags.length}`);
-
-  // 外观：主题名（目录那一列只放得下两个字）。
-  setSummary('appearance', themeLabel(themeSelect.value));
 }
 
 // ---------------------------------------------------------------------------
@@ -481,11 +479,6 @@ function fillThemeSelect() {
   }
 }
 
-/** 主题 id → 给人看的名字。 */
-function themeLabel(id) {
-  return themeList.find((t) => t.id === id)?.label || id;
-}
-
 themeSelect.addEventListener('change', async () => {
   const value = themeSelect.value;
   themeSent = value;
@@ -523,6 +516,10 @@ let pending = null;
 // 下拉框只认注册表里的 id：存着的 id 不在列表里（比如形象被删了），
 // 就退回到列表第一项——那正是渲染层 loadManifest 的回退规则，
 // 两边不一致的话，设置窗口显示的形象会和桌面上显示的对不上。
+//
+// 下拉框选中的**不一定是屏幕上那个**：切换失败时桌宠仍然跑着上一个
+// 能用的形象，但下拉框必须停在用户选的那个（加载失败的形象）——
+// 「删除」按钮删的是下拉框选中的形象，拨回去它就永远选不中、也就永远删不掉。
 function setModel(id) {
   if (typeof id !== 'string' || id === '') return;
   if (modelSelect.options.length === 0) {
@@ -533,6 +530,44 @@ function setModel(id) {
   const known = Array.from(modelSelect.options).some((o) => o.value === id);
   modelSelect.value = known ? id : modelSelect.options[0]?.value || '';
   updateDeleteEnabled();
+}
+
+// 屏幕上的形象：切换失败时它与下拉框选中的**不是同一个**。
+let onScreenModelId = null;
+// 切换失败的形象：广播不许把下拉框从它身上拨回去。
+let failedModelId = null;
+
+/** 下拉框里某个 id 的显示名。 */
+function modelOptionLabel(id) {
+  if (typeof id !== 'string' || id === '') return '';
+  const opt = Array.from(modelSelect.options).find((o) => o.value === id);
+  return opt?.textContent?.trim() || '';
+}
+
+/**
+ * 记下一个加载失败的形象：在列表里标出来。
+ *
+ * 不标出来的话，下拉框停在一个跑不起来的形象上、桌宠却还是老样子——
+ * 用户会以为界面坏了，而不是「这个形象加载失败」。
+ */
+function markFailedModel(id) {
+  failedModelId = id;
+  const opt = Array.from(modelSelect.options).find((o) => o.value === id);
+  const m = knownModels.find((x) => x.id === id);
+  if (!opt || !m) return;
+  const base = m.source === 'user' ? `${m.name}（导入）` : m.name;
+  opt.textContent = `${base}（加载失败）`;
+}
+
+/** 失败标记撤销：形象删掉了，或者切换成功了。 */
+function clearFailedModel() {
+  if (!failedModelId) return;
+  const id = failedModelId;
+  failedModelId = null;
+  const opt = Array.from(modelSelect.options).find((o) => o.value === id);
+  const m = knownModels.find((x) => x.id === id);
+  if (!opt || !m) return;
+  opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
 }
 
 // 形象注册表（内置 + 用户导入的）。用来判断选中的是不是「导入的」——
@@ -588,7 +623,9 @@ async function refreshModelOptions(preferredId) {
     const opt = document.createElement('option');
     opt.value = m.id;
     // 导入的模型标一下：用户一眼能看出哪些是自己加的、哪些能删。
-    opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
+    const base = m.source === 'user' ? `${m.name}（导入）` : m.name;
+    // 加载失败的形象继续带着标记：列表重建后它仍然选不中、仍然跑不起来。
+    opt.textContent = m.id === failedModelId ? `${base}（加载失败）` : base;
     modelSelect.appendChild(opt);
   }
   if (models.length > 0) {
@@ -2199,7 +2236,13 @@ async function init() {
     if (!s) return;
     // 记下最近一次广播：init() 结束时要用它，而不是更旧的 getSettings 结果。
     pending = { ...(pending || {}), ...s };
-    if (typeof s.modelId === 'string') setModel(s.modelId);
+    if (typeof s.modelId === 'string') {
+      // 广播里的 modelId 是**屏幕上那个**形象。切换失败时它是回滚后的那个，
+      // 与用户刚点的那个不是一回事——这时不能把下拉框拨回去，
+      // 否则加载失败的形象永远选不中，也就永远删不掉。
+      onScreenModelId = s.modelId;
+      if (!failedModelId) setModel(s.modelId);
+    }
     if (typeof s.scale === 'number') updateScale(s.scale);
     if (typeof s.opacity === 'number') updateOpacity(s.opacity);
     // 主题：只认**不是自己刚改的那次**广播——否则用户点完就被弹回去。
@@ -2274,7 +2317,8 @@ async function init() {
     const opt = document.createElement('option');
     opt.value = m.id;
     // 导入的模型标一下：用户一眼能看出哪些是自己加的、哪些能删。
-    opt.textContent = m.source === 'user' ? `${m.name}（导入）` : m.name;
+    const base = m.source === 'user' ? `${m.name}（导入）` : m.name;
+    opt.textContent = m.id === failedModelId ? `${base}（加载失败）` : base;
     modelSelect.appendChild(opt);
   }
   // 音色：下拉框选常用音色（中文名），datalist 让自定义框里能查到 id。
@@ -2297,6 +2341,7 @@ async function init() {
   const latest = { ...settings, ...(pending || {}) };
   pending = null;
   setModel(latest.modelId);
+  onScreenModelId = latest.modelId;
   updateScale(latest.scale);
   updateOpacity(latest.opacity);
   // 主题清单要先到，下拉框才知道有哪些可选。
@@ -2316,8 +2361,8 @@ async function init() {
   // 插件清单：目录上的「N/M」摘要要一开始就对。
   await refreshPlugins();
   refreshNavSummaries();
-  // 落在默认分区（桌宠）。roving tabindex 也在这一步定下来。
-  activateSection('pet');
+  // 落在默认分区（外观）。roving tabindex 也在这一步定下来。
+  activateSection('appearance');
 }
 
 modelSelect.addEventListener('change', async () => {
@@ -2345,15 +2390,31 @@ modelSelect.addEventListener('change', async () => {
     // 也不能动下拉框：它已经停在用户最后选的那一项上，
     // 拨回去反而会让下拉框与屏幕上跑的形象对不上。
     if (result?.superseded) return;
-    // 失败：下拉框拨回**屏幕上那个**形象，别停在用户点的那个。
-    if (result?.modelId) setModel(result.modelId);
+    // 失败：**下拉框停在用户点的那个**，不拨回屏幕上的那个。
+    //
+    // 拨回去的代价是致命的：这个形象加载失败（模型文件坏了、格式不对），
+    // 用户想删掉它，可它一旦被拨走就再也选不中——「删除」按钮删的是
+    // 下拉框选中的形象，于是它永远删不掉。
+    // 桌宠仍然跑着上一个能用的形象，这一点由摘要和状态栏说清楚。
+    if (result?.modelId) onScreenModelId = result.modelId;
+    markFailedModel(requested);
+    // 主进程回滚时会广播一次设置，而广播与这次 IPC 的回执谁先到**不保证**：
+    // 广播先到的话下拉框已经被拨回屏幕上的那个形象了，这里拨回用户点的那个。
+    setModel(requested);
     refreshNavSummaries();
-    show(`切换失败：${result?.error || '模型加载失败'}`, 'error');
+    const onScreen = modelOptionLabel(onScreenModelId);
+    show(
+      `切换失败：${result?.error || '模型加载失败'}` +
+        (onScreen ? `——桌宠仍是「${onScreen}」` : ''),
+      'error'
+    );
     return;
   }
   // 成功：请求了未知 id 时主进程会按注册表回退，
   // 这里必须把下拉框也拨回实际生效的那个。
   if (typeof result.modelId === 'string' && result.modelId !== requested) setModel(result.modelId);
+  clearFailedModel();
+  onScreenModelId = result.modelId || requested;
   const label = modelSelect.options[modelSelect.selectedIndex]?.text || requested;
   refreshNavSummaries();
   show(`已切换到 ${label}`);
@@ -2397,6 +2458,15 @@ importModelBtn.addEventListener('click', async () => {
     await refreshModelOptions(result.models?.[0]?.id);
     refreshNavSummaries();
     const failed = result.failures || [];
+    if (result.switched === false) {
+      // 导入成功但没切过去：跟单个导入一样，把它留在选中项上，
+      // 否则这个加载失败的形象就选不中、也删不掉了。
+      markFailedModel(result.models?.[0]?.id);
+      refreshNavSummaries();
+    } else {
+      clearFailedModel();
+      onScreenModelId = result.models?.[0]?.id;
+    }
     if (failed.length === 0) {
       show(`已导入 ${result.models.length} 个模型，并切换到 ${result.models[0]?.name || ''}`);
       return;
@@ -2414,9 +2484,16 @@ importModelBtn.addEventListener('click', async () => {
   if (result.switched === false) {
     // 模型已经在库里，只是没切过去——这与「导入失败」是两件事，
     // 说混了会让用户去重复导入一遍。
+    //
+    // 切换失败的形象必须**留在下拉框选中项上**：用户多半正是想删掉它
+    //（文件坏了、格式不对），拨走它就再也选不中、也就删不掉。
+    markFailedModel(result.model?.id);
+    refreshNavSummaries();
     show(`已导入 ${result.model?.name || ''}，但切换失败：${result.error || '未知原因'}`, 'error');
     return;
   }
+  clearFailedModel();
+  onScreenModelId = result.model?.id;
   show(`已导入并切换到 ${result.model?.name || ''}`);
 });
 
@@ -2453,7 +2530,12 @@ deleteModelBtn.addEventListener('click', async () => {
   }
   // 列表变了：重新拉。删掉的形象可能正是当前在用的那个，
   // 主进程已经把它切走了——它把现在该选哪个一并带回来了。
+  //
+  // 失败标记只在删掉的正是那个失败形象时撤销：别的形象被删掉，
+  // 不该把它身上的「加载失败」标记也抹了。
+  if (id === failedModelId) clearFailedModel();
   await refreshModelOptions(result.modelId);
+  onScreenModelId = result.modelId;
   refreshNavSummaries();
   show(entry.source === 'user' ? `已删除 ${result.name || ''}` : `已移除 ${result.name || ''}`);
 });
