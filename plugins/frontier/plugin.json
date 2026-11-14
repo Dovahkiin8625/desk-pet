@@ -1,0 +1,79 @@
+{
+  "id": "frontier",
+  "name": "前沿",
+  "icon": "sparkles",
+  "description": "GitHub 热门项目、Hacker News 与 AI 资讯（量子位、OpenAI、DeepMind、Google AI、THE DECODER、Simon Willison）",
+  "keywords": ["前沿", "qianyan", "github", "热门", "remen", "trending", "AI", "人工智能", "大模型", "llm", "hacker news", "news"],
+  "skill": {
+    "name": "frontier",
+    "description": "用户问 GitHub 热门项目、Hacker News 或 AI 领域最新进展时用它",
+    "file": "skill.md"
+  },
+  "tools": [
+    {
+      "name": "frontier.github",
+      "label": "GitHub 热门",
+      "description": "查 GitHub Trending 热门仓库。since 取 daily（今日，默认）或 weekly（本周），返回前 15 个仓库的名字、语言、星数、新增星数与简介。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "enum": ["daily", "weekly"],
+            "description": "统计范围：daily 今日 / weekly 本周"
+          }
+        }
+      },
+      "risk": "read"
+    },
+    {
+      "name": "frontier.news",
+      "label": "AI 资讯",
+      "description": "查某个 AI 资讯源最新的文章标题（默认 10 条，最大 20）。source 取 qbitai（量子位，中文，默认）/ openai（OpenAI News）/ deepmind（Google DeepMind）/ google-ai（Google AI 博客）/ decoder（THE DECODER）/ simonw（Simon Willison）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["qbitai", "openai", "deepmind", "google-ai", "decoder", "simonw"],
+            "description": "资讯源"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "返回几条，1-20，默认 10"
+          }
+        }
+      },
+      "risk": "read"
+    },
+    {
+      "name": "frontier.hn",
+      "label": "HN AI 热议",
+      "description": "查 Hacker News 上最近 7 天 AI 相关、按热度排序的讨论（默认 10 条，最大 20）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "返回几条，1-20，默认 10"
+          }
+        }
+      },
+      "risk": "read"
+    }
+  ],
+  "window": {
+    "title": "前沿",
+    "width": 620,
+    "height": 560,
+    "refreshMs": 0
+  },
+  "widget": {
+    "title": "前沿",
+    "width": 300,
+    "height": 400,
+    "page": "widget.html",
+    "refreshMs": 600000,
+    "alwaysOnTop": true
+  }
+}

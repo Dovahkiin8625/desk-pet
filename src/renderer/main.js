@@ -36,6 +36,7 @@ import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
 import { DEFAULT_VOLUME } from '../shared/volume.js';
 import { decideTapVoice, TAP_VOICE_COOLDOWN_MS } from '../shared/tapVoice.js';
+import { motionListForMenu } from '../shared/motions.js';
 
 window.__pet = {
   ready: false,
@@ -297,6 +298,27 @@ function showEmotion(emotion) {
 /** 记录一次用户互动：重置「多久没人理」的计时。 */
 function markInteraction() {
   emotionState = touch(emotionState);
+}
+
+/**
+ * 右键菜单点了「动作」里的某一项。
+ *
+ * 菜单可能是按旧形象建的（切换形象期间）：不在当前清单里的组直接忽略；
+ * index 按清单夹紧，越界的动作静默跳过。
+ */
+function playMenuMotion(group, index) {
+  const model = currentModel;
+  if (!model || model.destroyed || !model.motion) return;
+  if (typeof group !== 'string' || !group) return;
+  const count = currentManifest?.motionGroups?.[group];
+  if (typeof count !== 'number' || count <= 0) return;
+  const i = Math.min(Math.max(0, Number.isInteger(index) ? index : 0), count - 1);
+  window.__pet.lastMenuMotion = { group, index: i };
+  try {
+    model.motion(group, i)?.catch?.(() => {});
+  } catch {
+    /* 动作缺失时静默跳过 */
+  }
 }
 
 /**
@@ -687,6 +709,8 @@ async function doMountModel(modelId, token) {
   window.__pet.naturalSize = { w: fit.naturalWidth, h: fit.naturalHeight };
   window.__pet.model = model;
   window.__pet.manifest = manifest;
+  // 把这个形象有哪些动作报给主进程：右键菜单的「动作」子菜单按它填
+  window.pet?.reportMotions?.(motionListForMenu(manifest));
   return model;
 }
 
@@ -828,6 +852,11 @@ function registerChannels() {
       window.__pet.mood = emotionState.mood;
     }
     showEmotion(emotion);
+  });
+
+  // 右键菜单点了「动作」里的某一项：播放它。
+  window.pet.onPlayMotion?.((group, index) => {
+    playMenuMotion(group, index);
   });
 
   // 合成好的语音：播放它，并用响度包络驱动口型。

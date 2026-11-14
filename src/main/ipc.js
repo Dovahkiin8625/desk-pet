@@ -24,6 +24,7 @@ export function registerIpc({
   onSpeechEnded,
   onModelSwitchResult,
   onModelError,
+  onMotionsReported,
   getAssistantState,
   saveAssistantPrefs,
   listAgentTools,
@@ -72,6 +73,9 @@ export function registerIpc({
   ipcMain.on('pet:speechEnded', (_e, id) => onSpeechEnded?.(id));
   ipcMain.on('pet:modelSwitchResult', (_e, result) => onModelSwitchResult(result));
   ipcMain.on('pet:modelError', (_e, info) => onModelError(info));
+  // 渲染层上报当前形象有哪些动作：主进程用它建右键菜单的「动作」子菜单。
+  // 载荷会在主进程侧再校验一遍（sanitizeMotions）——渲染层不是可信边界。
+  ipcMain.on('pet:motions', (_e, list) => onMotionsReported?.(list));
   // 增量位移：主进程负责累加、夹紧到可见区域并持久化位置。
   // 渲染层只负责把「这一段拖了多远」递过来，绝不传绝对坐标。
   ipcMain.handle('pet:moveWindowBy', (_e, delta) => {

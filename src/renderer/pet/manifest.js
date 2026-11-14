@@ -1,5 +1,6 @@
 import { detectCubismVersion } from '../../shared/live2d.js';
 import { SPINE_TYPE, isSpineManifest } from '../../shared/spine.js';
+import { motionLabelFromFile } from '../../shared/motions.js';
 
 // 格式判别规则在 src/shared/live2d.js：主进程与渲染层共用同一份，
 // 否则会出现「导入时认得是 Cubism 2，加载时当成 Cubism 4」。
@@ -12,6 +13,18 @@ function pickExpression(settings, version) {
   return list
     .map((e) => (version === 2 ? e?.name : e?.Name))
     .filter((n) => typeof n === 'string' && n !== '');
+}
+
+/** 动作组 → 各动作显示名（动作文件去掉扩展名的原名），供右键菜单用。 */
+function pickMotionNames(settings, version) {
+  const groups = version === 2 ? settings?.motions : settings?.FileReferences?.Motions;
+  if (!groups || typeof groups !== 'object') return {};
+  const out = {};
+  for (const [group, entries] of Object.entries(groups)) {
+    if (!Array.isArray(entries)) continue;
+    out[group] = entries.map((e) => motionLabelFromFile(e?.File || e?.file));
+  }
+  return out;
 }
 
 /** 动作组 → 该组动作数（Cubism 4 在 FileReferences 里，Cubism 2 在顶层）。 */
@@ -33,6 +46,7 @@ export function deriveManifest(settings, opts = {}) {
   const version = detectCubismVersion(settings);
   const expressions = pickExpression(settings, version);
   const motionGroups = pickMotionGroups(settings, version);
+  const motionNames = pickMotionNames(settings, version);
 
   // 降级时**不**按序号猜语义。官方样例 Haru 的 expressions[1] 是 F02，
   // 而 pet.json 里 F02 是 angry——按序号猜会让「摸头」触发生气的表情。
@@ -71,6 +85,7 @@ export function deriveManifest(settings, opts = {}) {
     derived: true,
     availableExpressions: expressions,
     motionGroups,
+    motionNames,
   };
 }
 
@@ -108,6 +123,7 @@ export function mergeManifest(base, derived) {
     derived: !base,
     availableExpressions: derived?.availableExpressions || [],
     motionGroups: derived?.motionGroups || {},
+    motionNames: derived?.motionNames || {},
   };
 }
 

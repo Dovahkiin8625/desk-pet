@@ -70,6 +70,13 @@ contextBridge.exposeInMainWorld('pet', {
   reportModelSwitchResult: (result) => ipcRenderer.send('pet:modelSwitchResult', result),
   // 模型加载失败（启动阶段）：必须让主进程知道，否则用户在终端里看不到任何线索。
   reportModelError: (info) => ipcRenderer.send('pet:modelError', info),
+  // 报告当前形象有哪些动作：主进程据此填右键菜单的「动作」子菜单。
+  // 形状见 src/shared/motions.js（group + motions[{index,label}]）。
+  reportMotions: (motions) => ipcRenderer.send('pet:motions', motions),
+  // 右键菜单点了「动作」里的某一项：主进程推过来，渲染层播放。
+  onPlayMotion: (cb) => {
+    ipcRenderer.on('pet:playMotion', (_e, payload) => cb(payload?.group, payload?.index));
+  },
   // 设置变化广播：主进程在设置落盘前就把新设置推给渲染层，
   // 宠物窗口据此立刻重新适配缩放，设置窗口据此同步控件。
   onSettingsChanged: (cb) => {

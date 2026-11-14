@@ -36,6 +36,7 @@ import { makeHotkeyCapture } from './hotkeyCapture.js';
 import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credentials.js';
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 import { buildTapVoicePayload } from '../shared/tapVoice.js';
+import { sanitizeMotions } from '../shared/motions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -375,6 +376,10 @@ const SWITCH_ACK_TIMEOUT_MS = 12000;
 // 启动期间（首次 mountModel 要加载 model3.json + moc3 + 2048² 贴图，
 // 约 0.5~2 秒）发出去的切换请求会凭空消失——磁盘写着 Natori、屏幕上是 Haru。
 let rendererReady = false;
+
+// 渲染层上报的当前形象的动作清单（右键菜单「动作」子菜单按它建）。
+// 载荷已经由 sanitizeMotions 校验过。
+let petMotions = [];
 
 // 切换请求序号：回执必须能对回具体的那一次请求（并发切换不能串台）。
 let switchCounter = 0;
@@ -1034,6 +1039,17 @@ function openSettings() {
 }
 
 /**
+ * 右键菜单「动作」点了某一项：把动作推给渲染层播放。
+ *
+ * group / index 已按菜单构建时的清单校验过，渲染层会再夹紧一次——
+ * 菜单可能是按上一个形象建的。
+ */
+function playMenuMotion(group, index) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('pet:playMotion', { group, index });
+}
+
+/**
  * 托盘菜单与右键菜单共用的动作表。
  *
  * 两处各写一份的后果很具体：加一个动作要改两处，
@@ -1048,6 +1064,8 @@ function menuActions() {
     isClickThrough: () => settings?.clickThrough === true,
     isDocked: () => system?.getState?.().dock != null,
     retrievePet: () => system?.retrievePet?.(),
+    listMotions: () => petMotions,
+    playMotion: playMenuMotion,
   };
 }
 
@@ -1198,6 +1216,14 @@ app.whenReady().then(async () => {
     onModelSwitchResult,
     // 渲染层报告模型加载失败（启动阶段）。
     onModelError,
+    // 渲染层上报当前形象有哪些动作（右键菜单「动作」子菜单按它建）。
+    // 渲染层不是可信边界：上报的清单在这里再校验一遍。
+    onMotionsReported: (list) => {
+      petMotions = sanitizeMotions(list);
+      // 托盘菜单只在启动时构建一次：形象切换后它里面的「动作」会过期，
+      // 必须重建，否则托盘菜单里播的还是上一个形象的动作。
+      refreshTrayMenu();
+    },
     // —— 桌面助理 ——
     // 助理状态：设置窗口用它显示与修改偏好。
     getAssistantState: () => assistant?.getState() || null,

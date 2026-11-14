@@ -21,16 +21,11 @@ let feedsBuilt = false;
 
 function buildFeeds(feeds) {
   if (feedsBuilt || !Array.isArray(feeds)) return;
-  for (const group of feeds) {
-    const og = document.createElement('optgroup');
-    og.label = group.group;
-    for (const feed of group.items) {
-      const opt = document.createElement('option');
-      opt.value = feed.id;
-      opt.textContent = feed.label;
-      og.append(opt);
-    }
-    feedSelect.append(og);
+  for (const feed of feeds) {
+    const opt = document.createElement('option');
+    opt.value = feed.id;
+    opt.textContent = feed.label;
+    feedSelect.append(opt);
   }
   feedsBuilt = true;
 }

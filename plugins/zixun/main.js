@@ -251,10 +251,7 @@ export default function createZixunPlugin() {
     }));
     return {
       feed: selected,
-      feeds: [
-        { group: '热搜', items: HOT_FEEDS },
-        { group: '新闻', items: NEWS_FEEDS },
-      ],
+      feeds: FEEDS,
       items,
       at: entry?.at || 0,
       error: entry?.error || '',
@@ -270,19 +267,14 @@ export default function createZixunPlugin() {
       : entry?.at
         ? `更新于 ${fmtTime(new Date(entry.at))}`
         : '';
-    const buttons = (feeds) =>
-      ctx.ui.buttonsBlock(
-        feeds.map((f) => ({ id: `switch:${f.id}`, label: f.label, primary: f.id === selected })),
-      );
     return ctx.ui.makePage({
       pluginId: 'zixun',
       title: '资讯',
       subtitle: `${feedLabel(selected)} · 榜上 ${items.length} 条`,
       blocks: [
-        ctx.ui.textBlock('热搜'),
-        buttons(HOT_FEEDS),
-        ctx.ui.textBlock('新闻'),
-        buttons(NEWS_FEEDS),
+        ctx.ui.buttonsBlock(
+          FEEDS.map((f) => ({ id: `switch:${f.id}`, label: f.label, primary: f.id === selected })),
+        ),
         items.length
           ? ctx.ui.listBlock(
               items.map((item, i) => ({
