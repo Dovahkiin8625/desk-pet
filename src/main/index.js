@@ -1461,6 +1461,9 @@ app.whenReady().then(async () => {
     userPluginsDir: userPluginsDir(app.getPath('userData')),
     assistant,
     openSettings,
+    // 插件要「吃」面板输入框里的字时，从这儿取（面板还没建好也没关系：
+    // 取值是等到插件真的去问的时候才发生的）。
+    getInputText: () => panel?.getInputText?.() || '',
   });
   await plugins.load();
 

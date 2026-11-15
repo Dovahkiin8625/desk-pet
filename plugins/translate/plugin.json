@@ -1,0 +1,43 @@
+{
+  "id": "translate",
+  "name": "翻译",
+  "icon": "globe",
+  "description": "翻译输入框里的文字：外文译成中文，中文译成英语",
+  "keywords": ["translate", "translation", "fanyi", "翻译", "中译英", "英译中", "译文"],
+  "panelInput": { "label": "翻译" },
+  "window": {
+    "title": "翻译",
+    "page": "pages/translate.html",
+    "width": 720,
+    "height": 560,
+    "refreshMs": 0
+  },
+  "settings": [
+    {
+      "key": "engine",
+      "label": "翻译引擎",
+      "type": "select",
+      "default": "大模型",
+      "options": ["大模型", "公共接口"],
+      "hint": "「大模型」用设置里已经配好的 API Key；「公共接口」是免费的公共翻译服务，要能连上外网。"
+    },
+    {
+      "key": "target",
+      "label": "译成什么语言",
+      "type": "select",
+      "default": "自动（外文→中文，中文→英语）",
+      "options": [
+        "自动（外文→中文，中文→英语）",
+        "中文",
+        "英语",
+        "日语",
+        "韩语",
+        "法语",
+        "德语",
+        "西班牙语",
+        "俄语"
+      ],
+      "hint": "「自动」时中文译成英语，外文译成中文。"
+    }
+  ]
+}

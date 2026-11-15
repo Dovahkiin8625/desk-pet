@@ -1483,6 +1483,46 @@ export function createAssistant({  userDataDir,
   }
 
   /**
+   * 一次性的模型调用（插件用）。
+   *
+   * 与 `chat` 差在哪儿：**不进聊天记录、不弹气泡、不出声**——
+   * 插件要的是一段结果（翻译、摘要、改写），不是一次对话。
+   * 桌宠不该知道你插件在背后让它干了什么。
+   *
+   * 失败时回 `{ ok: false, message }`：**不抛**——
+   * 抛出去的话，插件那边得自己接住，而它多半只是想显示一句失败原因。
+   */
+  async function complete(prompt, { system = '', temperature = 0.2 } = {}) {
+    const content = String(prompt || '').trim();
+    if (!content) return { ok: false, message: '没内容' };
+    const backend = backends.get('chat');
+    if (!backend) return { ok: false, message: '没有可用的对话后端' };
+    try {
+      const apiKey = await loadLlmApiKey(userDataDir, rootDir);
+      if (!apiKey) return { ok: false, message: '还没配 API Key（去设置里填）' };
+      const result = await backend.chat({
+        system: String(system || ''),
+        messages: [{ role: 'user', content }],
+        config: {
+          apiKey,
+          baseUrls: llmBaseUrls(),
+          model: state.llm.model,
+          temperature: Number(temperature) || 0,
+          maxTokens: state.llm.maxTokens,
+          maxTokensField: state.llm.maxTokensField,
+        },
+        onDelta: () => {},
+      });
+      const text = String(result?.text || '').trim();
+      if (!text) return { ok: false, message: '模型没有回内容' };
+      return { ok: true, text };
+    } catch (err) {
+      console.warn('[desk-pet] 模型调用失败：', err?.message || err);
+      return { ok: false, message: chatErrorText(err) };
+    }
+  }
+
+  /**
    * 聊天记录（插件界面用）。
    *
    * **带上 kind**：以后记录里会混进任务、步骤、审批，
@@ -1799,6 +1839,8 @@ export function createAssistant({  userDataDir,
     // —— 对话 ——
     /** 和桌宠聊天（用户发起的）。 */
     chat,
+    /** 一次性的模型调用（插件用：不进记录、不弹气泡、不出声）。 */
+    complete,
     /** 聊天记录与长期记忆（插件界面用）。 */
     chatHistoryView,
     /** 清空聊天记录与长期记忆。 */

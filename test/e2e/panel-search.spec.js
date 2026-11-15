@@ -50,7 +50,7 @@ async function openPanel(app, pet) {
   const panel = await findWindow(app, '/renderer/panel/index.html');
   if (!panel) throw new Error('面板窗口没有出现');
   await panel.waitForLoadState('domcontentloaded');
-  await panel.waitForFunction(() => (window.__panel?.resultIds || []).length > 0, null, {
+  await panel.waitForFunction(() => window.__panel?.ready === true, null, {
     timeout: 15000,
   });
   return panel;

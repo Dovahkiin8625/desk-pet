@@ -91,6 +91,12 @@ export async function createPluginHost({
    * 省略时用 `assistant.agent`。
    */
   agent = null,
+  /**
+   * 面板输入框里当前的文字（插件用来「吃」它）。
+   *
+   * 省略就是没有：插件拿到的是空串。
+   */
+  getInputText = null,
 }) {
   /** id → 插件记录。 */
   const records = new Map();
@@ -381,6 +387,13 @@ export async function createPluginHost({
         getConfig: () => getConfig(record.manifest.id),
         /** 改插件自己的配置值。 */
         setConfig: (patch) => setConfig(record.manifest.id, patch),
+        /**
+         * 面板输入框里当前那段文字。
+         *
+         * 面板把输入框里的字交给插件时（清单里声明了 `panelInput` 的那种），
+         * 插件就能在这里读到它。
+         */
+        getInputText: () => (typeof getInputText === 'function' ? String(getInputText() || '') : ''),
       },
     };
     // **配置值是活的**：插件的 `tools()` 实现会被缓存，
@@ -433,6 +446,8 @@ export async function createPluginHost({
       icon: m.icon,
       description: m.description,
       keywords: m.keywords,
+      // 这个插件要吃面板输入框里的字：面板据此加一行结果。
+      panelInput: m.panelInput || null,
       // 面板据此显示「在新窗口打开 / 变成小部件」两个按钮。
       canDetach: canDetach(m),
       hasWidget: hasWidget(m),

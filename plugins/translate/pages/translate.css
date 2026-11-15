@@ -1,0 +1,145 @@
+/* plugins/translate/pages/translate.css
+   翻译插件的页面样式。共用 theme.css 的设计系统，这里只管自己的布局。 */
+
+body {
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.tr {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* 独立窗口里：按视口铺满，内容自己滚。 */
+body:not(.dp-panel) .tr {
+  height: 100vh;
+}
+
+/* 面板里：定高（plugin.json 的 window.height），内容在内部滚。 */
+body.dp-panel {
+  overflow: hidden;
+}
+body.dp-panel .tr {
+  height: 100%;
+}
+
+.box {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.box-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.box-head .label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dp-text-soft);
+}
+
+.box-head .hint,
+.hint {
+  font-size: 12px;
+  color: var(--dp-text-faint);
+}
+
+/* 文本框：宽版高一点，窄版矮一点。 */
+textarea.area {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.6;
+  padding: 8px 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.row .spacer {
+  flex: 1;
+}
+
+/* 宽版（独立窗口）：原文与译文并排。 */
+@media (min-width: 560px) {
+  .tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .box {
+    grid-row: 1;
+  }
+  .tr > .dp-footer {
+    grid-column: 1 / -1;
+  }
+  textarea.area {
+    flex: 1;
+    min-height: 200px;
+  }
+}
+
+/* 底部那行字与齿轮按钮。 */
+.dp-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dp-border-soft);
+  color: var(--dp-text-soft);
+  font-size: 12px;
+}
+
+.dp-footer .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+}
+
+.gear:hover {
+  background: var(--dp-surface-active);
+  color: var(--dp-text);
+}
+
+/* 抽屉里的下拉：跟着字段那一行排。 */
+.dp-field select {
+  flex: none;
+  max-width: 190px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dp-text);
+  background: var(--dp-surface-2);
+  border: 1px solid var(--dp-border);
+  border-radius: 8px;
+  padding: 5px 8px;
+}

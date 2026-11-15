@@ -290,6 +290,21 @@ function normalizeSettingDeclaration(raw) {
 }
 
 /**
+ * 规整插件清单里声明的「吃面板输入框」那一段。
+ *
+ * 声明了它的插件，面板会在搜索结果里给它加一行
+ * （「翻译「xxx」」那种）：按回车就把输入框里的那段文字交给它。
+ *
+ * 没写就是没有：面板不会给它加行，插件也拿不到输入框里的字。
+ */
+function normalizePanelInput(raw) {
+  if (!isPlainObject(raw)) return null;
+  const label = str(raw.label).trim();
+  if (!label) return null;
+  return { label: label.slice(0, 40) };
+}
+
+/**
  * 校验并规整一份插件清单。
  *
  * 校验失败**不抛错**，而是把问题列出来：宿主要把原因写进日志，
@@ -388,6 +403,8 @@ export function validateManifest(raw) {
     description: str(raw.description).trim(),
     keywords,
     entry,
+    // 这个插件要吃面板输入框里的字（面板会为它加一行结果）。
+    panelInput: normalizePanelInput(raw.panelInput),
     // **没写就是没有**：清单里没提 `window` / `widget` 的插件
     // 就没有独立窗口与小部件（面板上也不给那两个按钮）。
     window: isPlainObject(raw.window)

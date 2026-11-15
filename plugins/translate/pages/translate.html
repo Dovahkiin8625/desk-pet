@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>翻译</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <link rel="stylesheet" href="translate.css" />
+  </head>
+  <body class="dp-page">
+    <div class="tr">
+      <section class="box">
+        <div class="box-head">
+          <span class="label">原文</span>
+          <span class="hint" id="sourceHint"></span>
+        </div>
+        <textarea
+          id="source"
+          class="dp-input area"
+          placeholder="要翻译的文字…"
+          spellcheck="false"
+        ></textarea>
+        <div class="row">
+          <button type="button" class="dp-button primary" id="translateBtn">翻译</button>
+          <span class="spacer"></span>
+          <span class="hint" id="targetHint"></span>
+        </div>
+      </section>
+
+      <section class="box">
+        <div class="box-head">
+          <span class="label">译文</span>
+          <span class="hint" id="engineHint"></span>
+        </div>
+        <textarea
+          id="result"
+          class="dp-input area"
+          placeholder="译文在这儿…"
+          readonly
+        ></textarea>
+      </section>
+
+      <footer class="dp-footer">
+        <span class="grow" id="statusText"></span>
+        <button type="button" class="gear" id="gearBtn" title="设置" aria-label="设置">
+          <span class="icon" data-icon="settings"></span>
+        </button>
+      </footer>
+    </div>
+
+    <script type="module" src="translate.js"></script>
+  </body>
+</html>

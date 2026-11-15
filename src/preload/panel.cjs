@@ -92,6 +92,15 @@ contextBridge.exposeInMainWorld('panel', {
   reportSize: (height) => ipcRenderer.invoke('panel:size', { height }),
   // 打开一个插件（点结果或按回车）。
   open: (pluginId) => ipcRenderer.send('panel:open', pluginId),
+  // 打开一个插件，并把输入框里那段文字交给它。
+  openInput: (pluginId, text) =>
+    ipcRenderer.send('panel:openInput', { pluginId: String(pluginId || ''), text: String(text || '') }),
+  // 输入框里的字：主进程要知道它当前是什么（插件要「吃」它）。
+  setQuery: (text) => ipcRenderer.send('panel:query', String(text ?? '')),
+  // 面板打开时主进程把剪贴板里最近的文本递过来，填进输入框。
+  onPrefill: (cb) => {
+    ipcRenderer.on('panel:prefill', (_e, text) => cb(text));
+  },
   // 把插件分离出去：`window` = 独立窗口，`widget` = 桌面小部件。
   detach: (pluginId, mode) =>
     ipcRenderer.send('panel:detach', { pluginId: String(pluginId || ''), mode: String(mode || '') }),

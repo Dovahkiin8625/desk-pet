@@ -112,6 +112,13 @@ window.__panel = {
   contextTarget: null,
   view: PANEL_VIEW.SEARCH,
   pluginId: '',
+  /**
+   * 面板准备好了吗（插件清单到了，结果已经画出来）。
+   *
+   * **别拿「有没有搜到东西」当就绪的信号**：输入框里可能有内容
+   * （打开时会填上剪贴板里最近的文字），那时候一个插件也搜不到。
+   */
+  ready: false,
 };
 
 /**
@@ -350,6 +357,10 @@ function renderResults() {
     ...searchItems(query, settings).map((hit) => toRow('setting', hit)),
     ...fileHits(query, files),
   ];
+  // 命中的插件 id：已经搜到的插件不用再给一行「吃输入框」的结果。
+  const hitPluginIds = new Set(
+    hits.filter((row) => row.kind === 'plugin').map((row) => row.id)
+  );
   // 稳定排序：分数相同的不换位（sort 在 V8 里是稳定的）。
   //
   // 插件排在前面：**分数相同就是插件赢**。中文系统上装的东西常常同名
@@ -381,6 +392,23 @@ function renderResults() {
       field: '',
       positions: [],
     });
+    // 「吃输入框」的插件：给它加一行，回车就把这段文字交给它。
+    for (const plugin of plugins) {
+      const label = plugin?.panelInput?.label;
+      if (!label || hitPluginIds.has(plugin.id)) continue;
+      results.push({
+        kind: 'panelInput',
+        id: plugin.id,
+        pluginId: plugin.id,
+        name: `${label}「${trimmed}」`,
+        desc: plugin.description || '',
+        icon: plugin.icon || 'plugin',
+        text: trimmed,
+        score: 0,
+        field: '',
+        positions: [],
+      });
+    }
   }
   if (activeIndex >= results.length) activeIndex = Math.max(0, results.length - 1);
   if (activeIndex < 0) activeIndex = 0;
@@ -522,6 +550,11 @@ function openResult(row) {
   }
   if (row.kind === 'plugin') {
     openPlugin(row.id);
+    return;
+  }
+  if (row.kind === 'panelInput') {
+    // 把输入框里这段文字一起交给插件。
+    window.panel?.openInput?.(row.pluginId || row.id, row.text || '');
     return;
   }
   if (row.kind === 'app') {
@@ -744,6 +777,23 @@ queryEl.addEventListener('input', () => {
   files = [];
   renderResults();
   scheduleFileSearch(queryEl.value);
+  // 主进程要知道输入框里现在是什么（插件要「吃」它）。
+  window.panel?.setQuery?.(queryEl.value);
+});
+
+// 面板刚打开时，主进程把剪贴板里最近的文本递过来。
+// 填进去只是**省一次 Ctrl+V**：用户自己打了字就不动它。
+window.panel?.onPrefill?.((text) => {
+  const value = String(text || '');
+  if (!value.trim()) return;
+  // 插件界面开着的时候不填：那时候输入框是藏着的。
+  if (currentPluginId) return;
+  // 用户已经打过字了：不覆盖他写的。
+  if (queryEl.value.trim()) return;
+  queryEl.value = value;
+  activeIndex = 0;
+  renderResults();
+  window.panel?.setQuery?.(value);
 });
 
 backEl.addEventListener('click', () => window.panel?.back?.());
@@ -760,6 +810,7 @@ widgetEl.addEventListener('click', () => {
 window.panel?.onPlugins?.((list) => {
   plugins = Array.isArray(list) ? list : [];
   renderResults();
+  window.__panel.ready = true;
 });
 
 /** 收到程序清单：换掉旧的，重画结果。 */

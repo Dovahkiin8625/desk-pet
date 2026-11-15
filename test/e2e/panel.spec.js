@@ -72,7 +72,7 @@ async function openPanel(app, pet) {
   const panel = await findWindow(app, '/renderer/panel/index.html');
   if (!panel) throw new Error('面板窗口没有出现');
   await panel.waitForLoadState('domcontentloaded');
-  await panel.waitForFunction(() => (window.__panel?.resultIds || []).length > 0, null, {
+  await panel.waitForFunction(() => window.__panel?.ready === true, null, {
     timeout: 15000,
   });
   return panel;
@@ -92,6 +92,13 @@ test.describe('插件面板', () => {
     const { app, pet } = await launch();
     try {
       const panel = await openPanel(app, pet);
+
+      // 面板打开时输入框里可能已经填上了剪贴板里最近的文字：
+      // 清空它，下面断言的才是「空查询 → 列出所有插件」。
+      await panel.fill('#query', '');
+      await panel.waitForFunction(() => (window.__panel?.resultIds || []).length > 0, null, {
+        timeout: 10000,
+      });
 
       // 插件清单来自 plugins/ 目录：待办、提醒……都得在。
       const ids = await panel.evaluate(() => window.__panel.resultIds);

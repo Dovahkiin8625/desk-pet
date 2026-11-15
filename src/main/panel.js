@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, Menu } from 'electron';
+import { BrowserWindow, clipboard, ipcMain, Menu } from 'electron';
 import { basename, join } from 'node:path';
 import { appUrl } from './protocol.js';
 import { placeBesidePet } from './placement.js';
@@ -80,6 +80,26 @@ export function createPanelController({
   let requestSeq = 0;
   // 上次显示的时刻：失焦保护用。
   let shownAt = 0;
+  /**
+   * 输入框里当前那段文字。
+   *
+   * 页面每改一次输入框就报上来（`panel:query`）。
+   * 插件要「吃」输入框里的字时，主进程从这里取。
+   */
+  let inputText = '';
+  /**
+   * 面板**交给插件**的那段文字。
+   *
+   * 与 `inputText` 分开记：用户在面板里搜「翻译」时输入框里是「翻译」，
+   * 那不是他要翻的东西——只有从「翻译「xxx」」那一行打开的插件才拿到 xxx。
+   */
+  let handedText = '';
+  /**
+   * 上一次自动填进输入框的那段剪贴板文字。
+   *
+   * 同一段文字只自动填一次：剪贴板没换内容就不该反复塞同样的东西。
+   */
+  let lastPrefilled = '';
 
   function send(channel, payload) {
     if (!win || win.isDestroyed()) return;
@@ -235,6 +255,30 @@ export function createPanelController({
   }
 
   /**
+   * 把剪贴板里最近的文本填进输入框。
+   *
+   * 用户刚在别处复制了一段话（正要粘到桌宠这儿说话），
+   * 面板一开就该把那段话摆在那儿——省一次 Ctrl+V。
+   *
+   * **同一段文字只自动填一次**：填过的那段再来不重填。
+   * 剪贴板换了内容才算新的，照填不误。
+   *
+   * **读剪贴板不落盘**：填进去的内容只在页面里，退出就没了。
+   * 读不出来（被别的进程锁住）就当没有：面板照常开。
+   */
+  function prefillInput() {
+    void clipboard
+      .readText()
+      .then((text) => {
+        if (typeof text !== 'string' || !text.trim()) return;
+        if (text === lastPrefilled) return;
+        lastPrefilled = text;
+        send('panel:prefill', text);
+      })
+      .catch(() => {});
+  }
+
+  /**
    * 打开面板。
    *
    * 已经开着的时候**回到搜索视图**：点桌宠就是「我要搜索」，
@@ -258,6 +302,7 @@ export function createPanelController({
     currentPluginId = null;
     sendView(makeSearchView());
     reveal();
+    prefillInput();
   }
 
   function createWindow() {
@@ -413,6 +458,14 @@ export function createPanelController({
     sendView(pendingView || makeSearchView());
     pendingView = null;
     reveal();
+    prefillInput();
+  });
+
+  // 输入框里的字：页面每改一次就报上来。
+  // 插件要「吃」输入框里的字时，主进程从这里取。
+  ipcMain.on('panel:query', (event, text) => {
+    if (!win || event.sender !== win.webContents) return;
+    inputText = String(text || '');
   });
 
   // 本机程序清单：页面主动要（主进程会等索引扫完）。
@@ -520,9 +573,21 @@ export function createPanelController({
   // 打开某个插件（点结果或按回车）。
   ipcMain.on('panel:open', (event, pluginId) => {
     if (!win || event.sender !== win.webContents) return;
+    // 不是从「吃输入框」那一行来的：没有要交给插件的字。
+    handedText = '';
     openPlugin(String(pluginId || '')).catch((err) => {
       // 一定要接住：插件里抛错不该变成主进程的未处理错误，
       // 而面板该继续能用。
+      console.warn('[desk-pet] 打开插件失败：', err?.message || err);
+    });
+  });
+
+  // 打开某个插件，并把输入框里那段文字一起交给它
+  //（面板上「翻译「xxx」」那一行走的就是这条）。
+  ipcMain.on('panel:openInput', (event, payload) => {
+    if (!win || event.sender !== win.webContents) return;
+    handedText = String(payload?.text || '');
+    openPlugin(String(payload?.pluginId || '')).catch((err) => {
       console.warn('[desk-pet] 打开插件失败：', err?.message || err);
     });
   });
@@ -647,6 +712,13 @@ export function createPanelController({
   return {
     show,
     hide,
+    /**
+     * 交给插件的那段文字。
+     *
+     * 插件通过 `ctx.host.getInputText()` 拿到它——
+     * 面板上「翻译「xxx」」那一行按回车时交出去的就是它。
+     */
+    getInputText: () => handedText || inputText,
     /** 桌宠窗口移动后重新摆位。 */
     reposition: () => {
       if (!win || win.isDestroyed() || !win.isVisible()) return;
