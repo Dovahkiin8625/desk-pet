@@ -148,13 +148,18 @@ export function argsPreview(args) {
 }
 
 /**
- * 步骤节点：详情页那条竖向时间线上的一格。
+ * 最后一步：详情页上那一格。
+ *
+ * **只看最新的一步**：整条时间线在聊天记录那边（那边把步骤收起来了），
+ * 看板这边只留「它现在做到哪了」。
  *
  * 一格说的是「这一刻做了什么」：什么工具、动了什么参数、结果是什么。
  */
-export function stepNodes(steps) {
+export function lastStepNode(steps) {
   const list = Array.isArray(steps) ? steps : [];
-  return list.map((step) => ({
+  const step = list[list.length - 1];
+  if (!step) return null;
+  return {
     index: Number(step?.index) || 0,
     tool: String(step?.tool || ''),
     // 有人话就用它（外部 harness 的步骤说「claude code 调了 Read」）。
@@ -164,7 +169,24 @@ export function stepNodes(steps) {
     result: String(step?.result || ''),
     error: String(step?.error || ''),
     failed: Boolean(step?.error),
-  }));
+  };
+}
+
+/** 前台这一轮的审批不属于任何后台任务——归属得写清楚。 */
+export const FOREGROUND_OWNER = '当前对话';
+
+/**
+ * 审批卡上的归属：这件事是谁要做的。
+ *
+ * **前台的审批在任务列表里找不到自己**（它不是后台任务）——
+ * 那就说是「当前对话」，不能留空白。
+ */
+export function approvalOwner(approval, tasks) {
+  const taskId = String(approval?.taskId || '');
+  const list = Array.isArray(tasks) ? tasks : [];
+  const task = list.find((t) => String(t?.taskId || '') === taskId);
+  if (task) return String(task?.title || '') || shortId(task?.taskId);
+  return FOREGROUND_OWNER;
 }
 
 /** 结果或失败的那句话。 */

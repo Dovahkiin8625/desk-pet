@@ -6,8 +6,8 @@ import { countByStatus, countInterrupted } from './pages/format.js';
  * ## 数据从哪儿来
  *
  * 一份**全量快照**（每秒一份）：
- * - `ctx.agent.tasks()`：当前的任务（不含归档）——带步骤时间线，
- *   详情页那条竖着的线就是它；
+ * - `ctx.agent.tasks()`：当前的任务（不含归档）——带每一步，
+ *   详情页上只显示最新的一步；
  * - `ctx.agent.approvals()`：等着用户点头的审批——它与桌宠气泡
  *   是**同一份队列**，两边都能答，先答的算数；
  * - `ctx.agent.history()`：从记录里数出「上次被中断了几个」。

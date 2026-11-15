@@ -3,18 +3,19 @@ import { hydrateIcons } from '/src/renderer/ui/icons.js';
 import { bindTheme } from '/src/renderer/ui/theme.js';
 import {
   activeTasks,
+  approvalOwner,
   countByStatus,
   currentTask,
   formatClock,
   formatDuration,
   formatElapsed,
   isActive,
+  lastStepNode,
   resultText,
   shortId,
   sortTasks,
   statusText,
   stepLabel,
-  stepNodes,
 } from './format.js';
 
 /**
@@ -26,7 +27,7 @@ import {
  * ## 两层
  *
  * - **总览**：计数、当前任务、待你点头的审批、任务列表；
- * - **详情**：点开某一个任务——创建时刻、耗时、结果、竖向的步骤时间线。
+ * - **详情**：点开某一个任务——创建时刻、耗时、结果、最新的一步。
  *
  * ## 重画的方式
  *
@@ -71,7 +72,12 @@ const detailCancelEl = document.getElementById('detail-cancel');
 const detailArchiveEl = document.getElementById('detail-archive');
 const detailSteerEl = document.getElementById('detail-steer');
 const detailNoteEl = document.getElementById('detail-note');
-const stepsEl = document.getElementById('detail-steps');
+const stepTitleEl = document.getElementById('detail-step-title');
+const stepEl = document.getElementById('detail-step');
+const stepTimeEl = document.getElementById('detail-step-time');
+const stepToolEl = document.getElementById('detail-step-tool');
+const stepArgsEl = document.getElementById('detail-step-args');
+const stepResultEl = document.getElementById('detail-step-result');
 
 /** 现在看哪一层：总览还是详情。 */
 let view = 'overview';
@@ -83,8 +89,6 @@ let lastPayload = null;
 const rows = new Map();
 /** 审批 id → 卡片。 */
 const cards = new Map();
-/** 步骤序号 → 节点（复用，不重画）。 */
-const stepViews = new Map();
 /** 刚做过的本地状态：下一秒的快照会覆盖它。 */
 const localStatus = new Map();
 
@@ -234,10 +238,6 @@ function createCard() {
 
 /** 对齐审批卡片：来一张画一张，走了一张收走。 */
 function syncCards(approvals, tasks) {
-  const titleOf = (taskId) => {
-    const task = tasks.find((t) => String(t?.taskId || '') === String(taskId || ''));
-    return task?.title || '';
-  };
   const seen = new Set();
   for (const approval of approvals) {
     const id = String(approval?.id || '');
@@ -251,7 +251,7 @@ function syncCards(approvals, tasks) {
     }
     view.card.dataset.approval = id;
     view.text.textContent = String(approval.text || '');
-    view.task.textContent = titleOf(approval.taskId);
+    view.task.textContent = approvalOwner(approval, tasks);
   }
   for (const [id, view] of [...cards]) {
     if (seen.has(id)) continue;
@@ -260,51 +260,25 @@ function syncCards(approvals, tasks) {
   }
 }
 
-/** 步骤时间线上的一格。 */
-function createStepNode() {
-  const item = el('li', 'tl-item');
-  const head = el('div', 'tl-head');
-  const time = el('span', 'tl-time');
-  const tool = el('span', 'tl-tool');
-  head.append(time, tool);
-  const args = el('div', 'tl-args');
-  const result = el('div', 'tl-result');
-  item.append(head, args, result);
-  return { item, time, tool, args, result };
-}
-
-/** 对齐步骤时间线：新长出来的一格接在后面。 */
-function syncSteps(steps) {
-  const nodes = stepNodes(steps);
-  const seen = new Set();
-  let prev = null;
-  for (const node of nodes) {
-    const key = String(node.index);
-    seen.add(key);
-    let view = stepViews.get(key);
-    if (!view) {
-      view = createStepNode();
-      stepViews.set(key, view);
-    }
-    view.item.dataset.failed = node.failed ? 'true' : 'false';
-    view.time.textContent = node.time;
-    // **看板是排查用的**：工具名留着（人话标签改成悬停提示）。
-    view.tool.textContent = node.tool || node.label || '';
-    view.tool.title = String(node.label || '');
-    view.args.textContent = node.args;
-    view.args.hidden = !node.args;
-    const body = node.failed ? node.error : node.result;
-    view.result.textContent = body;
-    view.result.hidden = !body;
-    const target = prev ? prev.nextSibling : stepsEl.firstChild;
-    if (view.item !== target) stepsEl.insertBefore(view.item, target);
-    prev = view.item;
-  }
-  for (const [key, view] of [...stepViews]) {
-    if (seen.has(key)) continue;
-    stepViews.delete(key);
-    view.item.remove();
-  }
+/** 详情页上那一步：只看最新的一步。 */
+function renderLastStep(task) {
+  const steps = Array.isArray(task?.steps) ? task.steps : [];
+  const node = lastStepNode(steps);
+  stepEl.hidden = !node;
+  stepTitleEl.hidden = !node;
+  if (!node) return;
+  stepTitleEl.textContent =
+    steps.length > 1 ? `最后一步（共 ${steps.length} 步）` : '最后一步';
+  stepTimeEl.textContent = node.time;
+  // **看板是排查用的**：工具名留着（人话标签改成悬停提示）。
+  stepToolEl.textContent = node.tool || node.label || '';
+  stepToolEl.title = String(node.label || '');
+  stepArgsEl.textContent = node.args;
+  stepArgsEl.hidden = !node.args;
+  const body = node.failed ? node.error : node.result;
+  stepResultEl.textContent = body;
+  stepResultEl.hidden = !body;
+  stepEl.dataset.failed = node.failed ? 'true' : 'false';
 }
 
 /** 总览层。 */
@@ -357,7 +331,7 @@ function renderDetail(tasks) {
   detailArchiveEl.hidden = active;
   detailSteerEl.hidden = !active;
 
-  syncSteps(task.steps || []);
+  renderLastStep(task);
 }
 
 /** 一份快照画上去。 */

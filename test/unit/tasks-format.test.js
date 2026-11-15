@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   activeTasks,
+  approvalOwner,
   argsPreview,
   countByStatus,
   countInterrupted,
@@ -11,19 +12,19 @@ import {
   formatDuration,
   formatElapsed,
   isActive,
+  lastStepNode,
   resultText,
   shortId,
   sortTasks,
   statusText,
   stepLabel,
-  stepNodes,
 } from '../../plugins/tasks/pages/format.js';
 
 /**
  * 后台任务板的纯逻辑。
  *
  * 页面要靠它把运行时的话翻成人话：
- * 状态、耗时、计数、当前任务、步骤时间线。
+ * 状态、耗时、计数、当前任务、审批归属、最后一步。
  * 不碰 DOM，所以能在这儿一次验完。
  */
 
@@ -135,8 +136,8 @@ test('任务板：参数预览只说前两个键', () => {
   assert.equal(argsPreview('不是参数'), '');
 });
 
-test('任务板：步骤节点说得清做了什么', () => {
-  const nodes = stepNodes([
+test('任务板：最后一步说得清做了什么', () => {
+  const node = lastStepNode([
     {
       index: 1,
       tool: 'fs.read',
@@ -145,18 +146,32 @@ test('任务板：步骤节点说得清做了什么', () => {
       error: '',
       at: new Date(2026, 0, 2, 14, 3, 5).getTime(),
     },
+  ]);
+  assert.equal(node.tool, 'fs.read');
+  assert.equal(node.args, 'path: a.md');
+  assert.equal(node.result, '读到了 3 行');
+  assert.equal(node.failed, false);
+  assert.equal(node.time, '14:03:05');
+});
+
+test('任务板：只看最新的一步', () => {
+  const node = lastStepNode([
+    { index: 1, tool: 'fs.read', args: null, result: '读到了 3 行' },
     { index: 2, tool: 'fs.write', args: null, result: '', error: '写不了' },
     { index: 3, tool: 'Read', label: 'claude code 调了 Read' },
   ]);
-  assert.equal(nodes.length, 3);
-  assert.equal(nodes[0].tool, 'fs.read');
-  assert.equal(nodes[0].args, 'path: a.md');
-  assert.equal(nodes[0].result, '读到了 3 行');
-  assert.equal(nodes[0].failed, false);
-  assert.equal(nodes[0].time, '14:03:05');
-  assert.equal(nodes[1].failed, true);
-  assert.equal(nodes[1].error, '写不了');
-  assert.equal(nodes[2].label, 'claude code 调了 Read', '有人话就带着');
+  assert.equal(node.index, 3);
+  assert.equal(node.tool, 'Read');
+  assert.equal(node.label, 'claude code 调了 Read', '有人话就带着');
+  assert.equal(lastStepNode([]), null);
+});
+
+test('任务板：审批说得清是谁要做的', () => {
+  const tasks = [{ taskId: 't-1', title: '写个文件' }];
+  assert.equal(approvalOwner({ taskId: 't-1' }, tasks), '写个文件');
+  // 前台的审批不属于任何后台任务：不能留空白。
+  assert.equal(approvalOwner({ taskId: 'foreground' }, tasks), '当前对话');
+  assert.equal(approvalOwner({}, tasks), '当前对话');
 });
 
 test('任务板：结果与失败各是一句话', () => {

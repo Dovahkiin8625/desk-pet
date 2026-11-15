@@ -242,6 +242,38 @@ test.describe('后台任务插件', () => {
     }
   });
 
+  test('前台的审批在看板上说得清是谁要做的', async () => {
+    const stub = await startStubLlm({
+      interaction: (body) => {
+        const last = (body.messages || []).at(-1) || {};
+        if (last.role === 'tool') return say('写好了。');
+        // 前台自己写文件：写入要问用户——这张审批不属于任何后台任务。
+        return toolCall('fs.write', { path: 'note.txt', content: '前台写的' });
+      },
+      execution: null,
+    });
+    await writeAssistantState(USER_DATA);
+    const app = await launch(USER_DATA, stub.baseUrl);
+    try {
+      const pet = await app.firstWindow();
+      await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
+      const panel = await openPanel(app, pet);
+
+      await panel.fill('#query', '帮我写个 note.txt');
+      await panel.press('#query', 'Control+Enter');
+
+      const frame = await openTasksPlugin(panel);
+      const card = frame.locator('#pending .card').first();
+      await expect(card).toBeVisible({ timeout: 30000 });
+      await expect(card.locator('.card-text')).toContainText('写文件');
+      // 归属不能是空白：它来自当前这一轮对话。
+      await expect(card.locator('.card-task')).toHaveText('当前对话');
+    } finally {
+      await app.close();
+      await stub.close();
+    }
+  });
+
   test('在任务界面上把任务停掉', async () => {
     const stub = await startStubLlm({
       interaction: (body) => {
@@ -412,7 +444,7 @@ test.describe('后台任务插件', () => {
     }
   });
 
-  test('点开任务看得见详情：创建时刻、耗时与步骤时间线', async () => {
+  test('点开任务看得见详情：创建时刻、耗时与最后一步', async () => {
     const stub = await startStubLlm({
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -422,7 +454,7 @@ test.describe('后台任务插件', () => {
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('列好了。');
-        // 读文件不用点头：这一步会真的跑掉，步骤时间线上就有了一格。
+        // 读文件不用点头：这一步会真的跑掉，详情页上就有了一步。
         return toolCall('fs.list', { path: '.' });
       },
     });
@@ -446,12 +478,12 @@ test.describe('后台任务插件', () => {
       await expect(frame.locator('#detail-meta')).toContainText('创建于');
       await expect(frame.locator('#detail-meta')).toContainText(/已用|耗时/);
 
-      // 步骤时间线：那一格说的是调了什么工具。
-      await expect(frame.locator('#detail-steps .tl-tool').first()).toHaveText('fs.list', {
+      // 最后一步：说的是调了什么工具。
+      await expect(frame.locator('#detail-step-tool')).toHaveText('fs.list', {
         timeout: 30000,
       });
       // 人话标签改成悬停提示：看板是排查用的，悬停能看懂就行。
-      await expect(frame.locator('#detail-steps .tl-tool').first()).toHaveAttribute('title', '列目录');
+      await expect(frame.locator('#detail-step-tool')).toHaveAttribute('title', '列目录');
 
       // 回总览。
       await frame.locator('#detail-back').click();

@@ -289,69 +289,38 @@
         min-width: 0;
         font-size: 12px;
       }
-      /* 步骤时间线：竖着的一条线，一格一步。 */
-      #detail-steps {
-        list-style: none;
-        margin: 0;
-        padding: 0 0 0 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .tl-item {
-        position: relative;
+      /* 最后一步：一格。 */
+      #detail-step {
         display: flex;
         flex-direction: column;
         gap: 2px;
       }
-      .tl-item::before {
-        content: '';
-        position: absolute;
-        left: -16px;
-        top: 7px;
-        bottom: -12px;
-        width: 1px;
-        background: var(--dp-border-soft);
-      }
-      .tl-item:last-child::before {
+      #detail-step[hidden] {
         display: none;
       }
-      .tl-item::after {
-        content: '';
-        position: absolute;
-        left: -19px;
-        top: 5px;
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--dp-accent-strong);
-      }
-      .tl-item[data-failed='true']::after {
-        background: var(--dp-danger);
-      }
-      .tl-head {
+      .st-head {
         display: flex;
         align-items: baseline;
         gap: 8px;
       }
-      .tl-time {
+      .st-time {
         font-size: 11px;
         color: var(--dp-text-faint);
         font-variant-numeric: tabular-nums;
       }
-      .tl-tool {
+      .st-tool {
         font-size: 12px;
         font-weight: 600;
         word-break: break-word;
       }
-      .tl-args,
-      .tl-result {
+      .st-args,
+      .st-result {
         font-size: 12px;
         color: var(--dp-text-soft);
         word-break: break-word;
         white-space: pre-wrap;
       }
-      .tl-item[data-failed='true'] .tl-result {
+      #detail-step[data-failed='true'] .st-result {
         color: var(--dp-danger);
       }
       /* 小部件：紧凑版。同一个页面文件，靠 body 上的类切。 */
@@ -504,8 +473,15 @@
             <input id="detail-note" class="dp-input" type="text" placeholder="要追加的一句话" />
             <button id="detail-send" class="dp-button" data-act="steer-send">发送</button>
           </div>
-          <h2 class="dp-section-title">步骤</h2>
-          <ol id="detail-steps"></ol>
+          <h2 class="dp-section-title" id="detail-step-title">最后一步</h2>
+          <div id="detail-step" hidden>
+            <div class="st-head">
+              <span class="st-time" id="detail-step-time"></span>
+              <span class="st-tool" id="detail-step-tool"></span>
+            </div>
+            <div class="st-args" id="detail-step-args"></div>
+            <div class="st-result" id="detail-step-result"></div>
+          </div>
         </div>
 
         <div id="message"></div>
