@@ -2,8 +2,8 @@
   "id": "system",
   "name": "系统状态",
   "icon": "activity",
-  "description": "CPU、内存、GPU、温度、电源",
-  "keywords": ["system", "status", "cpu", "gpu", "neicun", "xituan", "状态", "内存", "显卡", "温度", "电源"],
+  "description": "CPU、内存、GPU、温度、电源、网络",
+  "keywords": ["system", "status", "cpu", "gpu", "neicun", "xituan", "状态", "内存", "显卡", "温度", "电源", "网络", "网速", "wangluo", "wangsu"],
   "skill": {
     "name": "system",
     "description": "用户问电脑状态、CPU、内存、温度、GPU、磁盘的时候用它",
@@ -13,7 +13,7 @@
     {
       "name": "system.status",
       "label": "看系统状态",
-      "description": "看当前的 CPU、内存、温度与电源状态。",
+      "description": "看当前的 CPU、内存、温度、电源与网络状况（速率、Wi-Fi 信号、IP）。",
       "parameters": { "type": "object", "properties": {} },
       "risk": "read"
     },
@@ -39,7 +39,7 @@
   "widget": {
     "title": "系统监控",
     "width": 216,
-    "height": 140,
+    "height": 160,
     "page": "widget.html",
     "refreshMs": 1000,
     "alwaysOnTop": true

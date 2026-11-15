@@ -77,6 +77,9 @@ test.describe('系统状态插件', () => {
 
       // 底下那行字：温度与电源。
       await expect(frame.locator('#info')).toContainText('温度', { timeout: 20000 });
+
+      // 网络那一行：连上了还是没连上。
+      await expect(frame.locator('#net')).toContainText(/已连接|未连接/, { timeout: 20000 });
     } finally {
       await app.close();
     }

@@ -11,6 +11,7 @@
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
 import { hydrateIcons } from '/src/renderer/ui/icons.js';
+import { formatNetwork } from '/src/shared/network.js';
 
 const surface = bindSurface();
 
@@ -27,6 +28,7 @@ document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
 const el = {
   meters: document.getElementById('meters'),
   info: document.getElementById('info'),
+  net: document.getElementById('net'),
   gear: document.getElementById('gearBtn'),
 };
 
@@ -116,6 +118,8 @@ function render() {
   const vram = vramText(state.gpu);
   if (vram) parts.push(vram);
   el.info.textContent = parts.join(' · ') || '状态未知';
+
+  el.net.textContent = formatNetwork(state.network);
 
   if (hotAlert.checked !== Boolean(state.hotAlert)) hotAlert.checked = Boolean(state.hotAlert);
 }

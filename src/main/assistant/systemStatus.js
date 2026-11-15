@@ -1,5 +1,7 @@
 import os from 'node:os';
 
+import { formatNetwork } from '../../shared/network.js';
+
 /**
  * 系统状态采样。
  *
@@ -68,7 +70,7 @@ export function formatMemory(total, free) {
 /**
  * 状态文本（给气泡显示）。
  *
- * @param {object} s { cpu, memory, thermal, onBattery, gpu }
+ * @param {object} s { cpu, memory, thermal, onBattery, gpu, network }
  */
 export function formatStatus(s = {}) {
   const lines = ['系统状态'];
@@ -86,6 +88,9 @@ export function formatStatus(s = {}) {
   if (typeof s.onBattery === 'boolean') {
     lines.push(s.onBattery ? '电源：电池供电' : '电源：已接电');
   }
+  // 网络：速率、信号、IP 合成一行；没采到就不写这一行。
+  const net = formatNetwork(s.network);
+  if (net) lines.push(`网络 ${net}`);
   return lines.join('\n');
 }
 

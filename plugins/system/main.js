@@ -25,6 +25,8 @@ export default function createSystemPlugin() {
       thermal: view.thermal,
       thermalText: view.thermalText,
       onBattery: view.onBattery,
+      // 网络：速率、信号、IP。采不到就是 null（界面画「—」）。
+      network: view.network,
       hotAlert: view.hotAlert,
     };
   };
@@ -55,7 +57,7 @@ export default function createSystemPlugin() {
     return ctx.ui.makePage({
       pluginId: 'system',
       title: '系统状态',
-      subtitle: 'CPU · 内存 · GPU · 温度 · 电源',
+      subtitle: 'CPU · 内存 · GPU · 温度 · 电源 · 网络',
       blocks: [ctx.ui.textBlock(view.text)],
       drawer: [ctx.ui.toggleBlock('hot-alert', '过热时提醒我', view.hotAlert)],
     });
@@ -97,6 +99,7 @@ export default function createSystemPlugin() {
                 gpu: view.gpu,
                 thermal: view.thermal,
                 onBattery: view.onBattery,
+                network: view.network,
               },
             };
           },

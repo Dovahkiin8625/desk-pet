@@ -42,6 +42,15 @@
       font-size: 11px;
     }
     #foot .spacer { flex: 1; }
+    #net {
+      flex: 1;
+      text-align: right;
+      color: var(--dp-text-soft);
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -72,6 +81,10 @@
       <span class="spacer"></span>
       <span id="vram"></span>
       <span id="power"></span>
+    </div>
+    <div class="row">
+      <span class="name">网络</span>
+      <span id="net">—</span>
     </div>
   </div>
 

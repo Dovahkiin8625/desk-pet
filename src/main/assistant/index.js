@@ -21,6 +21,7 @@ import * as pomodoro from './pomodoro.js';
 import * as systemStatus from './systemStatus.js';
 import { buildSnapshotLines } from './snapshot.js';
 import * as gpu from './gpu.js';
+import * as network from './network.js';
 import * as weather from './weather.js';
 import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
 import { synthesizeCached } from './tts/minimax.js';
@@ -1033,8 +1034,10 @@ export function createAssistant({  userDataDir,
     const onBattery = safeOnBattery();
     // GPU 是异步采的：这里读的是最近一次的结果，采不到就是 null。
     const gpuInfo = gpu.gpuStatus();
+    // 网络也是异步采的：速率是两次采样的差值。
+    const netInfo = network.networkStatus();
     return {
-      text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery, gpu: gpuInfo }),
+      text: systemStatus.formatStatus({ cpu, memory, thermal, onBattery, gpu: gpuInfo, network: netInfo }),
       cpu,
       memory,
       // 内存多少G（界面里画「15.9 / 26.1 GB」用的）。
@@ -1043,6 +1046,7 @@ export function createAssistant({  userDataDir,
       thermalText: systemStatus.thermalText(thermal),
       onBattery,
       gpu: gpuInfo,
+      network: netInfo,
       hotAlert: Boolean(state.hotAlert.enabled),
     };
   }
@@ -1558,6 +1562,8 @@ export function createAssistant({  userDataDir,
 
     // GPU：自己会限流（两秒一次），这里只是叫醒它。
     void gpu.refreshGpu();
+    // 网络：自己也会限流（两秒一次）。
+    void network.refreshNetwork();
 
     // 整点报时
     if (state.chime.enabled) {
@@ -1646,6 +1652,8 @@ export function createAssistant({  userDataDir,
       systemStatus.sampleCpuPercent();
       // GPU 也先采一次：第一次看系统状态就该有 GPU 的数。
       void gpu.refreshGpu();
+      // 网络同理：先采一次，速率要等下一轮才有差值。
+      void network.refreshNetwork();
       tickTimer = setInterval(tick, TICK_MS);
       // 问候语：等模型加载完再说。
       greetingTimer = setTimeout(() => {

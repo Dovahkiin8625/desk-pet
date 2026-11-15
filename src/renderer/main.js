@@ -31,6 +31,7 @@ import {
   setMasterVolume,
   getMasterVolume,
   getSpeechOutput,
+  getSpeechStats,
 } from './pet/audio.js';
 import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
@@ -83,6 +84,9 @@ window.__pet = {
   // 语音诊断：收到几段语音、最近一段多少字节。
   speechCount: 0,
   lastSpeechBytes: 0,
+  // 语音播放的统计（同时在播几段、同时最多到过几段）。
+  // 「两次回复的语音叠在一起」只有这个计数能证伪：maxConcurrent 该是 1。
+  speechStats: { speaking: 0, started: 0, finished: 0, maxConcurrent: 0 },
   // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
   volume: DEFAULT_VOLUME,
   // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
@@ -885,6 +889,7 @@ function registerChannels() {
       .finally(() => {
         // 播完了（或者压根没播成）：回报主进程。
         // **失败也要回报**——不然主进程会一直等到兜底超时才放答案。
+        window.__pet.speechStats = getSpeechStats();
         window.pet.reportSpeechEnded?.(id);
       });
   });

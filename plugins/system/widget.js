@@ -10,6 +10,7 @@
 
 import { hydrateIcons } from '/src/renderer/ui/icons.js';
 import { bindTheme } from '/src/renderer/ui/theme.js';
+import { formatNetworkShort } from '/src/shared/network.js';
 
 // 页面里的占位图标换成真的 SVG（图标只有一份，见 src/shared/icons.js）。
 hydrateIcons();
@@ -26,6 +27,7 @@ const gpuVal = document.getElementById('gpu-val');
 const thermalEl = document.getElementById('thermal');
 const vramEl = document.getElementById('vram');
 const powerEl = document.getElementById('power');
+const netEl = document.getElementById('net');
 
 /** 把一个百分比画成进度条。 */
 function setBar(bar, val, value) {
@@ -66,6 +68,8 @@ function render(data) {
 
   thermalEl.textContent = `温度 ${data.thermalText || '未知'}`;
   powerEl.textContent = data.onBattery === true ? '电池' : data.onBattery === false ? '已接电' : '';
+
+  netEl.textContent = formatNetworkShort(data.network) || '—';
 }
 
 // 宿主每秒推一次；打开时还会先给一份。

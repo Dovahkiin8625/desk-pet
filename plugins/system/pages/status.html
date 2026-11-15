@@ -104,6 +104,21 @@
         white-space: nowrap;
       }
 
+      /* ---------------- 网络那一行 ---------------- */
+      .netline {
+        flex: none;
+        padding: 0 12px 8px;
+        font-size: 11px;
+        color: var(--dp-text-soft);
+        font-variant-numeric: tabular-nums;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .netline:empty {
+        display: none;
+      }
+
       /* ---------------- 底下那行 ---------------- */
       .gear {
         flex: none;
@@ -132,6 +147,8 @@
       <div class="meters">
         <div class="card" id="meters"></div>
       </div>
+
+      <div class="netline" id="net"></div>
 
       <footer class="dp-footer">
         <span class="grow" id="info">正在读系统状态…</span>

@@ -11,6 +11,7 @@
  */
 
 import { DEFAULT_VOLUME } from '../../shared/volume.js';
+import { createSpeechQueue } from './speechQueue.js';
 
 let ctx = null;
 let enabled = true;
@@ -19,6 +20,30 @@ let masterGain = null;
 let volume = DEFAULT_VOLUME;
 // 语音实际连到了哪个节点（null = 还没播过）。
 let speechTarget = null;
+
+// 语音队列：一次只播一段（见 speechQueue.js）。
+const speechQueue = createSpeechQueue();
+
+// 语音的诊断计数：同时在播几段、同时最多到过几段。
+// 「两次回复的语音叠在一起」这件事，只有这个计数器能证伪。
+let speaking = 0;
+let speechStarted = 0;
+let speechFinished = 0;
+let speechMaxConcurrent = 0;
+
+/**
+ * 语音播放的统计。
+ *
+ * @returns {{speaking: number, started: number, finished: number, maxConcurrent: number}}
+ */
+export function getSpeechStats() {
+  return {
+    speaking,
+    started: speechStarted,
+    finished: speechFinished,
+    maxConcurrent: speechMaxConcurrent,
+  };
+}
 
 function audioContext() {
   if (ctx) return ctx;
@@ -142,10 +167,19 @@ export function playError() {
  * 口型不是靠「正在播放」这个布尔值做的——那样嘴会一开一合地抽搐；
  * 要按**每一刻的响度**来动，嘴才会跟着语音的开合走。
  *
+ * **一次只播一段**：后来的语音排在前面那段播完之后（见 speechQueue.js）。
+ * 不排的话，前台回复还没念完，后台那件事做完又报一句，两句话叠在一起。
+ *
  * @param {Uint8Array|Buffer} bytes MP3 字节
  * @param {(amplitude: number) => void} onAmplitude 每帧回调，0..1
+ * @returns {Promise<void>} 这一段播完（或播不成）时兑现
  */
-export async function playSpeech(bytes, onAmplitude) {
+export function playSpeech(bytes, onAmplitude) {
+  return speechQueue.run(() => playSpeechNow(bytes, onAmplitude));
+}
+
+/** 真正播一段语音（队列内部用）。 */
+async function playSpeechNow(bytes, onAmplitude) {
   const ac = audioContext();
   if (!ac || !bytes || bytes.length === 0) return;
   if (ac.state === 'suspended') {
@@ -182,14 +216,35 @@ export async function playSpeech(bytes, onAmplitude) {
   source.connect((speechTarget = masterGain || ac.destination));
   const startedAt = ac.currentTime;
   let stopped = false;
+  // 计数：这一段开始播了。
+  speaking += 1;
+  speechStarted += 1;
+  speechMaxConcurrent = Math.max(speechMaxConcurrent, speaking);
   // **播完才 resolve**：主进程在等这个信号——
   // 「先应一声」要等应答念完，才把答案气泡放出来。
+  let guard = null;
+  let settled = false;
   const finished = new Promise((resolve) => {
-    source.onended = () => {
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (guard) clearTimeout(guard);
       stopped = true;
       onAmplitude?.(0);
       resolve();
     };
+    source.onended = done;
+    // 兜底：音频上下文被挂起时 onended 可能永远不来。
+    // 那样这一段会一直占着队列，后面的语音都发不出声——
+    // 所以到点就把这一段掐掉，让队列往前走。
+    guard = setTimeout(() => {
+      try {
+        source.stop();
+      } catch {
+        /* 已经停了 */
+      }
+      done();
+    }, (decoded.duration + 1) * 1000);
   });
   source.start();
 
@@ -202,7 +257,12 @@ export async function playSpeech(bytes, onAmplitude) {
   };
   requestAnimationFrame(tick);
 
-  await finished;
+  try {
+    await finished;
+  } finally {
+    speaking -= 1;
+    speechFinished += 1;
+  }
 }
 
 /**
