@@ -12,8 +12,10 @@
 // 那条路（找窗口、叫前台、发按键）由 paste.ps1 负责，
 // 它的回话格式在单元测试里验（test/unit/clipboard-store.test.js）。
 import { test, expect, _electron as electron } from '@playwright/test';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 const ROOT = process.cwd();
 const USER_DATA = join(ROOT, '.tmp-e2e-clipboard');
@@ -95,6 +97,35 @@ async function readHistory() {
   } catch {
     return null;
   }
+}
+
+/** 1×1 的 PNG（标准最小合法 PNG）。 */
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** 在主进程里把一张图写进系统剪贴板（模拟截图/浏览器「复制图片」）。 */
+async function copyImage(app) {
+  await app.evaluate(async ({ clipboard, ClipboardItem }, base64) => {
+    const bytes = Buffer.from(base64, 'base64');
+    const blob = new Blob([new Uint8Array(bytes)], { type: 'image/png' });
+    await clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+  }, TINY_PNG_BASE64);
+}
+
+/** 在主进程里往系统剪贴板写一份「复制的文件」（text/uri-list）。 */
+async function copyFiles(app, paths) {
+  const urls = paths.map((p) => pathToFileURL(p).href);
+  await app.evaluate(async ({ clipboard, ClipboardItem }, list) => {
+    await clipboard.write([new ClipboardItem({ 'text/uri-list': list.join('\r\n') })]);
+  }, urls);
+}
+
+/** 现在系统剪贴板里有哪些 MIME 类型。 */
+async function clipboardTypes(app) {
+  return app.evaluate(async ({ clipboard }) => {
+    const items = await clipboard.read();
+    return (items || []).flatMap((item) => item.types || []);
+  });
 }
 
 test.describe('剪贴板插件', () => {
@@ -218,6 +249,71 @@ test.describe('剪贴板插件', () => {
     }
   });
 
+  test('双击粘贴：贴成功就关掉独立窗口，贴不上就留着并给出原因', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      const frame = await openClipboardPlugin(panel);
+
+      // 复制一条，等它出现在列表里。
+      await copyText(app, once('贴完就走'));
+      await expect(frame.locator('li.row .text').first()).toHaveText(once('贴完就走'), {
+        timeout: 10000,
+      });
+
+      // 分离成独立窗口（面板随即收起）。
+      await panel.click('#detach');
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win, '剪贴板的独立窗口没有出现').toBeTruthy();
+      await win.waitForLoadState('domcontentloaded');
+
+      const winFrame = win.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('li.row .text').first()).toHaveText(once('贴完就走'), {
+        timeout: 10000,
+      });
+
+      // 双击一条：内容先写回剪贴板。
+      await winFrame.locator('li.row').first().dblclick();
+      await expect
+        .poll(async () => await app.evaluate(async ({ clipboard }) => await clipboard.readText()), {
+          timeout: 10000,
+        })
+        .toBe(once('贴完就走'));
+
+      // 等结果落地：要么窗口关了，要么底栏出现失败原因。
+      const deadline = Date.now() + 10000;
+      let outcome = 'pending';
+      while (Date.now() < deadline && outcome === 'pending') {
+        if (win.isClosed()) {
+          outcome = 'closed';
+          break;
+        }
+        const text = await winFrame.locator('#statusText').textContent().catch(() => '');
+        if (/没有找到可以粘贴的窗口|没能把那个窗口叫到前台|贴不了/.test(text || '')) outcome = 'failed';
+        else await new Promise((r) => setTimeout(r, 100));
+      }
+      if (outcome === 'closed') {
+        expect(win.isClosed()).toBe(true);
+      } else {
+        await expect(winFrame.locator('#statusText')).toHaveText(
+          /没有找到可以粘贴的窗口|没能把那个窗口叫到前台|贴不了/
+        );
+      }
+
+      const winStillOpen = () =>
+        app.windows().some((w) => {
+          try {
+            return w.url().includes('/renderer/plugin-window/index.html');
+          } catch {
+            return false;
+          }
+        });
+      if (outcome === 'closed') await expect.poll(winStillOpen, { timeout: 10000 }).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('双击一条：那条内容被写回剪贴板', async () => {
     const { app, pet } = await launch();
     try {
@@ -249,6 +345,99 @@ test.describe('剪贴板插件', () => {
         once('clipboard-e2e-second'),
         { timeout: 5000 }
       );
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('复制的是图片时：记进历史、列表里能看见、双击贴回去', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      const frame = await openClipboardPlugin(panel);
+
+      await copyImage(app);
+      // 图片行：缩略图出现。
+      await expect(frame.locator('li.row img.thumb').first()).toBeVisible({ timeout: 10000 });
+
+      // 落盘：历史里有一条 kind=image 的条目，图片文件也在盘上。
+      const history = await readHistory();
+      expect(history?.some((item) => item.kind === 'image')).toBe(true);
+      const entry = history.find((item) => item.kind === 'image');
+      expect(entry.imageFile).toMatch(/^img-[0-9a-f]{40}\.png$/);
+      const { access } = await import('node:fs/promises');
+      await access(join(USER_DATA, 'clipboard-images', entry.imageFile));
+
+      // 双击：图片写回剪贴板。
+      await frame.locator('li.row').first().dblclick();
+      await expect.poll(() => clipboardTypes(app), { timeout: 10000 }).toContain('image/png');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('复制的是文件时：记进历史、双击贴出去', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'desk-pet-e2e-files-'));
+    const fileA = join(tmp, 'e2e测试文件甲.txt');
+    const fileB = join(tmp, 'e2e测试文件乙.txt');
+    await writeFile(fileA, 'alpha', 'utf8');
+    await writeFile(fileB, 'beta', 'utf8');
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      const frame = await openClipboardPlugin(panel);
+
+      await copyFiles(app, [fileA, fileB]);
+      // 文件行：出现文件名。
+      await expect(frame.locator('li.row .text', { hasText: 'e2e测试文件甲.txt' }).first()).toBeVisible({
+        timeout: 10000,
+      });
+
+      // 落盘：kind=files，路径原样存。
+      const history = await readHistory();
+      const entry = history?.find((item) => item.kind === 'files');
+      expect(entry?.files).toContain(fileA);
+
+      // 双击：文件（text/uri-list）写回剪贴板。
+      await frame.locator('li.row', { hasText: 'e2e测试文件甲.txt' }).first().dblclick();
+      await expect.poll(() => clipboardTypes(app), { timeout: 10000 }).toContain('text/uri-list');
+      // 兜底：不认 CF_HDROP 的应用（记事本之类）至少拿到路径文本。
+      await expect
+        .poll(async () => await app.evaluate(async ({ clipboard }) => await clipboard.readText()), {
+          timeout: 10000,
+        })
+        .toContain('e2e测试文件甲.txt');
+    } finally {
+      await app.close();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('复制的是富文本（HTML）时：贴回去还带 HTML', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+      const frame = await openClipboardPlugin(panel);
+
+      await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+        await clipboard.write([
+          new ClipboardItem({
+            'text/plain': '加粗的一段话',
+            'text/html': '<p><b>加粗的一段话</b></p>',
+          }),
+        ]);
+      });
+      // HTML 徽章出现。
+      await expect(frame.locator('li.row .badge', { hasText: 'HTML' }).first()).toBeVisible({ timeout: 10000 });
+
+      // 落盘：HTML 存下来了。
+      const history = await readHistory();
+      const entry = history?.find((item) => item.html);
+      expect(entry?.html).toContain('<b>');
+
+      // 双击：HTML 写回剪贴板。
+      await frame.locator('li.row').first().dblclick();
+      await expect.poll(() => clipboardTypes(app), { timeout: 10000 }).toContain('text/html');
     } finally {
       await app.close();
     }

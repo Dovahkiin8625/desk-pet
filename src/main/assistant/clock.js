@@ -17,6 +17,25 @@ export const GREETING_BANDS = Object.freeze([
   { until: 24, text: '夜深了，早点休息呀', emotion: 'tired' },
 ]);
 
+/** 一天里的时段说法（提示词里用：模型只看 "15:42" 容易跟着历史里的黑夜情节走）。 */
+export const DAY_PERIODS = Object.freeze([
+  { until: 5, text: '深夜' },
+  { until: 9, text: '早上' },
+  { until: 11, text: '上午' },
+  { until: 13, text: '中午' },
+  { until: 18, text: '下午' },
+  { until: 20, text: '傍晚' },
+  { until: 23, text: '晚上' },
+  { until: 24, text: '深夜' },
+]);
+
+/** 按小时数给出时段说法。 */
+export function dayPeriod(date) {
+  const when = date instanceof Date ? date : new Date(date);
+  const band = DAY_PERIODS.find((b) => when.getHours() < b.until);
+  return band ? band.text : '';
+}
+
 /** 按小时数给出问候语。 */
 export function greetingFor(date) {
   const hour = date.getHours();

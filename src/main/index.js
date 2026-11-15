@@ -40,6 +40,13 @@ import { sanitizeMotions } from '../shared/motions.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/**
+ * 剪贴板插件的图片目录在 userData 里（`userData/clipboard-images/`），
+ * 给它一个虚拟根：渲染层就能用和内置资源一样的 URL 形状去取它们
+ * （`app://bundle/__clipboard-images__/img-xxx.png`）。
+ */
+const CLIPBOARD_IMAGES_URL_PREFIX = '/__clipboard-images__';
+
 if (process.env.DESK_PET_USER_DATA) {
   // setPath 要求目标目录已存在，否则会抛错（Task 1 的 E2E 用例依赖这一点）。
   mkdirSync(process.env.DESK_PET_USER_DATA, { recursive: true });
@@ -1131,6 +1138,7 @@ app.whenReady().then(async () => {
   registerAppProtocol(ROOT, {
     [USER_MODELS_URL_PREFIX]: userModelsDir(app.getPath('userData')),
     [USER_PLUGINS_URL_PREFIX]: userPluginsDir(app.getPath('userData')),
+    [CLIPBOARD_IMAGES_URL_PREFIX]: join(app.getPath('userData'), 'clipboard-images'),
   }, () => themeState());
   settings = await loadSettings(app.getPath('userData'));
   // 主题清单：themes 目录里的 css 文件（设置页来问的时候会现读一遍）。

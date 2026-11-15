@@ -1,5 +1,6 @@
 import { createAgentLoop, AGENT_OUTCOME } from '../agent/loop.js';
 import { modelRecord } from '../agent/record.js';
+import { stripLeadingTimePrefix } from '../chat/prompt.js';
 import { createModelCaller } from '../chat/caller.js';
 import { createStreamSplitter, parseReply, META_MARKER } from '../chat/prompt.js';
 import { fallbackText, translateError } from '../chat/agent.js';
@@ -236,7 +237,7 @@ export function createInteractionBackend({
           if (!text) return;
           if (text.includes(META_MARKER)) roundMeta = parseReply(text);
           // **META 那段不记**：它是给主进程看的，聊天记录页给用户看。
-          const visible = text.split(META_MARKER)[0].trim();
+          const visible = stripLeadingTimePrefix(text.split(META_MARKER)[0]).trim();
           if (!visible) return;
           appendRecord(modelRecord({ index: round?.index, text: visible, model: String(config.model || '') }));
         },

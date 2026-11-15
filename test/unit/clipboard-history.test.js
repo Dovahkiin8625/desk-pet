@@ -6,7 +6,9 @@ import {
   DEFAULT_MAX_ENTRIES,
   addEntry,
   clearEntries,
+  keyFor,
   listEntries,
+  makeEntry,
   newestEntry,
   normalizeEntries,
   removeEntry,
@@ -15,25 +17,31 @@ import {
   trimEntries,
 } from '../../plugins/clipboard/lib/history.js';
 
-/** 造一条条目。 */
-function entry(id, text, at, pinned = false) {
-  return { id, text, at, pinned };
+/** 造一条「纯文本」内容。 */
+const text = (t) => ({ text: t });
+
+/** 造一条条目（磁盘格式，含 key）。 */
+function entry(id, content, at, pinned = false) {
+  if (typeof content === 'string') content = { text: content };
+  const e = makeEntry({ ...content, pinned }, { at, id });
+  return { id, ...e, pinned };
 }
 
 test('加一条：新的排在最前面', () => {
-  const list = addEntry([], '第一段', { at: 1, id: 'a' });
+  const list = addEntry([], text('第一段'), { at: 1, id: 'a' });
   assert.equal(list.length, 1);
   assert.equal(list[0].text, '第一段');
+  assert.equal(list[0].kind, 'text');
 
-  const two = addEntry(list, '第二段', { at: 2, id: 'b' });
+  const two = addEntry(list, text('第二段'), { at: 2, id: 'b' });
   assert.equal(two.length, 2);
   assert.equal(two[0].text, '第二段', '新的在最前面');
   assert.equal(two[1].text, '第一段');
 });
 
 test('加一条：id 必须唯一（重了的话删一条会连着删两条）', () => {
-  let list = addEntry([], '甲', { at: 1 });
-  list = addEntry(list, '乙', { at: 2 });
+  let list = addEntry([], text('甲'), { at: 1 });
+  list = addEntry(list, text('乙'), { at: 2 });
   assert.notEqual(list[0].id, list[1].id, '两条的 id 不一样');
   assert.ok(list[0].id, 'id 不该是空串');
 
@@ -52,16 +60,19 @@ test('从磁盘读回来的东西：id 重了要重新给一个', () => {
 });
 
 test('加一条：空白不算一条（剪贴板被清空时内容是空串）', () => {
-  const list = addEntry([], '   ', { at: 1, id: 'a' });
+  const list = addEntry([], text('   '), { at: 1, id: 'a' });
   assert.equal(list.length, 0);
-  assert.equal(addEntry([], '', { at: 1, id: 'a' }).length, 0);
+  assert.equal(addEntry([], text(''), { at: 1, id: 'a' }).length, 0);
   assert.equal(addEntry([], null, { at: 1, id: 'a' }).length, 0);
+  // 空串的 HTML/RTF 也不算。
+  assert.equal(addEntry([], { html: '' }, { at: 1, id: 'a' }).length, 0);
+  assert.equal(addEntry([], { rtf: '' }, { at: 1, id: 'a' }).length, 0);
 });
 
 test('加一条：同样的内容再复制一次是挪到最上面，不新增一条', () => {
-  let list = addEntry([], '甲', { at: 1, id: 'a' });
-  list = addEntry(list, '乙', { at: 2, id: 'b' });
-  list = addEntry(list, '甲', { at: 3 });
+  let list = addEntry([], text('甲'), { at: 1, id: 'a' });
+  list = addEntry(list, text('乙'), { at: 2, id: 'b' });
+  list = addEntry(list, text('甲'), { at: 3 });
 
   assert.equal(list.length, 2, '还是两条');
   assert.equal(list[0].text, '甲', '甲挪到了最上面');
@@ -69,22 +80,53 @@ test('加一条：同样的内容再复制一次是挪到最上面，不新增�
   assert.equal(list[0].at, 3, '时间更新了');
 });
 
+test('加一条：文本一样但 HTML 不一样，是两条（贴回去的格式不同）', () => {
+  let list = addEntry([], { text: '一样', html: '<b>一样</b>' }, { at: 1, id: 'a' });
+  list = addEntry(list, { text: '一样', html: '<i>一样</i>' }, { at: 2, id: 'b' });
+  assert.equal(list.length, 2, 'HTML 不同就不是同一条');
+});
+
 test('加一条：重复的那条如果被固定了，固定状态留着', () => {
-  let list = addEntry([], '甲', { at: 1, id: 'a' });
+  let list = addEntry([], text('甲'), { at: 1, id: 'a' });
   list = togglePin(list, 'a');
-  list = addEntry(list, '乙', { at: 2, id: 'b' });
-  list = addEntry(list, '甲', { at: 3 });
+  list = addEntry(list, text('乙'), { at: 2, id: 'b' });
+  list = addEntry(list, text('甲'), { at: 3 });
 
   const found = list.find((item) => item.text === '甲');
   assert.equal(found.pinned, true, '还是固定的');
 });
 
+test('加一条：复制的是图片时，主类型是 image', () => {
+  const sha = 'a'.repeat(40);
+  const list = addEntry([], { imageSha: sha, imageFile: `img-${sha}.png`, imageWidth: 100, imageHeight: 80 }, { at: 1 });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].kind, 'image');
+  assert.equal(list[0].imageFile, `img-${sha}.png`);
+  assert.equal(list[0].key, `image:${sha}`);
+});
+
+test('加一条：同一张图再复制一次，挪到最上面不新增', () => {
+  const sha = 'b'.repeat(40);
+  const img = { imageSha: sha, imageFile: `img-${sha}.png` };
+  let list = addEntry([], img, { at: 1, id: 'p' });
+  list = addEntry(list, text('别的东西'), { at: 2, id: 't' });
+  list = addEntry(list, img, { at: 3 });
+  assert.equal(list.length, 2);
+  assert.equal(list[0].kind, 'image', '图片挪回最上面');
+  assert.equal(list[0].id, 'p', '沿用原来的 id');
+});
+
+test('加一条：复制的是文件时，主类型是 files', () => {
+  const list = addEntry([], { files: ['C:\\a.txt', 'C:\\b.png'] }, { at: 1 });
+  assert.equal(list[0].kind, 'files');
+  assert.deepEqual(list[0].files, ['C:\\a.txt', 'C:\\b.png']);
+  // 文件列表一样 → 同一条
+  const again = addEntry(list, { files: ['C:\\a.txt', 'C:\\b.png'] }, { at: 2 });
+  assert.equal(again.length, 1, '同样的文件再复制一次挪到最上面');
+});
+
 test('淘汰：固定的一律留着，其余按新到旧留够 max 条', () => {
-  const list = [
-    entry('a', '甲', 1),
-    entry('b', '乙', 2),
-    entry('c', '丙', 3),
-  ];
+  const list = [entry('a', '甲', 1), entry('b', '乙', 2), entry('c', '丙', 3)];
   const pinned = togglePin(list, 'c');
 
   const trimmed = trimEntries(pinned, 1);
@@ -161,11 +203,49 @@ test('从磁盘读回来的东西：认不出的条目直接丢掉', () => {
   assert.equal(list[2].pinned, true, '固定只认真假');
 });
 
+test('从磁盘读回来的东西：图片条目要认得出，key 从文件名反推', () => {
+  const sha = 'c'.repeat(40);
+  const list = normalizeEntries([
+    { id: 'a', imageFile: `img-${sha}.png`, imageWidth: 640, imageHeight: 480, imageBytes: 12345, at: 1 },
+  ]);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].kind, 'image');
+  assert.equal(list[0].key, `image:${sha}`, '反推出来的 key 与记的时候一样');
+  assert.equal(list[0].imageWidth, 640);
+});
+
+test('从磁盘读回来的东西：文件条目认得出', () => {
+  const list = normalizeEntries([{ id: 'a', files: ['C:\\x.txt'], at: 1 }]);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].kind, 'files');
+  assert.equal(list[0].files[0], 'C:\\x.txt');
+});
+
+test('从磁盘读回来的东西：key 原样保留（反推不出来时也别丢）', () => {
+  const list = normalizeEntries([{ id: 'a', text: '内容', key: 'text:自定义', at: 1 }]);
+  assert.equal(list[0].key, 'text:自定义');
+});
+
+test('从磁盘读回来的东西：文件名认不出的图片条目丢掉', () => {
+  const list = normalizeEntries([
+    { id: 'a', imageFile: '../逃逸.png', at: 1 },
+    { id: 'b', imageFile: 'img-nothex.png', at: 2 },
+  ]);
+  assert.equal(list.length, 0, '图片没了内容也没有，丢掉');
+});
+
 test('从磁盘读回来的东西：不是数组就当作空的', () => {
   assert.deepEqual(normalizeEntries(null), []);
   assert.deepEqual(normalizeEntries(undefined), []);
   assert.deepEqual(normalizeEntries('不是数组'), []);
   assert.deepEqual(normalizeEntries({ a: 1 }), []);
+});
+
+test('keyFor：文本覆盖三种格式，文件认路径，图片认字节哈希', () => {
+  assert.equal(keyFor({ text: 'x' }), keyFor({ text: 'x' }));
+  assert.notEqual(keyFor({ text: 'x', html: '<b>x</b>' }), keyFor({ text: 'x' }));
+  assert.equal(keyFor({ files: ['C:\\a'] }), `files:${keyFor({ files: ['C:\\a'] }).slice(6)}`);
+  assert.equal(keyFor({ imageSha: 'f'.repeat(40) }), `image:${'f'.repeat(40)}`);
 });
 
 test('默认留多少条', () => {

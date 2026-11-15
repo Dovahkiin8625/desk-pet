@@ -122,13 +122,16 @@ function render() {
   );
 }
 
+/** 一条的搜索关键词（文本 + 备注 + 文件路径）。 */
+function haystack(item) {
+  return [item.text, item.note, ...(item.files || [])].join(' ').toLowerCase();
+}
+
 /** 列表：固定的在前，其余按时间倒序（主进程已经排好了）。 */
 function renderList() {
   const all = state?.entries || [];
   const keyword = query.trim().toLowerCase();
-  const list = keyword
-    ? all.filter((item) => String(item.text || '').toLowerCase().includes(keyword))
-    : all;
+  const list = keyword ? all.filter((item) => haystack(item).includes(keyword)) : all;
 
   el.list.textContent = '';
   if (!list.length) {
@@ -178,11 +181,53 @@ function row(item) {
     void act('pin', { id: item.id });
   });
 
+  // —— 主体 ==========================================================
+
+  // 图片：缩略图 + 尺寸/大小；双击一样是贴回去。
+  // 文件：一个大文件图标 + 文件名；富文本/文本：原文（截断过的）。
+  const body = document.createElement('span');
+  body.className = 'body';
+
+  if (item.kind === 'image') {
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = '图片历史';
+    img.loading = 'lazy';
+    img.src = item.image || '';
+    body.append(img);
+  } else if (item.kind === 'files') {
+    const icon = document.createElement('span');
+    icon.className = 'kind-icon';
+    icon.append(iconSvg('file'));
+    body.append(icon);
+  } else if (item.badges?.includes('RTF') && !item.badges?.includes('HTML')) {
+    const icon = document.createElement('span');
+    icon.className = 'kind-icon';
+    icon.append(iconSvg('file'));
+    body.append(icon);
+  }
+
   const text = document.createElement('span');
   text.className = 'text';
-  text.textContent = item.text || '';
-  if (Number(item.len) > String(item.text || '').length) {
-    text.title = `共 ${item.len} 个字（这里只显示前面一部分）`;
+  if (item.kind === 'files') {
+    text.textContent = item.note || '文件';
+    text.title = (item.files || []).join('\n');
+  } else if (item.kind === 'image') {
+    text.textContent = item.note || '图片';
+  } else {
+    text.textContent = item.text || item.note || '';
+    if (Number(item.len) > String(item.text || '').length) {
+      text.title = `共 ${item.len} 个字（这里只显示前面一部分）`;
+    }
+  }
+  body.append(text);
+
+  // 格式徽章：复制出来的是什么格式，贴出去就是什么格式——让用户看得见。
+  for (const badge of item.badges || []) {
+    const tag = document.createElement('span');
+    tag.className = 'badge';
+    tag.textContent = badge;
+    body.append(tag);
   }
 
   const time = document.createElement('span');
@@ -199,7 +244,7 @@ function row(item) {
     void act('remove', { id: item.id });
   });
 
-  li.append(pin, text, time, del);
+  li.append(pin, body, time, del);
 
   // **双击才贴出去**：单击是选中（不然想选中一条就得贴一次）。
   li.addEventListener('dblclick', (event) => {

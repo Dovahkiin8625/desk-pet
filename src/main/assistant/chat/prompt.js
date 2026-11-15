@@ -9,6 +9,7 @@ import {
 } from '../../../shared/assistant.js';
 import { normalizeMemory } from './memory.js';
 import { snapshotSection } from '../snapshot.js';
+import { dayPeriod, weekdayText } from '../clock.js';
 
 /**
  * 人设、系统提示词与回复解析。
@@ -26,6 +27,30 @@ import { snapshotSection } from '../snapshot.js';
  * 正文在前、元数据在后。若让模型只回一个 JSON 对象，
  * 气泡在整段 JSON 生成完之前都是空的——流式就没了。
  */
+
+/**
+ * 历史消息开头的「[N 分钟前]」是界面显示用的相对时间，
+ * 不是消息正文——模型会照抄着吐出来，解析与显示处都要认。
+ */
+const LEADING_TIME_PREFIX = /^\s*\[(?:刚刚|\d+\s*(?:分钟|小时|天)前)\]\s*/;
+
+/** 去掉回复开头被模型抄进来的时间标记。 */
+export function stripLeadingTimePrefix(text) {
+  return String(text ?? '').replace(LEADING_TIME_PREFIX, '');
+}
+
+/**
+ * 提示词里的「现在是…」那一行。
+ *
+ * 时段词与星期要直接写出来：模型只看 "15:42" 时分不清白天黑夜，
+ * 很容易跟着历史里的黑夜情节走。
+ */
+export function nowLine(when) {
+  const d = when instanceof Date ? when : new Date(when);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `现在是 ${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日（星期${weekdayText(d)}）${dayPeriod(d)} ${hh}:${mi}。`;
+}
 
 /** 正文与元数据之间的标记符。 */
 export const META_MARKER = '<<META>>';
@@ -82,9 +107,10 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date(), 
     '说话规则：',
     '- 用中文口语回答，1~3 句，不超过 80 字。',
     '- 只说给桌宠听的话：不要复述用户的问题，不要 Markdown，不要表情符号。',
+    '- 历史消息开头的「[…前]」是时间标记不是正文，别照抄进回复；时间说法以「现在是…」那一行为准。',
     ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
-    `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
+    nowLine(when),
     snapshotSection(snapshot),
   ]
     .filter(Boolean)
@@ -173,7 +199,7 @@ export function buildChatMessages({
  * **元数据坏了绝不能丢掉正文**——丢情绪比丢回复好得多。
  */
 export function parseReply(raw) {
-  const text = String(raw ?? '');
+  const text = stripLeadingTimePrefix(String(raw ?? ''));
   const markerAt = text.indexOf(META_MARKER);
   if (markerAt >= 0) {
     const body = text.slice(0, markerAt).trim();
@@ -245,11 +271,16 @@ function readMeta(meta) {
  * 按住的只有真正可能是标记符的那几个字——
  * 固定按住 N 个字会让短回复一直憋着不出来。
  *
+ * 开头若是「[N 分钟前]」这种时间标记，也**整体按住再丢掉**：
+ * 模型会照抄历史里的格式，那段不是正文。
+ *
  * 这段逻辑放在后端里，气泡只管「收到什么显示什么」。
  */
 export function createStreamSplitter() {
   let raw = '';
   let shown = 0;
+  // 开头的时间标记处理了没：没处理的话，先别把第一段正文吐出去。
+  let leadingDecided = false;
 
   /** 尾巴有多长是「标记符的一部分」。 */
   function partialMarkerLength(text) {
@@ -260,8 +291,37 @@ export function createStreamSplitter() {
     return 0;
   }
 
+  /**
+   * 开头的时间标记看清楚了吗。
+   *
+   * @returns {number} 要丢掉的字符数；-1 = 还看不出来（先别显示）；0 = 没有标记
+   */
+  function leadingPrefixDecision(final) {
+    if (leadingDecided) return 0;
+    const match = raw.match(LEADING_TIME_PREFIX);
+    if (match) {
+      leadingDecided = true;
+      return match[0].length;
+    }
+    const rest = raw.trimStart();
+    if (!rest.startsWith('[')) {
+      leadingDecided = true;
+      return 0;
+    }
+    if (final) {
+      leadingDecided = true;
+      return 0;
+    }
+    if (rest.length <= 24 && !rest.includes(']')) return -1;
+    leadingDecided = true;
+    return 0;
+  }
+
   /** 收到一段增量，返回**可以显示**的部分（可能为空）。 */
   function flush(final = false) {
+    const decision = leadingPrefixDecision(final);
+    if (decision === -1) return '';
+    if (decision > 0) shown += decision;
     const markerAt = raw.indexOf(META_MARKER);
     let end;
     if (markerAt >= 0) {

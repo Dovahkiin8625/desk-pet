@@ -1,4 +1,4 @@
-import { metaContractLines, META_MARKER } from '../chat/prompt.js';
+import { metaContractLines, META_MARKER, nowLine } from '../chat/prompt.js';
 
 /**
  * agent 的系统提示词与上下文管理。
@@ -142,9 +142,10 @@ export function buildAgentSystemPrompt({
     '- 只说结果和要点（「找到了，F 盘里有 3 个视频」），不要复述过程。',
     '- 不要提任何工具名、函数名、插件名，也不要说「后台任务」「派单」「派发」这类词。',
     '- 拿不准就照实说，别编。',
+    '- 历史消息开头的「[…前]」是时间标记不是正文，别照抄进回复；时间说法以「现在是…」那一行为准。',
     ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
-    `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
+    nowLine(when),
   );
 
   return lines.filter((line) => line !== '').join('\n');

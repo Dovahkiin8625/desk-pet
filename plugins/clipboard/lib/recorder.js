@@ -2,9 +2,8 @@
 /**
  * 盯着剪贴板，把新复制的内容记下来。
  *
- * **不碰 electron**：读剪贴板的方式由外面给进来
- * （main.js 传的是 electron 的 clipboard.readText），
- * 于是这段逻辑能直接用 node --test 验。
+ * **不碰 electron**：怎么读剪贴板、读出来算什么格式，全由外面给进来
+ * （main.js 传的是 readSnapshot 的结果），于是这段逻辑能直接用 node --test 验。
  *
  * 三处讲究：
  *
@@ -23,32 +22,43 @@ export const DEFAULT_INTERVAL_MS = 500;
  * 造一个记录器。
  *
  * @param {object} options
- * @param {() => string | Promise<string>} options.readText 读一次剪贴板
- * @param {(text: string) => void} [options.onText] 看到新内容时叫它
+ * @param {() => Promise<{ok: boolean, signature?: string}> | {ok: boolean, signature?: string}} options.grab
+ *   读一次剪贴板。签名一样就是同一条内容；空串签名 = 「剪贴板里没有值得记的东西」。
+ *   整个结果会原样传给 onEntry（含格式、图片字节什么的）。
+ * @param {(result: object) => void} [options.onEntry] 看到新内容时叫它
  * @param {number} [options.intervalMs]
  */
-export function createRecorder({ readText, onText, intervalMs = DEFAULT_INTERVAL_MS } = {}) {
+export function createRecorder({ grab, onEntry, intervalMs = DEFAULT_INTERVAL_MS } = {}) {
   let timer = null;
-  /** 上一次看到的剪贴板内容。 */
-  let lastText = '';
+  /** 上一次看到的东西的签名。 */
+  let lastSignature = '';
   /** 基准读完了吗？没读完之前不做比较。 */
   let baselineReady = false;
   /** 上一轮还在读吗？剪贴板读取可能慢（被别的进程锁住时会等）。 */
   let polling = false;
-  /** 刚贴出去的那条：下一轮读到它不算「新复制的」。 */
+  /** 刚贴出去的那条的签名：下一轮读到它不算「新复制的」。 */
   let ignored = '';
+  /**
+   * 贴出去之后的保护期（毫秒时间戳）：这段时间里
+   * 读到的**任何**签名都当「回声」——贴出去那次写回剪贴板
+   * 是由我们发起的，不是用户刚复制的东西（哪怕系统把格式改写得
+   * 和原样签名对不上，也照样得吞掉，免得贴完历史里多一条）。
+   */
+  let muzzleUntil = 0;
 
   /**
    * 读一次剪贴板。
    *
-   * @returns {Promise<{ok: boolean, text: string}>} ok=false 是「读不到」
+   * @returns {Promise<{ok: boolean, signature: string}>} ok=false 是「读不到」
    */
   async function read() {
     try {
-      const text = await readText();
-      return { ok: true, text: typeof text === 'string' ? text : '' };
+      const result = await grab();
+      if (!result || result.ok !== true) return { ok: false, signature: '' };
+      const signature = typeof result.signature === 'string' ? result.signature : '';
+      return { ...result, ok: true, signature };
     } catch {
-      return { ok: false, text: '' };
+      return { ok: false, signature: '' };
     }
   }
 
@@ -68,7 +78,7 @@ export function createRecorder({ readText, onText, intervalMs = DEFAULT_INTERVAL
       }, intervalMs);
       return;
     }
-    lastText = result.text;
+    lastSignature = result.signature;
     baselineReady = true;
   }
 
@@ -79,19 +89,24 @@ export function createRecorder({ readText, onText, intervalMs = DEFAULT_INTERVAL
       const result = await read();
       // 这一轮不算：剪贴板被别人占着，等下一轮。
       if (!result.ok) return;
-      const text = result.text;
-      if (text === lastText) return;
-      lastText = text;
+      const signature = result.signature;
+      if (signature === lastSignature) return;
+      lastSignature = signature;
       // 复制到空（清空剪贴板）不算一条。
-      if (!text.trim()) return;
+      if (!signature) return;
+      // 贴完后的保护期：这段时间里读到的都当回声——
+      // 贴出去那次的写回就发生在这之前，不是用户刚复制的东西。
+      // 注意 lastSignature 已经更新过上面，
+      // 保护期一过，同一条内容再也不会被当成「新的」。
+      if (Date.now() < muzzleUntil) return;
       // 刚贴出去的那一条：不算新的复制。
-      if (ignored && text === ignored) {
+      if (ignored && signature === ignored) {
         ignored = '';
         return;
       }
       // 别的内容：后门作废（用户已经复制了别的东西）。
       ignored = '';
-      onText?.(text);
+      onEntry?.(result);
     } finally {
       polling = false;
     }
@@ -116,9 +131,23 @@ export function createRecorder({ readText, onText, intervalMs = DEFAULT_INTERVAL
      *
      * **要在写回剪贴板之前叫它**：中间那一轮要是先读到了，
      * 它就会被当成用户刚复制的内容。
+     *
+     * @param {string} signature 被贴出去那条的签名（= 历史条目的 key）
      */
-    ignore(text) {
-      ignored = String(text ?? '');
+    ignore(signature) {
+      ignored = String(signature ?? '');
+    },
+    /**
+     * 贴出去后开一个保护期：这段时间里读到的任何签名都当回声。
+     *
+     * ignore() 是「见到哪一条签名就吞掉」，muzzle() 是
+     * 「任何签名都吞掉」——系统改写格式（如 CF_HTML 加头尾）之后
+     * 签名变了，ignore 就认不出来，muzzle 是它的兜底。
+     *
+     * @param {number} [ms] 保护期长度（毫秒）
+     */
+    muzzle(ms) {
+      muzzleUntil = Date.now() + Math.max(0, Number(ms) || 0);
     },
     isRunning: () => Boolean(timer),
   };

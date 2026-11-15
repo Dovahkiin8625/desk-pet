@@ -2,8 +2,8 @@
   "id": "clipboard",
   "name": "剪贴板",
   "icon": "clipboard",
-  "description": "剪贴板历史：双击就贴出去，能固定",
-  "keywords": ["clipboard", "copy", "jiban", "jb", "剪贴板", "复制"],
+  "description": "剪贴板历史：文本、富文本、文件、图片都记，双击贴出去，能固定",
+  "keywords": ["clipboard", "copy", "paste", "image", "jiban", "jb", "剪贴板", "复制", "图片"],
   "window": {
     "title": "剪贴板",
     "page": "pages/history.html",

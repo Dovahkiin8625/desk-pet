@@ -1,17 +1,21 @@
-# 剪贴板插件的助手：把剪贴板里的内容「贴」到刚才在用的那个窗口。
+# 剪贴板插件的常驻粘贴助手。
 #
-# 为什么需要它：Electron 没有「往别的程序发按键」的接口，
-# 而 Ctrl+V 必须真的发出去（发到剪贴板不算粘贴）。
+# 为什么常驻：一次性的话，每次粘贴都要付一遍 PowerShell 的启动 +
+# Add-Type 的 C# 编译（几百毫秒）——双击贴的时候一顿一顿的（像加特林打空枪）。
+# 常驻之后这两笔开销只付一次，之后每一贴就是「发一行字、等一行回复」。
 #
-# 做法是 Windows 惯用的那一套：
-#   1. 找出**不是我们自己的**那个前台窗口（用户刚才在用的那个）；
-#   2. 把它叫到前台（SetForegroundWindow）；
-#   3. 补发 Ctrl+V（keybd_event）。
+# 做什么：找出**不是我们自己的**那个前台窗口（用户刚才在用的那个）→
+# 把它叫到前台 → 补发 Ctrl+V。
+# Windows 的「前台锁」只允许前台进程改前台，所以先按一下 Alt 把资格让出来
+# （老办法，但确实管用）。
 #
-# 第 2 步之前先按一下 Alt：Windows 的「前台锁」只允许前台进程改前台，
-# 这一下 Alt 能临时把资格让出来（老办法，但确实管用）。
+# 通信：stdin 上一行一个请求，stdout 上一行一个响应。
+# **整行都是 base64（UTF-8 的 JSON）**：绕开控制台代码页，
+# 中文标题不会乱码（PowerShell 读 stdin 用的是系统代码页，
+# 直接发 UTF-8 会被按 GBK 解释）。
 #
-# 通信：stdout 上一行 base64 的 UTF-8 JSON（绕开控制台代码页，中文标题才不乱码）。
+# 请求：{"id":1,"op":"paste","ourPid":1234}
+# 响应：{"id":1,"ok":true,"title":"窗口标题"} / {"id":1,"ok":false,"error":"…"}
 $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @'
@@ -84,25 +88,38 @@ public class DpPaste {
 }
 '@
 
-function Send-Answer($obj) {
-  $json = $obj | ConvertTo-Json -Compress
-  $line = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
-  [Console]::Out.WriteLine($line)
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line) { break }
+  if ([string]::IsNullOrWhiteSpace($line)) { continue }
+  $id = 0
+  try {
+    $request = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line)) | ConvertFrom-Json
+    $id = [int]$request.id
+    $op = [string]$request.op
+    if ($op -eq 'paste') {
+      $ourPid = 0
+      if ($request.PSObject.Properties.Name -contains 'ourPid') { $ourPid = [uint32]$request.ourPid }
+      $target = [DpPaste]::FindTarget($ourPid)
+      if ($target -eq [IntPtr]::Zero) {
+        $response = @{ id = $id; ok = $false; error = '没有找到可以粘贴的窗口' }
+      } else {
+        $title = [DpPaste]::TitleOf($target)
+        if ([DpPaste]::Paste($target)) {
+          $response = @{ id = $id; ok = $true; title = $title }
+        } else {
+          $response = @{ id = $id; ok = $false; error = '没能把那个窗口叫到前台'; title = $title }
+        }
+      }
+    } elseif ($op -eq 'ping') {
+      $response = @{ id = $id; ok = $true; op = 'ping' }
+    } else {
+      $response = @{ id = $id; ok = $false; error = "不认识的指令：$op" }
+    }
+  } catch {
+    $response = @{ id = $id; ok = $false; error = $_.Exception.Message }
+  }
+  $json = $response | ConvertTo-Json -Compress -Depth 6
+  [Console]::Out.WriteLine([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json)))
   [Console]::Out.Flush()
-}
-
-$ourPid = 0
-if ($env:DP_OUR_PID) { $ourPid = [uint32]$env:DP_OUR_PID }
-
-$target = [DpPaste]::FindTarget($ourPid)
-if ($target -eq [IntPtr]::Zero) {
-  Send-Answer @{ ok = $false; error = '没有找到可以粘贴的窗口' }
-  exit 0
-}
-
-$title = [DpPaste]::TitleOf($target)
-if ([DpPaste]::Paste($target)) {
-  Send-Answer @{ ok = $true; title = $title }
-} else {
-  Send-Answer @{ ok = $false; error = '没能把那个窗口叫到前台'; title = $title }
 }

@@ -1,4 +1,4 @@
-import { metaContractLines } from '../chat/prompt.js';
+import { metaContractLines, nowLine } from '../chat/prompt.js';
 import { snapshotSection } from '../snapshot.js';
 import { TASK_STATUS_TEXT } from '../agent/record.js';
 import { TASK_STATUS } from '../../../shared/assistant.js';
@@ -75,6 +75,7 @@ export function buildInteractionPrompt({
       '- 不要复述用户的问题，不要 Markdown，不要表情符号。',
       '- 只说你自己：不要提任何工具名、函数名、插件名，' +
         '也不要说「后台任务」「派单」「派发」「工具」这类词——用户只看得见你这个人。',
+      '- 历史消息开头的「[…前]」是时间标记不是正文，别照抄进回复；时间说法以「现在是…」那一行为准。',
       ...metaContractLines(),
     ].join('\n'),
   );
@@ -83,10 +84,7 @@ export function buildInteractionPrompt({
     sections.push(['你记得的事：', ...list.map((f) => `- ${f}`)].join('\n'));
   }
 
-  sections.push(
-    `现在是 ${when.getFullYear()} 年 ${when.getMonth() + 1} 月 ${when.getDate()} 日 ` +
-      `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}。`,
-  );
+  sections.push(nowLine(when));
 
   // **「此刻」与「手头在做的事」是两回事**：
   // 前者是机器此刻的样子，后者是桌宠自己派出去的活儿。
