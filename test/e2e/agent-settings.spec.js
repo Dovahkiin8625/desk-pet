@@ -138,7 +138,7 @@ async function waitUntil(fn, timeoutMs = 10000) {
   return null;
 }
 
-/** 打开设置窗口并切到「对话」分区。 */
+/** 打开设置窗口并切到「后台任务」分区。 */
 async function openSettings(app) {
   const pet = await app.firstWindow();
   await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
@@ -146,11 +146,9 @@ async function openSettings(app) {
   const settings = await findWindow(app, '/src/settings/index.html');
   expect(settings, '设置窗口没有出现').toBeTruthy();
   await settings.waitForLoadState('domcontentloaded');
-  await settings.click('#tab-chat');
-  await settings.waitForSelector('#panel-chat:not([hidden])', { timeout: 10000 });
-  // 后台任务的设置在「对话」这一节的「后台任务」分组里。
-  await settings.click('#chat-tab-agent');
-  await settings.waitForSelector('#chat-sub-agent:not([hidden])', { timeout: 10000 });
+  // 后台任务的设置自成一个分区。
+  await settings.click('#tab-agent');
+  await settings.waitForSelector('#agent-sub-limits:not([hidden])', { timeout: 10000 });
   return settings;
 }
 
@@ -357,7 +355,7 @@ test.describe('后台任务的设置', () => {
       const panel = await openPanel(app);
 
       // 在设置界面的「工具」页里把「写文件」勾成以后都不问。
-      await settings.click('#chat-tab-tools');
+      await settings.click('#agent-tab-tools');
       const row = settings.locator('#toolGroups li[data-tool-name="fs.write"]');
       await expect(row, '工具清单里没有 fs.write').toHaveCount(1);
       // 点开抽屉，在抽屉里把它设成「以后不问」。
@@ -406,8 +404,8 @@ test.describe('后台任务的设置', () => {
       const settings = await openSettings(app);
       const panel = await openPanel(app);
 
-      await settings.click('#chat-tab-tools');
-      await settings.waitForSelector('#chat-sub-tools:not([hidden])', { timeout: 10000 });
+      await settings.click('#agent-tab-tools');
+      await settings.waitForSelector('#agent-sub-tools:not([hidden])', { timeout: 10000 });
       const row = settings.locator('#toolGroups li[data-tool-name="fs.write"]');
       await expect(row, '工具清单里没有 fs.write').toHaveCount(1);
 
@@ -461,7 +459,8 @@ test.describe('切到「只聊天」', () => {
         };
       });
       const settings = await openSettings(app);
-      // 「桌宠能做什么」在「模型」这一页里（openSettings 默认停在「后台任务」）。
+      // 「桌宠能做什么」在「对话」分区的「模型」这一页里（openSettings 默认停在「后台任务」）。
+      await settings.click('#tab-chat');
       await settings.click('#chat-tab-model');
       await settings.waitForSelector('#chat-sub-model:not([hidden])', { timeout: 10000 });
       await settings.selectOption('#llmDispatch', 'off');
@@ -496,7 +495,8 @@ test.describe('切到「只聊天」', () => {
           Promise.resolve({ response: 1, checkboxChecked: false });
       });
       const settings = await openSettings(app);
-      // 「桌宠能做什么」在「模型」这一页里（openSettings 默认停在「后台任务」）。
+      // 「桌宠能做什么」在「对话」分区的「模型」这一页里（openSettings 默认停在「后台任务」）。
+      await settings.click('#tab-chat');
       await settings.click('#chat-tab-model');
       await settings.waitForSelector('#chat-sub-model:not([hidden])', { timeout: 10000 });
       await settings.selectOption('#llmDispatch', 'off');

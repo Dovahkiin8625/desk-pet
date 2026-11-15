@@ -153,8 +153,11 @@ test.describe('插件自己的配置', () => {
     const { app, pet } = await launch();
     try {
       const settings = await openPlugins(app, pet);
+      // 「注册到 agent」的开关在点开插件后的抽屉里。
       const row = settings.locator('#pluginList .plugin-row[data-plugin-id="pomodoro"]');
-      const agentBox = row.locator('.p-agent input');
+      await row.click();
+      await settings.waitForSelector('#pluginDrawer:not([hidden])', { timeout: 5000 });
+      const agentBox = settings.locator('#pluginDrawerAgent');
       await expect(agentBox, '有工具的插件该有「注册到 agent」开关').toBeChecked();
 
       // 默认是接给 agent 的：工具表里能看到它的工具。
@@ -164,8 +167,7 @@ test.describe('插件自己的配置', () => {
       // 关掉：工具从表里摘掉，状态落盘。
       await agentBox.uncheck();
       await settings.waitForFunction(
-        () => !document.querySelector('#pluginList .plugin-row[data-plugin-id="pomodoro"] .p-agent input')
-          ?.checked,
+        () => !document.getElementById('pluginDrawerAgent')?.checked,
         null,
         { timeout: 10000, polling: 200 }
       );
@@ -184,8 +186,7 @@ test.describe('插件自己的配置', () => {
       // 再打开：工具回来。
       await agentBox.check();
       await settings.waitForFunction(
-        () => document.querySelector('#pluginList .plugin-row[data-plugin-id="pomodoro"] .p-agent input')
-          ?.checked,
+        () => document.getElementById('pluginDrawerAgent')?.checked === true,
         null,
         { timeout: 10000, polling: 200 }
       );
@@ -200,10 +201,10 @@ test.describe('插件自己的配置', () => {
     const { app, pet } = await launch();
     try {
       const settings = await openPlugins(app, pet);
-      await settings.click('#tab-chat');
-      await settings.waitForSelector('#panel-chat:not([hidden])', { timeout: 10000 });
-      await settings.click('#chat-tab-tools');
-      await settings.waitForSelector('#chat-sub-tools:not([hidden])', { timeout: 10000 });
+      await settings.click('#tab-agent');
+      await settings.waitForSelector('#panel-agent:not([hidden])', { timeout: 10000 });
+      await settings.click('#agent-tab-tools');
+      await settings.waitForSelector('#agent-sub-tools:not([hidden])', { timeout: 10000 });
 
       // 分组下拉框：全部分组 + 内置 + 每个插件。
       const options = await settings.$$eval('#toolGroup option', (list) =>

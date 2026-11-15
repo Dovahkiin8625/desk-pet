@@ -64,7 +64,7 @@ async function readStoredState(dir) {
   return JSON.parse(await readFile(join(dir, 'assistant.json'), 'utf8').catch(() => '{}'));
 }
 
-/** 打开设置窗口并切到「对话 → 工具」。 */
+/** 打开设置窗口并切到「后台任务 → 工具」。 */
 async function openToolsPage(app) {
   const pet = await app.firstWindow();
   await pet.waitForFunction(() => window.__pet?.modelLoaded === true, null, { timeout: 30000 });
@@ -72,10 +72,10 @@ async function openToolsPage(app) {
   const settings = await findWindow(app, '/src/settings/index.html');
   expect(settings, '设置窗口没有出现').toBeTruthy();
   await settings.waitForLoadState('domcontentloaded');
-  await settings.click('#tab-chat');
-  await settings.waitForSelector('#panel-chat:not([hidden])', { timeout: 10000 });
-  await settings.click('#chat-tab-tools');
-  await settings.waitForSelector('#chat-sub-tools:not([hidden])', { timeout: 10000 });
+  await settings.click('#tab-agent');
+  await settings.waitForSelector('#panel-agent:not([hidden])', { timeout: 10000 });
+  await settings.click('#agent-tab-tools');
+  await settings.waitForSelector('#agent-sub-tools:not([hidden])', { timeout: 10000 });
   // 工具清单是异步拉来的：等第一行出现再动。
   await settings.waitForSelector('#toolGroups li[data-tool-name]', { timeout: 10000 });
   return settings;

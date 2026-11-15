@@ -94,32 +94,28 @@ test.describe('设置页的插件抽屉', () => {
     }
   });
 
-  test('勾选框只管开关，不打开抽屉', async () => {
+  test('列表行没有开关：点它只是打开抽屉', async () => {
     const userData = join(USER_DATA, 'checkbox');
     await rm(userData, { recursive: true, force: true });
     const app = await launch(userData);
     try {
       const settings = await openPluginSection(app);
 
-      const row = settings.locator('#pluginList .plugin-row', { hasText: '天气' }).first();
-      await row.locator('.p-enable').click();
+      // 行上不该有任何控件——启用与注册都在抽屉里拨。
+      expect(await settings.locator('#pluginList .plugin-row input, #pluginList .plugin-row button').count(), '行上还有控件').toBe(0);
 
-      // 抽屉没被勾选框带出来。
-      expect(await settings.isVisible('#pluginDrawer'), '勾选框把抽屉带出来了').toBe(false);
-      // 开关生效了：插件被关掉。
-      await settings.waitForFunction(
-        () => document.querySelector('#pluginList .plugin-row[data-plugin-id="weather"]')?.classList.contains('off'),
-        null,
-        { timeout: 5000 }
-      );
-      const prefs = await readPrefs(userData);
-      expect(prefs.disabled || [], '关掉没有落盘').toContain('weather');
+      const row = settings.locator('#pluginList .plugin-row', { hasText: '天气' }).first();
+      await row.click();
+
+      // 点行 = 打开抽屉。
+      await settings.waitForSelector('#pluginDrawer:not([hidden])', { timeout: 5000 });
+      expect(await settings.textContent('#pluginDrawerName')).toContain('天气');
     } finally {
       await app.close();
     }
   });
 
-  test('抽屉里的「启用」与清单里的勾选框是同一件事', async () => {
+  test('抽屉里的「启用」开关：拨了，行上那个「已关闭」标记跟着变', async () => {
     const userData = join(USER_DATA, 'drawer-toggle');
     await rm(userData, { recursive: true, force: true });
     const app = await launch(userData);
@@ -130,23 +126,25 @@ test.describe('设置页的插件抽屉', () => {
       await row.click();
       await settings.waitForSelector('#pluginDrawer:not([hidden])', { timeout: 5000 });
 
-      // 抽屉里的开关拨过去，清单里的勾选框也得跟着变。
+      // 关掉它：行上出现「已关闭」，落盘。
       await settings.locator('#pluginDrawerEnabled').click();
       await settings.waitForFunction(
-        () => document.querySelector('#pluginList .plugin-row[data-plugin-id="weather"] .p-enable')?.checked === false,
+        () => document.querySelector('#pluginList .plugin-row[data-plugin-id="weather"]')?.classList.contains('off'),
         null,
         { timeout: 5000 }
       );
+      expect(await settings.locator('#pluginList .plugin-row[data-plugin-id="weather"] .p-state').textContent()).toBe('已关闭');
       let prefs = await readPrefs(userData);
       expect(prefs.disabled || [], '抽屉里的开关没有落盘').toContain('weather');
 
-      // 再拨回来。
+      // 再拨回来：「已关闭」消失，落盘。
       await settings.locator('#pluginDrawerEnabled').click();
       await settings.waitForFunction(
-        () => document.querySelector('#pluginList .plugin-row[data-plugin-id="weather"] .p-enable')?.checked === true,
+        () => !document.querySelector('#pluginList .plugin-row[data-plugin-id="weather"]')?.classList.contains('off'),
         null,
         { timeout: 5000 }
       );
+      expect(await settings.locator('#pluginList .plugin-row[data-plugin-id="weather"] .p-state').count()).toBe(0);
       prefs = await readPrefs(userData);
       expect(prefs.disabled || [], '插件还关着').not.toContain('weather');
     } finally {

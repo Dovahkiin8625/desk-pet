@@ -308,9 +308,11 @@ test.describe('插件面板', () => {
       );
       expect(rows).toContain('todos');
 
-      // 关掉「待办」：状态栏会说出结果——那才是真的生效了，
-      // 光看勾选框不行（界面是先动的，IPC 是后到的）。
-      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input.p-enable');
+      // 关掉「待办」（开关在点开插件后的抽屉里）：状态栏会说出结果——
+      // 那才是真的生效了，光看抽屉里的勾选框不行（界面是先动的，IPC 是后到的）。
+      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"]');
+      await settings.waitForSelector('#pluginDrawer:not([hidden])', { timeout: 10000 });
+      await settings.click('#pluginDrawerEnabled');
       await settings.waitForFunction(
         () => (document.getElementById('status')?.textContent || '').includes('关掉了'),
         null,
@@ -327,7 +329,7 @@ test.describe('插件面板', () => {
       expect(ids).not.toContain('todos');
 
       // 收拾干净：把它开回去。
-      await settings.click('#pluginList .plugin-row[data-plugin-id="todos"] input.p-enable');
+      await settings.click('#pluginDrawerEnabled');
       await settings.waitForFunction(
         () => (document.getElementById('status')?.textContent || '').includes('开起来了'),
         null,

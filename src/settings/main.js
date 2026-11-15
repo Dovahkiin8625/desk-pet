@@ -265,7 +265,7 @@ function setRangeFill(input) {
 // ---------------------------------------------------------------------------
 
 /** 分区：目录项、面板、摘要都用同一个 key。 */
-const SECTION_KEYS = ['appearance', 'voice', 'chat', 'memory', 'plugins', 'system'];
+const SECTION_KEYS = ['appearance', 'voice', 'chat', 'agent', 'memory', 'plugins', 'system'];
 
 const nav = document.getElementById('nav');
 const pane = document.getElementById('pane');
@@ -305,8 +305,9 @@ function activateSection(key, { focus = false } = {}) {
   if (key === 'memory') void refreshFacts();
   // 插件清单也会过期：用户可能刚装了插件，或者在别处关了哪个。
   if (key === 'plugins') void refreshPlugins();
-  // 插件抽屉跟着它那一节走：切到别的分区就别留着它。
+  // 抽屉跟着它所在的分区走：切到别的分区就别留着它。
   else if (!pluginDrawer.hidden) closePluginDrawer();
+  if (key !== 'agent' && !toolDrawer.hidden) closeToolDrawer();
   // 系统状态也会过期：开机自启可能写注册表失败了，快捷键可能被别人占了。
   if (key === 'system') void refreshSystemState();
 }
@@ -338,48 +339,63 @@ narrowQuery.addEventListener('change', syncOrientation);
 syncOrientation();
 
 // ---------------------------------------------------------------------------
-// 对话分区的二级标签
+// 二级标签（对话的模型/人设/搭话、后台任务的上限与审批/工具）
 //
-// 「对话」这一节里的设置项分成了五组（模型、人设、主动搭话、先应一声、
-// 后台任务），平铺下来太长。标签条放在分区标题下面，一组一页。
+// 分区里的设置项太多时，一组组摆开：标签条放在分区标题下面，一组一页。
+// 两套二级标签的行为一致，所以抽成同一个接线函数。
 // ---------------------------------------------------------------------------
 
-const chatTabs = document.getElementById('chatTabs');
-const chatSubTabs = Array.from(chatTabs.querySelectorAll('[data-sub]'));
-const chatSubPanels = new Map(
-  chatSubTabs.map((t) => [t.dataset.sub, document.getElementById(t.getAttribute('aria-controls'))])
-);
+/**
+ * 给一条二级标签接线：点击切换、方向键移动并切换、roving tabindex。
+ *
+ * @param {HTMLElement} tabsEl 标签条（[role="tablist"]）
+ */
+function wireSubtabs(tabsEl) {
+  const tabs = Array.from(tabsEl.querySelectorAll('[data-sub]'));
+  const panels = new Map(
+    tabs.map((t) => [t.dataset.sub, document.getElementById(t.getAttribute('aria-controls'))])
+  );
 
-/** 切到某个分组。焦点留在标签上，与左边目录一个路数。 */
-function activateChatSub(key, { focus = false } = {}) {
-  for (const t of chatSubTabs) {
-    const active = t.dataset.sub === key;
-    t.setAttribute('aria-selected', active ? 'true' : 'false');
-    // roving tabindex：整条标签只占一个 Tab 停靠点。
-    t.tabIndex = active ? 0 : -1;
-    chatSubPanels.get(t.dataset.sub).hidden = !active;
+  /** 切到某个分组。焦点留在标签上，与左边目录一个路数。 */
+  function activate(key, { focus = false } = {}) {
+    for (const t of tabs) {
+      const active = t.dataset.sub === key;
+      t.setAttribute('aria-selected', active ? 'true' : 'false');
+      // roving tabindex：整条标签只占一个 Tab 停靠点。
+      t.tabIndex = active ? 0 : -1;
+      panels.get(t.dataset.sub).hidden = !active;
+    }
+    const current = tabsEl.querySelector(`[data-sub="${key}"]`);
+    if (focus) current?.focus();
+    // 标签条放不下时是横向滚的：选中的那个得滚进视野。
+    current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
-  if (focus) chatTabs.querySelector(`[data-sub="${key}"]`)?.focus();
-  // 标签条放不下时是横向滚的：选中的那个得滚进视野。
-  chatTabs.querySelector(`[data-sub="${key}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+  for (const t of tabs) {
+    t.addEventListener('click', () => activate(t.dataset.sub));
+  }
+
+  // 方向键在标签条里移动并切换。
+  tabsEl.addEventListener('keydown', (e) => {
+    const idx = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+    let next = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx + tabs.length - 1) % tabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabs.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    activate(tabs[next].dataset.sub, { focus: true });
+  });
+
+  return activate;
 }
 
-for (const t of chatSubTabs) {
-  t.addEventListener('click', () => activateChatSub(t.dataset.sub));
-}
+const chatTabs = document.getElementById('chatTabs');
+wireSubtabs(chatTabs);
 
-// 方向键在标签条里移动并切换。
-chatTabs.addEventListener('keydown', (e) => {
-  const idx = chatSubTabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
-  let next = -1;
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % chatSubTabs.length;
-  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx + chatSubTabs.length - 1) % chatSubTabs.length;
-  else if (e.key === 'Home') next = 0;
-  else if (e.key === 'End') next = chatSubTabs.length - 1;
-  if (next < 0) return;
-  e.preventDefault();
-  activateChatSub(chatSubTabs[next].dataset.sub, { focus: true });
-});
+const agentTabs = document.getElementById('agentTabs');
+wireSubtabs(agentTabs);
 
 // ---------------------------------------------------------------------------
 // 目录右侧的状态摘要
@@ -416,6 +432,14 @@ function refreshNavSummaries() {
     'chat',
     llmEnabledBox.checked ? (llmKey ? `已开 · ${dispatchName}` : '缺 Key') : '已关'
   );
+
+  // 后台任务：能看见的工具里开着几个。
+  if (agentToolList.length) {
+    const enabledTools = agentToolList.filter((t) => !disabledToolNames.has(t.name)).length;
+    setSummary('agent', `${enabledTools}/${agentToolList.length} 工具`);
+  } else {
+    setSummary('agent', '—');
+  }
 
   setSummary('memory', `${llmFactsList.children.length} 条`);
 
@@ -910,6 +934,7 @@ function renderTools() {
   }
 
   updateToolBatchBar();
+  refreshNavSummaries();
 }
 
 /**
@@ -1693,7 +1718,7 @@ let pluginList = [];
 /**
  * 开/关一个插件。
  *
- * 清单里的勾选框与抽屉里的开关走同一条路：
+ * 抽屉里的开关与插件主进程走的是一条路：
  * 主进程说了算，界面只是把结果重画一遍。
  */
 async function setPluginEnabled(id, enabled) {
@@ -1712,11 +1737,19 @@ async function setPluginAgentEnabled(id, enabled) {
   if (!result || result.ok !== true) {
     throw new Error(result?.message || '主进程拒绝了这次开关');
   }
+  // 清单也得跟上：抽屉按它重画，拿旧值会把刚拨的开关弹回去。
+  pluginList = pluginList.map((p) => (p.id === id ? { ...p, agentEnabled: enabled } : p));
   await refreshAgentTools();
   syncPluginDrawer();
 }
 
-/** 画插件清单。 */
+/**
+ * 画插件清单。
+ *
+ * 行上**没有控件**：整行只负责「打开抽屉」——
+ * 启用与「注册到 agent」都在抽屉里拨（插件行里塞开关，
+ * 用户分不清「这里能直接开」和「这里只是看详情」）。
+ */
 function renderPlugins(list) {
   pluginListEl.textContent = '';
   pluginList = list;
@@ -1726,6 +1759,9 @@ function renderPlugins(list) {
 
     const li = document.createElement('li');
     li.className = p.enabled ? 'plugin-row' : 'plugin-row off';
+    // 整行是一个（键盘也能按的）按钮：它只有一个去处——抽屉。
+    li.setAttribute('role', 'button');
+    li.tabIndex = 0;
     // 带上 id：自动化要能指着某个插件点（它也方便用户用开发者工具查）。
     li.dataset.pluginId = p.id;
 
@@ -1748,60 +1784,15 @@ function renderPlugins(list) {
     src.className = 'p-src';
     src.textContent = p.source === 'user' ? '用户' : '内置';
 
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'p-enable';
-    box.checked = Boolean(p.enabled);
-    box.title = p.enabled ? '关掉它' : '打开它';
-    // 勾选框**不打开抽屉**：整行才是抽屉的入口，勾选框是另一件事。
-    box.addEventListener('click', (e) => e.stopPropagation());
-    box.addEventListener('change', async () => {
-      // 勾选框已经动了：界面先跟上，别等 IPC 回来才变。
-      li.classList.toggle('off', !box.checked);
-      try {
-        await setPluginEnabled(p.id, box.checked);
-        show(box.checked ? `「${p.name}」开起来了` : `「${p.name}」关掉了`);
-      } catch (err) {
-        // 没生效就把勾选框拨回去：界面不能显示一个没发生的状态。
-        box.checked = !box.checked;
-        li.classList.toggle('off', !box.checked);
-        show(`开关失败：${err?.message || err}`, 'error');
-      }
-    });
-
     li.append(icon, text, src);
 
-    // 「注册到 agent」：这个插件的工具与技能接不接给 agent。
-    // 没有工具也没有技能的插件没什么可接的——不给这个开关。
-    if (p.hasAgent) {
-      const agent = document.createElement('label');
-      agent.className = 'p-agent';
-      agent.title = '把这个插件的工具与技能接给 agent';
-      agent.addEventListener('click', (e) => e.stopPropagation());
-      const agentBox = document.createElement('input');
-      agentBox.type = 'checkbox';
-      agentBox.checked = Boolean(p.agentEnabled);
-      agentBox.addEventListener('click', (e) => e.stopPropagation());
-      agentBox.addEventListener('change', async () => {
-        try {
-          await setPluginAgentEnabled(p.id, agentBox.checked);
-          show(
-            agentBox.checked
-              ? `「${p.name}」接给 agent 了`
-              : `「${p.name}」不再接给 agent`
-          );
-        } catch (err) {
-          agentBox.checked = !agentBox.checked;
-          show(`开关失败：${err?.message || err}`, 'error');
-        }
-      });
-      const agentText = document.createElement('span');
-      agentText.textContent = '注册到 agent';
-      agent.append(agentBox, agentText);
-      li.append(agent);
+    // 关掉的插件：行上标一下，不用点进去才知道。
+    if (!p.enabled) {
+      const state = document.createElement('span');
+      state.className = 'p-state';
+      state.textContent = '已关闭';
+      li.append(state);
     }
-
-    li.append(box);
 
     // 行尾的箭头：提示这行能点开（点开是看详情，不是开关）。
     const arrow = document.createElement('span');
@@ -1811,6 +1802,11 @@ function renderPlugins(list) {
     li.append(arrow);
     // 整行点开抽屉：看这个插件的详情。
     li.addEventListener('click', () => openPluginDrawer(p));
+    li.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      openPluginDrawer(p);
+    });
     pluginListEl.append(li);
   }
   setSummary('plugins', `${on}/${list.length}`);
@@ -1851,7 +1847,7 @@ async function refreshAgentTools() {
 /**
  * 把插件的详情填进抽屉。
  *
- * 抽屉里的开关与清单里的勾选框是**同一件事**：
+ * 抽屉里的开关与插件自身的状态是**同一件事**：
  * 填进去的值必须是清单里的那份（插件可能刚被别处改过）。
  */
 function fillPluginDrawer(p) {
