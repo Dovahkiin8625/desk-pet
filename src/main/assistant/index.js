@@ -9,6 +9,7 @@ import {
   DEFAULT_AGENT,
   TASK_STATUS,
   LAYER,
+  APPROVAL_DECISION,
   chatKindOf,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergeAssistantPatch, sanitizeAssistant } from './state.js';
@@ -27,20 +28,28 @@ import { createTapTalk } from './tapTalk.js';
 import { tapTalkNeedsPrewarm } from '../../shared/tapVoice.js';
 import { createBackendRegistry } from './chat/backend.js';
 import { createPlainBackend } from './chat/plain.js';
-import { createAgentBackend } from './chat/agent.js';
+import { createAgentBackend, FOREGROUND_MAX_STEPS } from './chat/agent.js';
 import { createAck, ACK_HOLD_MS } from './chat/ack.js';
 import { createReplyBubble } from './chat/stream.js';
 import { createToolRegistry } from './agent/tools/registry.js';
 import { createBuiltinTools, killProcessTree } from './agent/tools/builtin.js';
 import { createAskTools } from './agent/tools/ask.js';
+import { createTaskTools } from './agent/tools/tasks.js';
+import { safeConvo } from './agent/loop.js';
 import { createSkillRegistry, createSkillTools } from './agent/skills.js';
 import { createHarnessRunner } from './agent/harness.js';
 import { createAgentFacade } from './agent/facade.js';
 import { createAgentTasks } from './agent/tasks.js';
-import { describeToolCall } from './agent/approval.js';
-import { interruptedTasks, taskRecord } from './agent/record.js';
-import { createInteractionBackend, INTERACTION_MAX_STEPS } from './layer/interaction.js';
-import { createTaskTools } from './layer/taskTools.js';
+import { createApprovalGate, describeToolCall } from './agent/approval.js';
+import { buildResult, isNotable, resultLine, userReason } from './agent/result.js';
+import {
+  approvalRecord,
+  dispatchRecord,
+  interruptedTasks,
+  modelRecord,
+  stepRecord,
+  taskRecord,
+} from './agent/record.js';
 import { sanitizeSpeech } from './layer/speech.js';
 import { runForeground, FALLBACK_NOTICE } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
@@ -182,7 +191,7 @@ export function createAssistant({  userDataDir,
 
   // 对话后端注册表。
   //
-  // **前台恒定走交互层**（'interaction'，下面注册）：
+  // **前台恒定走 agent 后端**（下面注册）：
   // 普通对话（'chat'）不再是一个「前台后端」，它只是
   // 「模型不支持工具调用」时的退路（见 layer/foreground.js）。
   const backends = createBackendRegistry();
@@ -250,11 +259,11 @@ export function createAssistant({  userDataDir,
   // ------------------------------------------------------------------
   // 「问用户」这个工具
   //
-  // 后台任务拿不准的时候问一句：气泡里弹一张选择卡，
-  // 用户点一个，任务就知道该往哪边走了。
+  // 拿不准的时候问一句：气泡里弹一张选择卡，
+  // 用户点一个，就知道该往哪边走了。
   //
-  // 问的**只有执行层**：前台那一层要的是秒级回应，
-  // 它自己拿不准的时候是把事交出去，不是问用户。
+  // 前台与后台都有这个工具——它只有一个例外：
+  // 前台拿不准时多半是把事交出去，而不是问用户。
   // ------------------------------------------------------------------
   toolRegistry.registerAll(
     createAskTools({
@@ -282,7 +291,7 @@ export function createAssistant({  userDataDir,
     // **`skill.read` 被关掉时就不列技能**：模型没有读正文的入口，
     // 列了也只是让它去调一个调不通的工具。
     getSkills: () => (toolRegistry.get('skill.read') ? skillRegistry.list() : []),
-    // 能打开界面的插件：执行层要知道「系统状态」这样的界面自己能开。
+    // 能打开界面的插件：模型要知道「系统状态」这样的界面自己能开。
     // 只要名字——提示词里要的是「这类界面有哪些」，不是整条插件记录。
     getPlugins: () =>
       (getPlugins?.() || [])
@@ -296,6 +305,10 @@ export function createAssistant({  userDataDir,
     getMaxSteps: () => state?.agent?.maxSteps || DEFAULT_AGENT.maxSteps,
     getPersona: () => state?.llm?.persona || {},
     getFacts: () => state?.chat?.facts || [],
+    // **此刻正在发生的事**：每轮现采一次。
+    getSnapshot: () => snapshotLines(),
+    // **手头在做的事**：用户问「那个怎么样了」时，模型看一眼就能答。
+    getTaskStates: () => agentTasks.list(),
     // 工具出错时留一行主进程日志（不进气泡）。
     logger: console,
   });
@@ -381,17 +394,16 @@ export function createAssistant({  userDataDir,
         history: state?.chat?.messages || [],
         userText: prompt,
         trigger: 'user',
-        // **执行层看不见派单记录**：它只管自己那件事，
+        // **后台看不见派单记录**：它只管自己那件事，
         // 知道用户还派了别的任务反而分心（规格 §6）。
         layer: LAYER.EXECUTION,
       }),
     appendRecord: appendChatRecord,
-    notify: ({ text, ok, taskId, emotion, mood, memories }) => {
-      // 完成通知也是**桌宠说的话**：记成 reply，
-      // 交互层下一轮要记得「刚才那件事做完了」（规格 §7.3）。
-      //
-      // **文字过过滤器**：这句用户看得见，模型下一轮也会读到自己说过的话。
-      const safe = sanitizeSpeech(String(text || ''), {
+    notify: ({ title = '', ok = true, summary = '', reason = '', taskId = '', emotion = '', mood = 0, memories = [] }) => {
+      // **送达走模板**：结果先变成一句话（结论或失败原因），
+      // 再过一遍过滤器——这句用户看得见，模型下一轮也会读到自己说过的话。
+      const result = buildResult({ ok, title, summary, reason, taskId });
+      const safe = sanitizeSpeech(resultLine(result), {
         toolNames: toolRegistry.list().map((t) => t.name),
       });
       //
@@ -402,7 +414,7 @@ export function createAssistant({  userDataDir,
         text: safe,
         at: Date.now(),
         proactive: false,
-        meta: { taskId: String(taskId || ''), layer: LAYER.EXECUTION },
+        meta: { taskId: String(taskId || ''), layer: LAYER.EXECUTION, ok: result.ok },
       });
       // **记忆并进长期记忆**：后台任务学到的东西，桌宠自己也该记住。
       const picked = pickMemories(Array.isArray(memories) ? memories : [], { userText: '' });
@@ -410,25 +422,26 @@ export function createAssistant({  userDataDir,
         state.chat.facts = mergeFacts(state.chat.facts, picked);
         scheduleSave();
       }
-      // **不带 interrupt**：用户正在说话或正在做决定时，完成通知要排队，
-      // 不能把气泡顶掉（规格 §5.3）。
-      //
-      // **前台还在说话时更要等一等**：此刻答复气泡还没开（它在这一轮
-      // 说完时才开），通知要是现在就冒出来，答复气泡一开就把正文清空，
-      // 用户只看到「我去看看」，结果那句没了——白跑一趟。
-      // 所以前台正在说话时先攒着，等这一轮说完了再交出去。
-      //
       // **情绪只施加一次**：agent 的 META 情绪优先，没有就用成败推一个。
       const options = {
         emotion: String(emotion || '') || (ok ? 'happy' : 'sad'),
         mood: Number(mood) || 0,
         sound: ok ? 'success' : '',
       };
+      // **不值得打扰的结果不弹气泡**：做完了但没什么可说的，
+      // 只写进记录，桌宠自己知道就行。
+      //
+      // **值得打扰的结果常驻**：它可能等用户回来才看得到——
+      // 六秒就没了的结果，等于没送到。
+      const notable = isNotable(result);
       if (chatBusy) {
-        pendingNotices.push({ text: safe, options });
+        pendingNotices.push({
+          text: safe,
+          options: { ...options, showBubble: notable, speak: notable, sticky: notable },
+        });
         return;
       }
-      say(safe, options);
+      say(safe, { ...options, showBubble: notable, speak: notable, sticky: notable });
     },
     getMaxConcurrent: () => state?.agent?.maxConcurrent || DEFAULT_AGENT.maxConcurrent,
     getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
@@ -437,53 +450,21 @@ export function createAssistant({  userDataDir,
   });
 
   // ------------------------------------------------------------------
-  // 交互层：前台唯一跟用户说话的那一层（规格 §3）。
+  // **只有一个 agent**：前台与后台跑的是同一个后端。
   //
-  // **它不经过任务运行时**：交互层要秒级回应，
-  // 排队等槽位会把「你好」变成「你好（排第 3 位）」。
+  // 前台：用户在等，秒级回应，步数少；
+  // 后台：耗时的事，步数多，做完了按模板送达。
   //
-  // 耗时的事由它 `task.submit` 派成后台任务，
-  // 由上面的 agentTasks 在后台跑（那是执行层）。
+  // 前台那轮要是发现步数不够用，它会**带着当前这段对话**
+  // 交给后台继续做（见 runChat 里的 escalate）——
+  // 交出去的是对话本身，不是重写的一段说明。
   // ------------------------------------------------------------------
-  const interactionBackend = createInteractionBackend({
-    fetchImpl,
-    getRegistry: () => toolRegistry,
-    // **只给开着、且接给后台任务的插件**，而且只要名字：
-    // 提示词里要的是「这类活儿有人能干」，不是整条插件记录。
-    getPlugins: () =>
-      (getPlugins?.() || [])
-        .filter((p) => p && p.enabled !== false && p.agentEnabled !== false)
-        .map((p) => p.name),
-    // 任务管理工具**每轮新建**：它们绑着这一轮的历史与配置。
-    getTaskTools: (turn) =>
-      createTaskTools({
-        tasks: agentTasks,
-        turn,
-        dispatchEnabled: dispatchEnabled(),
-        appendRecord: appendChatRecord,
-        now: () => Date.now(),
-      }),
-    getDispatchEnabled: () => dispatchEnabled(),
-    getPersona: () => state?.llm?.persona || {},
-    getFacts: () => state?.chat?.facts || [],
-    getNow: () => new Date(),
-    // **「此刻正在发生的事」**：每轮现采一次。
-    getSnapshot: () => snapshotLines(),
-    // **状态写进提示词**：用户问「某某怎么样了」，模型看一眼就能答，
-    // 一次工具往返都不用花（规格 §4.4）。
-    getTaskStates: () => agentTasks.list(),
-    getMaxSteps: () => INTERACTION_MAX_STEPS,
-    // **这一回合的过程要落盘**：模型说了什么、调了什么快工具——
-    // 聊天历史页靠它们还原过程。不接这一行，交互层在生产上一条记录都不写。
-    appendRecord: appendChatRecord,
-    logger: console,
-  });
-  backends.register('interaction', interactionBackend);
+  backends.register('agent', agentBackend);
 
   /**
-   * 能不能派单（设置里的「桌宠能做什么」）。
+   * 能不能动手（设置里的「桌宠能做什么」）。
    *
-   * 读不到就当能派单：新装的用户什么也没配过，
+   * 读不到就当能：新装的用户什么也没配过，
    * 不该先给他一个残废的桌宠。
    */
   function dispatchEnabled() {
@@ -573,6 +554,8 @@ export function createAssistant({  userDataDir,
       // 气泡优先摆哪边（'top' / 'bottom' / 'left' / 'right'）。
       // 点桌宠时用它把气泡摆在脚下——面板在头顶，两者不重叠。
       side = '',
+      // **常驻**：不自动消失。任务结果这种「用户可能晚点才看」的东西用它。
+      sticky = false,
       // 语音缓存目录：台词音频单独放一个目录（见 assistant/tapTalk.js）。
       cacheDir = '',
     } = {}
@@ -594,13 +577,22 @@ export function createAssistant({  userDataDir,
         showBubble,
         interrupt,
         side,
+        sticky,
         cacheDir,
       });
       while (pendingMessages.length > MAX_PENDING_MESSAGES) pendingMessages.shift();
       return;
     }
     if (showBubble) {
-      bubble.show({ kind: MESSAGE_KIND.SAY, text: content, emotion, ttlMs, interrupt, side });
+      bubble.show({
+        kind: MESSAGE_KIND.SAY,
+        text: content,
+        emotion,
+        ttlMs,
+        interrupt,
+        side,
+        sticky,
+      });
     }
     // 情绪与心情增量一起发过去：任务完成让桌宠也开心一点。
     if (emotion) onEmotion?.(emotion, mood);
@@ -1189,9 +1181,9 @@ export function createAssistant({  userDataDir,
     if (trigger === 'user' && !content) return { ok: false, message: '没说要什么' };
     if (!state.llm.enabled) return { ok: false, message: '对话还没打开（去设置里启用）' };
 
-    // 前台**恒定**走交互层（规格 §3）：
-    // 它能调工具、能派单，而且模型不支持工具调用时会自动退回普通对话。
-    const backend = backends.get('interaction');
+    // 前台走**同一个 agent**（规格 §3）：
+    // 它能调工具、能交出去继续做，而且模型不支持工具调用时会自动退回普通对话。
+    const backend = backends.get('agent');
     if (!backend) return { ok: false, message: '没有可用的对话后端' };
 
     const token = ++chatSeq;
@@ -1213,7 +1205,7 @@ export function createAssistant({  userDataDir,
       history,
       userText: content,
       trigger,
-      // 上下文按**交互层**过滤：它看得见自己派过什么（dispatch），
+      // 上下文按**前台**过滤：它看得见自己派过什么（dispatch），
       // 看不见任务与步骤那些「给人看的」记录（规格 §6）。
       layer: LAYER.INTERACTION,
       now,
@@ -1268,23 +1260,124 @@ export function createAssistant({  userDataDir,
     let result;
     try {
       result = await runForeground({
-        interaction: backend,
+        agent: backend,
         plain: backends.get('chat'),
         ctx: {
           system,
           messages,
-          // 这一句的原话：派单时执行层要拿到「派单那一刻的对话」。
+          // 这一句的原话：交出去的时候后台要拿到「那一刻的对话」。
           prompt: content,
           trigger,
           config,
-          // **这一轮的历史快照**（还没追加当前这句话的那份）：
-          // 派单时执行层要读最近几条 user/reply。
-          turn: { history, userText: content, config },
           onDelta: (delta) => {
             if (!delta) return;
             // 有可见正文了：不必再应一声。
             ack.noteText();
             reply?.push(delta);
+          },
+
+          // ------------------------------------------------------------------
+          // 前台这一轮的设置
+          // ------------------------------------------------------------------
+
+          // **步数少**：前台等的是秒级回应，三步够「查、做、答」。
+          maxSteps: FOREGROUND_MAX_STEPS,
+          // 步数用尽时**不总结**：前台要的是把事交出去，不是就地停下。
+          summarize: false,
+          // **工具带回的话就是这一轮的答复**（交出去时模型写的那句）。
+          answerFromTool: true,
+          // 能不能把这件事交出去继续做。
+          canEscalate: dispatchEnabled(),
+          // **「只聊天」模式**：前台一个工具都不给——
+          // 不查本机、不翻文件、不跑命令，什么都不替用户做。
+          includeRegistryTools: dispatchEnabled(),
+
+          // **审批闸门是这一轮一个**：用户点「自动放行」只管这一轮，
+          // 不会顺手动到下一轮的事上去。
+          gate: createApprovalGate({
+            getPolicy: () => state?.agent?.approval?.policy || DEFAULT_AGENT.approval.policy,
+            getAllowAlways: () => state?.agent?.approval?.allowAlways || [],
+            ask: ({ tool, args, risk }) =>
+              bubble.showApproval({
+                id: `fg-${++approvalSeq}`,
+                taskId: 'foreground',
+                title: '需要你点头',
+                text: describeToolCall(tool, args),
+                risk,
+              }),
+            taskId: 'foreground',
+            // 审批也要留一笔：记录里要看得见「它停在这儿等你点头」。
+            onRequest: (info) =>
+              appendChatRecord(approvalRecord({ ...info, decision: APPROVAL_DECISION.PENDING })),
+            onDecision: (decision) => appendChatRecord(approvalRecord(decision)),
+          }),
+
+          // **这一轮多带的工具**：管后台那些事（交出去、取消、追加要求）。
+          //
+          // 传函数是因为「交出去」要拿到**当前这段对话**——
+          // 带着对话继续，不是重写一遍。
+          //
+          // **「只聊天」模式一个都不给**：那时候没有后台任务可管
+          // （切过去的时候活儿都停掉了）。
+          tools: (getConvo) =>
+            dispatchEnabled()
+              ? createTaskTools({
+                  tasks: agentTasks,
+                  getConvo,
+                  config,
+                  canEscalate: true,
+                  appendRecord: appendChatRecord,
+                })
+              : [],
+
+          // **交出去**：带着这段对话进后台。
+          escalate: async ({ convo }) => {
+            // **交底用用户那句原话**：模型自己没写目标（它连工具都没调），
+            // 用户那句就是唯一说清「要什么」的东西。
+            const goal = content || '把刚才那件事做完';
+            // **看板上写短名**：长句截断了才看得懂。
+            const name = goal.length > 24 ? `${goal.slice(0, 24)}…` : goal;
+            const task = agentTasks.submit({
+              prompt: goal,
+              title: name,
+              // **交出去的是对话本身**：用户说的原话、已经查到的结果都在里面。
+              messages: convo,
+              config,
+            });
+            if (!task?.ok) return { ok: false };
+            appendChatRecord(
+              dispatchRecord({
+                tool: 'task.run',
+                taskId: task.taskId,
+                title: name,
+                action: `开始做：${name}`,
+                brief: goal,
+              })
+            );
+            return { ok: true, taskId: task.taskId, answer: '' };
+          },
+
+          // **这一回合的过程写进记录**（聊天历史页要显示）。
+          onRound: (round) => {
+            const text = String(round?.text || '').trim();
+            if (!text) return;
+            appendChatRecord(
+              modelRecord({ index: round?.index, text, model: String(config.model || '') })
+            );
+          },
+          onEvent: (event) => {
+            if (event?.type !== 'step') return;
+            appendChatRecord(
+              stepRecord({
+                index: event.index,
+                tool: event.tool,
+                args: event.args,
+                result: event.result,
+                error: event.error,
+                label: event.label,
+                layer: LAYER.INTERACTION,
+              })
+            );
           },
         },
         onFallback: () => {

@@ -406,6 +406,8 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       // 等页面就绪了才按同一套规矩来判断——不带这个标记，
       // 「提醒、闹钟可以插队」的规矩就丢了。
       interrupt: Boolean(message?.interrupt),
+      // **常驻**：不自动消失，等用户自己看完（或下一条消息把它顶掉）。
+      sticky: Boolean(message?.sticky),
     };
 
     if (!win || win.isDestroyed()) {
@@ -461,6 +463,9 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
     // 摆位用的方向跟着这条消息走：页面报尺寸时会用到它。
     oneShotSide = payload?.side || null;
     send('pet:bubbleShow', payload);
+    // **常驻的消息不装计时器**：它可能等用户回来才看得到——
+    // 六秒就没了的结果，等于没送到。
+    if (payload?.sticky) return;
     scheduleHide(payload.ttlMs);
   }
 

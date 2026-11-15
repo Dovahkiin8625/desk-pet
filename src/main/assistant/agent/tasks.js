@@ -1,6 +1,7 @@
 import { createAgentRuntime } from './runtime.js';
 import { createApprovalGate } from './approval.js';
 import { approvalRecord, stepRecord, taskRecord } from './record.js';
+import { userReason } from './result.js';
 import { AGENT_EVENT, APPROVAL_DECISION, TASK_STATUS } from '../../../shared/assistant.js';
 
 /** 终态：这些任务已经结束了，停不掉也不该停。 */
@@ -193,8 +194,11 @@ export function createAgentTasks({
      * @param {object} job
      * @param {string} job.prompt 任务的内容
      * @param {string} [job.title] 一句话说明
-     * @param {Array} [job.messages] 对话上下文（不给就用 getMessages 造）
+     * @param {Array} [job.messages] 对话上下文。
+     *   **前台交出来的时候，这里是它那一轮的完整对话**——
+     *   后台接着这段对话往下干，用户说的原话不会丢。
      * @param {object} [job.config] 大模型配置
+     * @param {string} [job.criteria] 做完的标准（开工前定下的）
      * @param {Function} [job.onDelta] 流式增量
      * @returns {{ok: boolean, taskId: string, done: Promise<object>}}
      */
@@ -203,6 +207,7 @@ export function createAgentTasks({
       title = '',
       messages = null,
       config = {},
+      criteria = '',
       onDelta = null,
     } = {}) {
       const text = String(prompt || '');
@@ -252,6 +257,7 @@ export function createAgentTasks({
           return backend.chat({
             messages: convo,
             config,
+            criteria,
             onDelta,
             onEvent: (event) => publish({ ...event, taskId: scope.taskId, at: now() }),
             gate,
@@ -260,7 +266,7 @@ export function createAgentTasks({
             taskId: scope.taskId,
             // 运行时的挂起接口：要等用户回话的工具靠它让出并发槽。
             hooks: scope.hooks,
-            // 追加的要求：执行层在步骤边界取走。
+            // 追加的要求：后台在步骤边界取走。
             // scope.steer 取走即清空（见 runtime.js）。
             steer: scope.steer,
             trigger: 'user',
@@ -272,7 +278,7 @@ export function createAgentTasks({
       //
       // **谁在读它**：下面那个失败处理分支（`void done.then(…)`）——
       // 它靠 `done` 抛出的东西分辨「失败」与「被取消」。
-      // 前台不再消费它（前台走的是交互层，不走 `tasks.submit`）。
+      // 前台不消费它：前台只管交出去那一下，结果由后台送到用户面前。
       const done = job.done.then((outcome) => {
         if (outcome.ok) return outcome.result;
         const cancelled = outcome.status === TASK_STATUS.CANCELLED;
@@ -295,9 +301,9 @@ export function createAgentTasks({
         (result) => {
           notify({
             title: job.title,
-            text: result?.text || '这件事做完了',
             ok: true,
-            // **带上任务号**：页面要靠它把结果归回发起它的那一块。
+            // **结论**：模型写的那句（已经过滤过内部话术）。
+            summary: String(result?.text || '这件事做完了'),
             taskId: job.taskId,
             // **情绪与记忆也带回去**：后台任务学到的东西，
             // 桌宠自己得知道（规格 §5.1）。
@@ -311,9 +317,9 @@ export function createAgentTasks({
           if (err?.cancelled) return;
           notify({
             title: job.title,
-            text: `这件事没做成：${err?.message || err}`,
             ok: false,
-            // 失败同样要带任务号：失败的块也得归回原来那一块。
+            // **失败原因要用户读得懂**：工具名、路径、堆栈都不该出现。
+            reason: userReason(err) || '中间出了点问题',
             taskId: job.taskId,
             // 失败没有情绪也没有记忆——那是 agent 没交卷，不是它不想说。
             emotion: '',

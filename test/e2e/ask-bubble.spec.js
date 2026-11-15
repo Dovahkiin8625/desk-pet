@@ -5,7 +5,7 @@
 // 那个选择**回到模型手里**（模型才知道该往哪走）。
 //
 // 桩接口靠**请求里的工具表**分辨是哪一层：
-// 交互层带着 task.submit，执行层不带。
+// 前台带着 task.run，后台不带。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { createServer } from 'node:http';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -26,7 +26,7 @@ async function startStubLlm({ interaction, execution }) {
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       seen.push({ isExecution, body });
       const reply = isExecution ? execution(body) : interaction(body);
       const timer = setTimeout(() => {
@@ -151,9 +151,9 @@ test.describe('后台任务向用户确认', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', {
-          title: '打开音乐播放器',
-          brief: '用户要打开音乐播放器',
+        return toolCall('task.run', {
+          goal: '打开音乐播放器',
+          done_when: '音乐播放器的界面打开了',
         });
       },
       execution: (body) => {

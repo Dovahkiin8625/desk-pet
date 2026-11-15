@@ -12,7 +12,7 @@ import {
  * 聊天记录现在有七种分类：user / reply / task / step / approval / dispatch / model。
  * user 与 reply 是**给模型看的**；task / step / approval / model 是**给人看的**——
  * 它们绝不能进模型上下文（见 chat/prompt.js 的过滤）。
- * dispatch 两头不一样：交互层看得见、执行层看不见（见 shared 的 `CHAT_KIND_FOR_LAYER`）。
+ * dispatch 两头不一样：前台看得见、后台看不见（见 shared 的 `CHAT_KIND_FOR_LAYER`）。
  *
  * 这里只造条目，不落盘：落盘走 chat/memory.js 的 `appendMessage`，
  * 那边的分路截断才对（一条新步骤不该把最老的用户输入挤掉）。
@@ -44,11 +44,11 @@ export function taskRecord({ taskId = '', status = '', title = '', at = Date.now
 /**
  * 任务中的一次工具调用。
  *
- * **`layer` 说的是这一步是哪一层做的**：交互层的快工具也是 step，
+ * **`layer` 说的是这一步是哪处跑的**：前台自己的工具也是 step，
  * 不带这个字段的话，页面分不清「桌宠自己查了一下」与「后台任务里的步骤」。
  *
  * **默认 `execution`**：磁盘上的旧记录没有这个字段，
- * 它们全是执行层的步骤——默认成 execution，旧记录读出来才不用改。
+ * 它们全是后台的步骤——默认成 execution，旧记录读出来才不用改。
  */
 export function stepRecord({
   taskId = '',
@@ -78,7 +78,7 @@ export function stepRecord({
 }
 
 /**
- * 模型的一轮往返（交互层跟模型之间说了什么）。
+ * 模型的一轮往返（前台跟模型之间说了什么）。
  *
  * **只给人看**：模型回合的原话绝不能回喂给模型——
  * 那等于让模型读自己的草稿，会把它绕晕（见 shared 的 `CHAT_KIND_FOR_LAYER`，
@@ -170,13 +170,13 @@ export function interruptedTasks(messages) {
 }
 
 /**
- * 交互层的一次任务管理调用（派单 / 查看 / 停止 / 归档 / 追加指令）。
+ * 前台的一次任务管理调用（派单 / 查看 / 停止 / 归档 / 追加指令）。
  *
- * **正文里必须带任务号**：交互层下一轮要靠它说「停掉刚才那个」——
+ * **正文里必须带任务号**：前台下一轮要靠它说「停掉刚才那个」——
  * 没有任务号，它只能瞎猜一个。
  *
- * **`brief` 是交底原文**：只有派单（task.submit）有——
- * 它是模型写给执行层的那段说明，聊天历史页要把它原样显示出来，
+ * **`brief` 是交底原文**：只有派单（task.run）有——
+ * 它是模型写给后台的那段说明，聊天历史页要把它原样显示出来，
  * 用户才能知道「这活儿到底是让谁去干了什么」。
  * 其它四个工具不交底什么，brief 留空串。
  */
@@ -198,7 +198,7 @@ export function dispatchRecord({
   return {
     kind: CHAT_KIND.DISPATCH,
     role: 'assistant',
-    // **编号留着**：交互层下一轮要靠它说「停掉 t-42」。
+    // **编号留着**：前台下一轮要靠它说「停掉 t-42」。
     text: [act, id].filter(Boolean).join(' '),
     at,
     meta: {

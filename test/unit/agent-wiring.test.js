@@ -6,17 +6,15 @@ import { buildChatMessages } from '../../src/main/assistant/chat/prompt.js';
 import { createPlainBackend } from '../../src/main/assistant/chat/plain.js';
 import { createAgentBackend } from '../../src/main/assistant/chat/agent.js';
 import { createAgentTasks } from '../../src/main/assistant/agent/tasks.js';
-import { createInteractionBackend } from '../../src/main/assistant/layer/interaction.js';
-import { createTaskTools } from '../../src/main/assistant/layer/taskTools.js';
+import { createTaskTools } from '../../src/main/assistant/agent/tools/tasks.js';
 import { runForeground, FALLBACK_NOTICE } from '../../src/main/assistant/layer/foreground.js';
 import { LlmError, LLM_ERRORS } from '../../src/main/assistant/llm/openai.js';
 
 /**
- * 两层接线的端到端（规格 §7）。
+ * 统一 agent 的接线（前台 → 交出去 → 后台 → 通知）。
  *
- * 这里盯的是**那条硬 bug**：用户在任务跑着的时候又说了句话，
- * 任务的结果就没了。现在前台对话与后台任务彻底分开，
- * 两者的序号互不干涉。
+ * 这里盯的是那条硬 bug：用户在任务跑着的时候又说了句话，
+ * 任务的结果就没了。前台对话与后台任务彻底分开，两者的序号互不干涉。
  */
 
 const CONFIG = {
@@ -45,13 +43,13 @@ function fakeFetch(responses) {
 }
 
 /** 造一句「调工具」的响应。 */
-function toolCall(name, args = {}) {
+function toolCall(name, args = {}, id = 'c-1') {
   return {
     choices: [
       {
         message: {
           tool_calls: [
-            { id: `c-${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } },
+            { id, type: 'function', function: { name, arguments: JSON.stringify(args) } },
           ],
         },
       },
@@ -81,12 +79,17 @@ async function waitFor(fn, timeoutMs = 3000) {
   return null;
 }
 
-/** 按主进程的样子把两层接起来（不引 electron）。 */
-function wire({ interactionFetch, executionFetch }) {
+/**
+ * 按主进程的样子把前台与后台接起来（不引 electron）。
+ *
+ * **前后台是同一个 agent**（同一个后端实例），只是参数不同：
+ * 前台步数少、工具带回的那句就是答复、答不出就交出去。
+ */
+function wire({ fetchImpl }) {
   const records = [];
   const notices = [];
 
-  const execRegistry = fakeRegistry([
+  const registry = fakeRegistry([
     {
       name: 'fs.list',
       label: '列目录',
@@ -97,90 +100,112 @@ function wire({ interactionFetch, executionFetch }) {
     },
   ]);
 
-  const agentBackend = createAgentBackend({
-    // **要的是那个函数**：`fakeFetch()` 返回的是 {calls, fetchImpl}，
-    // 直接把那个对象塞进来，调用时会炸「fetchImpl is not a function」。
-    fetchImpl: executionFetch.fetchImpl,
-    getTools: () => execRegistry,
+  const backend = createAgentBackend({
+    fetchImpl,
+    getTools: () => registry,
     getGate: () => null,
     getMaxSteps: () => 5,
   });
 
   const tasks = createAgentTasks({
-    backend: agentBackend,
+    backend,
     appendRecord: (entry) => records.push(entry),
     notify: (n) => notices.push(n),
     getMessages: (prompt) =>
       buildChatMessages({ history: [], userText: prompt, layer: LAYER.EXECUTION }),
   });
 
-  const interaction = createInteractionBackend({
-    fetchImpl: interactionFetch.fetchImpl,
-    getRegistry: () => fakeRegistry([]),
-    getTaskTools: (turn) =>
+  /**
+   * 前台这一轮的工具工厂。
+   *
+   * 后端调用它时会带上「当前这段对话」，
+   * 任务工具要靠它把对话原样交出去。
+   */
+  function foregroundTools(title) {
+    return (getConvo) =>
       createTaskTools({
         tasks,
-        turn,
-        dispatchEnabled: true,
+        getConvo,
+        title,
+        config: CONFIG,
+        canEscalate: true,
         appendRecord: (entry) => records.push(entry),
         now: () => 1,
-      }),
-    getTaskStates: () => tasks.list(),
-  });
+      });
+  }
 
-  return { tasks, interaction, records, notices };
+  return { backend, tasks, records, notices, foregroundTools };
 }
 
-test('派单 → 后台跑 → 完成通知', async () => {
-  const interactionFetch = fakeFetch([
-    toolCall('task.submit', { title: '查视频', brief: '看看 F:\\video 下有什么' }),
-    say('我去看看。'),
+test('前台交出去 → 后台接着做 → 完成通知', async () => {
+  const { calls, fetchImpl } = fakeFetch([
+    toolCall('task.run', { goal: '查视频', done_when: '列出所有视频', reply: '我去看看。' }),
+    say('F:\\video 下有 3 个视频。'),
   ]);
-  const executionFetch = fakeFetch([say('F:\\video 下有 3 个视频。')]);
-  const { interaction, records, notices } = wire({ interactionFetch, executionFetch });
+  const { backend, tasks, records, notices, foregroundTools } = wire({ fetchImpl });
 
-  const result = await interaction.chat({
-    messages: buildChatMessages({ history: [], userText: 'F 盘 video 下有什么', layer: LAYER.INTERACTION }),
+  const userText = 'F 盘 video 下有什么';
+  const result = await backend.chat({
+    messages: buildChatMessages({ history: [], userText, layer: LAYER.INTERACTION }),
     config: CONFIG,
-    turn: { history: [], userText: 'F 盘 video 下有什么', config: CONFIG },
+    tools: foregroundTools(userText),
+    answerFromTool: true,
+    maxSteps: 3,
+    summarize: false,
+    canEscalate: true,
+    escalate: async () => ({ ok: false }),
   });
   assert.equal(result.text, '我去看看。');
 
   const notice = await waitFor(() => notices[0]);
   assert.ok(notice, '任务做完了要通知用户');
-  assert.match(notice.text, /3 个视频/);
+  assert.match(notice.summary, /3 个视频/);
+  assert.equal(notice.ok, true);
 
-  // 派单记录里有任务号：交互层下一轮要靠它说「停掉刚才那个」。
+  // 后台带着**前台这段对话**继续做：用户说的原话一个字都没丢。
+  const backgroundCall = calls[1];
+  assert.equal(backgroundCall.body.messages.at(-1).content, userText);
+
+  // 记录里有任务号：下一轮要靠它说「停掉刚才那个」。
   const dispatch = records.find((r) => r.kind === 'dispatch');
-  assert.ok(dispatch, '派单要有记录');
-  assert.ok(dispatch.meta.taskId, '派单记录要带任务号');
+  assert.ok(dispatch, '交出去要有记录');
+  assert.ok(dispatch.meta.taskId, '记录要带任务号');
+  assert.equal(tasks.list()[0].status, 'done');
 });
 
 test('用户中途又说话：任务不受影响，结果照样送到', async () => {
-  const interactionFetch = fakeFetch([
-    toolCall('task.submit', { title: '查视频', brief: '看看' }),
-    say('我去看看。'),
+  const { fetchImpl } = fakeFetch([
+    toolCall('task.run', { goal: '查视频', reply: '我去看看。' }),
+    say('查完了。'),
     say('你好。'),
   ]);
-  const executionFetch = fakeFetch([say('查完了。')]);
-  const { interaction, tasks, notices } = wire({ interactionFetch, executionFetch });
+  const { backend, tasks, notices, foregroundTools } = wire({ fetchImpl });
 
-  await interaction.chat({
+  await backend.chat({
     messages: buildChatMessages({ history: [], userText: 'F 盘 video 下有什么', layer: LAYER.INTERACTION }),
     config: CONFIG,
-    turn: { history: [], userText: 'F 盘 video 下有什么', config: CONFIG },
+    tools: foregroundTools('F 盘 video 下有什么'),
+    answerFromTool: true,
+    maxSteps: 3,
+    summarize: false,
+    canEscalate: true,
+    escalate: async () => ({ ok: false }),
   });
 
   // 用户又说话了：这是**另一轮前台对话**，不该碰到后台任务。
-  await interaction.chat({
+  await backend.chat({
     messages: buildChatMessages({ history: [], userText: '顺便问一句', layer: LAYER.INTERACTION }),
     config: CONFIG,
-    turn: { history: [], userText: '顺便问一句', config: CONFIG },
+    tools: foregroundTools('顺便问一句'),
+    maxSteps: 3,
+    summarize: false,
+    canEscalate: true,
+    escalate: async () => ({ ok: false }),
   });
 
   const notice = await waitFor(() => notices[0]);
   assert.ok(notice, '结果被新对话吞掉了');
-  assert.match(notice.text, /查完了/);
+  assert.match(notice.summary, /查完了/);
   assert.equal(tasks.list()[0].status, 'done');
 });
 
@@ -190,7 +215,7 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
 
   // 用真的错误来跑：isToolsUnsupportedError 只认 LlmError + BAD_REQUEST
   // 且原文里提到工具，普通 Error 它不认（那样就不该退回）。
-  const interaction = {
+  const agent = {
     async chat() {
       throw new LlmError(FALLBACK_NOTICE, {
         code: LLM_ERRORS.BAD_REQUEST,
@@ -202,7 +227,7 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
 
   let fallback = null;
   const result = await runForeground({
-    interaction,
+    agent,
     plain,
     ctx: {
       system: '你是小桌',
@@ -219,50 +244,54 @@ test('模型不支持工具调用：这一轮退回普通对话，并告诉用�
 });
 
 test('前台这一轮的轮数：模型往返了几次', async () => {
-  const interactionFetch = fakeFetch([say('你好。')]);
-  const { interaction } = wire({ interactionFetch, executionFetch: fakeFetch([say('x')]) });
+  const { fetchImpl } = fakeFetch([say('你好。')]);
+  const { backend, foregroundTools } = wire({ fetchImpl });
   const plain = createPlainBackend({ fetchImpl: fakeFetch([say('x')]).fetchImpl });
 
   const result = await runForeground({
-    interaction,
+    agent: backend,
     plain,
     ctx: {
       system: '你是小桌',
       messages: buildChatMessages({ history: [], userText: '你好', layer: LAYER.INTERACTION }),
       config: CONFIG,
-      turn: { history: [], userText: '你好', config: CONFIG },
+      tools: foregroundTools('你好'),
+      maxSteps: 3,
     },
   });
 
   assert.equal(result.steps, 1, '模型回了一句话，就是一轮');
 });
 
-test('前台这一轮的轮数：派单也算一轮', async () => {
-  const interactionFetch = fakeFetch([
-    toolCall('task.submit', { title: '查视频', brief: '看看' }),
-    say('我去看看。'),
+test('前台这一轮的轮数：交出去也算一轮', async () => {
+  const { fetchImpl } = fakeFetch([
+    toolCall('task.run', { goal: '查视频', reply: '我去看看。' }),
+    say('查完了。'),
   ]);
-  const { interaction } = wire({ interactionFetch, executionFetch: fakeFetch([say('查完了。')]) });
+  const { backend, foregroundTools } = wire({ fetchImpl });
   const plain = createPlainBackend({ fetchImpl: fakeFetch([say('x')]).fetchImpl });
 
   const result = await runForeground({
-    interaction,
+    agent: backend,
     plain,
     ctx: {
       system: '你是小桌',
       messages: buildChatMessages({ history: [], userText: 'F 盘 video 下有什么', layer: LAYER.INTERACTION }),
       config: CONFIG,
-      turn: { history: [], userText: 'F 盘 video 下有什么', config: CONFIG },
+      tools: foregroundTools('F 盘 video 下有什么'),
+      answerFromTool: true,
+      maxSteps: 3,
+      summarize: false,
     },
   });
 
   assert.equal(result.text, '我去看看。');
-  assert.equal(result.steps, 2, '派单那一轮 + 答复那一轮 = 两轮');
+  assert.equal(result.steps, 1, '交出去那一轮就是这一轮：工具带回的那句直接给用户');
 });
 
 test('退回普通对话：也算一轮——模型确实被调了一次', async () => {
   const plain = createPlainBackend({ fetchImpl: fakeFetch([say('你好呀。')]).fetchImpl });
-  const interaction = {
+  const agent = {
     async chat() {
       throw new LlmError(FALLBACK_NOTICE, {
         code: LLM_ERRORS.BAD_REQUEST,
@@ -273,7 +302,7 @@ test('退回普通对话：也算一轮——模型确实被调了一次', async
   };
 
   const result = await runForeground({
-    interaction,
+    agent,
     plain,
     ctx: { system: '你是小桌', messages: [{ role: 'user', content: '你好' }], config: CONFIG },
   });
@@ -290,10 +319,9 @@ test('退回普通对话时说的那句话：不是空的，而且提到「工�
 });
 
 test('别的错误不退回：还是把错误抛出去', async () => {
-  const plainFetch = fakeFetch([say('你好呀。')]);
-  const plain = createPlainBackend({ fetchImpl: plainFetch.fetchImpl });
+  const plain = createPlainBackend({ fetchImpl: fakeFetch([say('你好呀。')]).fetchImpl });
 
-  const interaction = {
+  const agent = {
     async chat() {
       throw new LlmError('接口超时了', { code: LLM_ERRORS.TIMEOUT, status: 504, body: '' });
     },
@@ -302,7 +330,7 @@ test('别的错误不退回：还是把错误抛出去', async () => {
   await assert.rejects(
     () =>
       runForeground({
-        interaction,
+        agent,
         plain,
         ctx: { system: '你是小桌', messages: [{ role: 'user', content: '你好' }], config: CONFIG },
       }),
@@ -312,29 +340,33 @@ test('别的错误不退回：还是把错误抛出去', async () => {
 });
 
 test('任务被取消：不弹「这件事没做成」', async () => {
-  // 执行层的接口**永远不回来**：任务会一直跑着，直到被取消。
+  // 后台的接口**永远不回来**：任务会一直跑着，直到被取消。
   // （这是唯一能确定「任务还在跑」的办法——真接口可能秒回。）
-  const executionFetch = {
-    calls: [],
-    fetchImpl: async (url, options) => {
-      executionFetch.calls.push({ url, body: JSON.parse(options.body) });
-      return new Promise(() => {});
-    },
+  let n = 0;
+  const fetchImpl = async (url, options) => {
+    n += 1;
+    // 第一次是前台（回一句「交出去了」），后面那次是后台——让它卡住。
+    if (n === 1) {
+      return new Response(
+        JSON.stringify(toolCall('task.run', { goal: '查视频', reply: '我去看看。' })),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return new Promise(() => {});
   };
-  const interactionFetch = fakeFetch([
-    toolCall('task.submit', { title: '查视频', brief: '看看' }),
-    say('我去看看。'),
-  ]);
-  const { interaction, tasks, records, notices } = wire({ interactionFetch, executionFetch });
+  const { backend, tasks, records, notices, foregroundTools } = wire({ fetchImpl });
 
-  await interaction.chat({
+  await backend.chat({
     messages: buildChatMessages({ history: [], userText: 'F 盘 video 下有什么', layer: LAYER.INTERACTION }),
     config: CONFIG,
-    turn: { history: [], userText: 'F 盘 video 下有什么', config: CONFIG },
+    tools: foregroundTools('F 盘 video 下有什么'),
+    answerFromTool: true,
+    maxSteps: 3,
+    summarize: false,
   });
 
   const dispatch = records.find((r) => r.kind === 'dispatch');
-  assert.ok(dispatch?.meta.taskId, '派单记录要带任务号');
+  assert.ok(dispatch?.meta.taskId, '交出去要有记录');
 
   const res = tasks.cancel(dispatch.meta.taskId);
   assert.equal(res.ok, true, '取消要成功');

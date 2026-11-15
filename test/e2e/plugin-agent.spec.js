@@ -26,11 +26,11 @@ async function startStubLlm({ interaction, execution }) {
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      // 交互层带着 task.submit，执行层不带。
-      const isExecution = !names.includes('task.submit');
-      if (isExecution) seen.push(body);
+      // 前台带着 task.run（它管得住任务），后台不带。
+      const isBackground = !names.includes('task.run');
+      if (isBackground) seen.push(body);
       else interactionSeen.push(body);
-      const reply = isExecution ? execution(body) : interaction(body);
+      const reply = isBackground ? execution(body) : interaction(body);
       const timer = setTimeout(() => {
         timers.delete(timer);
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -137,7 +137,7 @@ test.describe('插件接给后台任务的 agent', () => {
         const already = (body.messages || []).some((m) => m.role === 'tool');
         return already
           ? { choices: [{ message: { content: '我去看看。' } }] }
-          : toolCall('task.submit', { title: '看待办', brief: '看看待办清单' });
+          : toolCall('task.run', { goal: '看待办', done_when: '列出所有待办' });
       },
       execution: (body) => {
         // 第二轮（工具结果回来了）给个答复。
@@ -199,7 +199,7 @@ test.describe('插件接给后台任务的 agent', () => {
     }
   });
 
-  test('交互层：工具表里只有四个动作工具，状态写进提示词', async () => {
+  test('前台：工具表里有任务工具，也有那些真工具', async () => {
     const stub = await startStubLlm({
       interaction: () => ({ choices: [{ message: { content: '我装了待办、提醒这些。' } }] }),
       execution: () => ({ choices: [{ message: { content: '（不该被叫到）' } }] }),
@@ -218,23 +218,23 @@ test.describe('插件接给后台任务的 agent', () => {
       while (Date.now() < deadline && !stub.interactionSeen.length) {
         await new Promise((r) => setTimeout(r, 100));
       }
-      expect(stub.interactionSeen.length, '交互层一次请求都没发').toBeGreaterThan(0);
+      expect(stub.interactionSeen.length, '前台一次请求都没发').toBeGreaterThan(0);
 
       const first = stub.interactionSeen[0];
       const names = (first.tools || []).map((t) => t?.function?.name || '');
-      // **交互层不再有外部能力**：只剩管自己那几件事的动作工具。
-      expect(names.sort(), '交互层的工具表不对').toEqual([
-        'task.cancel',
-        'task.delete',
-        'task.steer',
-        'task.submit',
-      ]);
+      // **前台管得住任务**：那四个动作工具都在。
+      for (const n of ['task.run', 'task.cancel', 'task.steer', 'task.delete']) {
+        expect(names, `前台少了 ${n}`).toContain(n);
+      }
+      // **前台也有那些真工具**：不必派单才能查点什么。
+      expect(names.length, '前台只有任务工具，没有真工具').toBeGreaterThan(4);
+      expect(names, '内置的读技能工具不在工具表里').toContain('skill.read');
 
       const system = first.messages?.[0]?.content || '';
       // 状态写进提示词：问「某某怎么样了」不用调工具。
       expect(system, '提示词里没有状态块').toContain('你手头在做的事');
-      // 提示词里不许出现工具名。
-      expect(system, '提示词里出现了工具名').not.toContain('task.submit');
+      // 提示词里要列出工具：模型得知道自己能调什么。
+      expect(system, '提示词里没有工具表').toContain('task.run');
     } finally {
       await app.close();
       await stub.close();

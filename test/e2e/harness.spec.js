@@ -38,7 +38,7 @@ async function startStubLlm({ interaction, execution }) {
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       seen[isExecution ? 'execution' : 'interaction'].push(names);
       const reply = isExecution ? execution(body) : interaction(body);
       const timer = setTimeout(() => {
@@ -204,7 +204,7 @@ test.describe('外部助手', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '跑外部助手', brief: '让 claude code 回答 1+1' });
+        return toolCall('task.run', { goal: '跑外部助手', done_when: 'claude code 回答 1+1' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -244,7 +244,7 @@ test.describe('外部助手', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '跑外部助手', brief: '让 claude code 回答 1+1' });
+        return toolCall('task.run', { goal: '跑外部助手', done_when: 'claude code 回答 1+1' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};

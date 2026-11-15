@@ -8,7 +8,7 @@
 // - 小部件窗口能开出来，显示同一份数据。
 //
 // 桩模型照 approval-bubble.spec.js 那一套：
-// 靠**请求里的工具表**分辨交互层与执行层（交互层带 task.submit）。
+// 靠**请求里的工具表**分辨前台与后台（前台带 task.run）。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { createServer } from 'node:http';
 import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
@@ -23,7 +23,7 @@ const WORKSPACE = join(ROOT, '.tmp-e2e-tasks-workspace');
  * 桩接口。
  *
  * @param {object} options
- * @param {Function} options.interaction 交互层（带着 task.submit 的那一层）
+ * @param {Function} options.interaction 前台（带着 task.run 的那一层）
  * @param {Function} options.execution 执行层
  * @param {number} [options.executionDelayMs] 执行层慢一拍
  */
@@ -37,7 +37,7 @@ async function startStubLlm({ interaction, execution, executionDelayMs = 1500 })
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       // 执行层可以「不吭声」：任务就一直跑着，够我们点「停掉」。
       if (isExecution && execution === null) return;
       const reply = isExecution ? execution(body) : interaction(body);
@@ -201,7 +201,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -247,7 +247,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '慢慢查', brief: '慢慢查点东西' });
+        return toolCall('task.run', { goal: '慢慢查', done_when: '查到东西' });
       },
       // 执行层不吭声：任务一直跑着，够我们点「停掉」。
       execution: null,
@@ -284,7 +284,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '查完了', brief: '查点东西' });
+        return toolCall('task.run', { goal: '查完了', done_when: '查到东西' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -333,7 +333,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '慢慢查', brief: '慢慢查点东西' });
+        return toolCall('task.run', { goal: '慢慢查', done_when: '查到东西' });
       },
       execution: null,
     });
@@ -377,7 +377,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '慢慢查', brief: '慢慢查点东西' });
+        return toolCall('task.run', { goal: '慢慢查', done_when: '查到东西' });
       },
       execution: null,
     });
@@ -417,7 +417,7 @@ test.describe('后台任务插件', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '列个目录', brief: '列一下工作区' });
+        return toolCall('task.run', { goal: '列个目录', done_when: '列出工作区里的东西' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};

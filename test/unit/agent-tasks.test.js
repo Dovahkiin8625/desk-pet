@@ -150,7 +150,7 @@ test('中枢：后台任务做完了要通知用户', async () => {
   await t.done;
   await tick();
   assert.equal(notices.length, 1);
-  assert.match(notices[0].text, /做完了/);
+  assert.match(notices[0].summary, /做完了/);
 });
 
 test('任务做完了：通知里带着任务号', async () => {
@@ -189,7 +189,7 @@ test('任务做砸了：也要通知用户', async () => {
   await tick();
   assert.equal(seen.length, 1, '失败也要发一条通知');
   assert.equal(seen[0].ok, false);
-  assert.match(seen[0].text, /没做成/);
+  assert.match(seen[0].reason, /后端炸了/);
 });
 
 test('任务做砸了：错误是后端抛的原样那个', async () => {
@@ -220,7 +220,7 @@ test('任务做砸了：错误是后端抛的原样那个', async () => {
   await tick();
   assert.equal(seen.length, 1, '字符串错误也要通知');
   assert.equal(seen[0].ok, false);
-  assert.equal(seen[0].text, '这件事没做成：后端炸了');
+  assert.equal(seen[0].reason, '后端炸了');
 });
 
 test('中枢：事件带着任务号转发出去', async () => {

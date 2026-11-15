@@ -5,7 +5,7 @@
 // 那个插件的界面窗口真的出现在桌面上。
 //
 // 桩接口靠**请求里的工具表**分辨是哪一层：
-// 交互层带着 task.submit，执行层不带。
+// 前台带着 task.run，后台不带。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { createServer } from 'node:http';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -25,7 +25,7 @@ async function startStubLlm({ interaction, execution }) {
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       const reply = isExecution ? execution(body) : interaction(body);
       const timer = setTimeout(() => {
         timers.delete(timer);
@@ -137,9 +137,9 @@ test.describe('发一句话打开插件界面', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('好啦。');
-        return toolCall('task.submit', {
-          title: '打开系统状态',
-          brief: '打开系统状态插件的界面窗口',
+        return toolCall('task.run', {
+          goal: '打开系统状态',
+          done_when: '系统状态的界面开好了',
         });
       },
       execution: (body) => {

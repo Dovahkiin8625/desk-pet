@@ -9,7 +9,7 @@ import {
   parseReply,
   stripLeadingTimePrefix,
 } from '../../src/main/assistant/chat/prompt.js';
-import { buildInteractionPrompt } from '../../src/main/assistant/layer/prompt.js';
+import { buildAgentSystemPrompt } from '../../src/main/assistant/agent/prompt.js';
 import { dayPeriod } from '../../src/main/assistant/clock.js';
 
 /** 固定一个周日的下午。 */
@@ -38,8 +38,8 @@ test('buildSystemPrompt：时间那一行带时段词', () => {
   assert.match(system, /下午 15:42/);
 });
 
-test('buildInteractionPrompt：时间那一行带时段词', () => {
-  const system = buildInteractionPrompt({ now: AFTERNOON });
+test('buildAgentSystemPrompt：时间那一行带时段词', () => {
+  const system = buildAgentSystemPrompt({ now: AFTERNOON });
   assert.match(system, /下午 15:42/);
 });
 

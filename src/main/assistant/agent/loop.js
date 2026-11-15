@@ -63,6 +63,46 @@ const SUMMARY_INSTRUCTION =
 const SKIPPED_TEXT = '（已跳过：这个工具连着出错，任务已经停下了）';
 
 /**
+ * 把一段对话修成**可以直接发出去**的样子。
+ *
+ * **为什么需要**：交出去的时候，对话可能正好停在一轮的半截上——
+ * assistant 说了要调两个工具，结果只回来一个。
+ * 这种对话发出去，接口会直接 400（tool_calls 没有对应的结果）。
+ *
+ * 做法：**找到最后一条带 tool_calls 的 assistant 消息，
+ * 它的每个调用都得有对应的 tool 结果**。
+ * 缺了就从它那里截断——截断之后对话停在一个完整的轮次之后，
+ * 正好是能接着往下说的位置。
+ *
+ * @param {Array} convo
+ * @returns {Array} 修好的对话（不改原数组）
+ */
+export function safeConvo(convo) {
+  const list = Array.isArray(convo) ? convo.slice() : [];
+  // 从后往前找最后一条带工具调用的 assistant 消息。
+  let at = -1;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const m = list[i];
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      at = i;
+      break;
+    }
+  }
+  if (at < 0) return list;
+  const wanted = new Set(
+    list[at].tool_calls.map((c) => String(c?.id || '')).filter(Boolean)
+  );
+  const got = new Set();
+  for (let i = at + 1; i < list.length; i += 1) {
+    if (list[i]?.role === 'tool') got.add(String(list[i].tool_call_id || ''));
+  }
+  for (const id of wanted) {
+    if (!got.has(id)) return list.slice(0, at);
+  }
+  return list;
+}
+
+/**
  * 造一个 agent 循环。
  *
  * @param {object} options
@@ -91,7 +131,7 @@ export function createAgentLoop({
   /**
    * 每轮模型调用之后，把这一轮的正文交出来。
    *
-   * 交互层要靠它记「模型这一轮说了什么」——
+   * 前台要靠它记「模型这一轮说了什么」——
    * step 事件只说做了什么工具，说不出模型的原话。
    */
   onRound = null,
@@ -99,16 +139,16 @@ export function createAgentLoop({
   /**
    * 步数用尽时要不要再让模型总结一次。
    *
-   * 执行层要（用户得知道做到哪一步了）；交互层不要——
-   * 它要的是秒级回应，多一次模型往返就慢一倍（规格 §4.2）。
+   * 后台要（用户得知道做到哪一步了）；前台不要——
+   * 它要的是秒级回应，多一次模型往返就慢一倍（前台要交出去，不是总结）。
    */
   summarize = true,
   /**
    * 工具自己带回的答复（`data.answer`）算不算这一轮的最终答复。
    *
-   * 交互层要的是秒级回应：派一件事出去，一次模型往返就该把话说给用户，
+   * 前台要的是秒级回应：交一件事出去，一次模型往返就该把话说给用户，
    * 工具带回来的那句直接交出去，不必再问模型第二遍。
-   * 执行层不用——它要的是完整的结果，工具结果得喂回模型继续干活。
+   * 后台不用——它要的是完整的结果，工具结果得喂回模型继续干活。
    */
   answerFromTool = false,
   /**
@@ -129,6 +169,15 @@ export function createAgentLoop({
    * 用户答完再拿回来（与审批闸门同一个套路）。
    */
   hooks = null,
+  /**
+   * 每轮之后把当前的对话交出来。
+   *
+   * **为什么需要**：工具可能要在**这一刻**把这件事交出去继续做
+   * （「这个要跑很久」）。要交出去的是**这段对话本身**——
+   * 带着对话继续，后台接着干，用户说的原话一个字都不丢。
+   * 不交出来的话，交出去的只能是模型重新写的一段说明（有损）。
+   */
+  onState = null,
 } = {}) {
   /**
    * 跑一次任务。
@@ -202,7 +251,7 @@ export function createAgentLoop({
       if (call?.baseUrl) baseUrl = call.baseUrl;
       const calls = Array.isArray(call?.toolCalls) ? call.toolCalls : [];
 
-      // **每轮都交出去**：模型这一轮说了什么，是交互层那部分记录的全部内容。
+      // **每轮都交出去**：模型这一轮说了什么，是前台那部分记录的全部内容。
       // 工具调用轮通常没有正文（text 是空串）——那种轮由 step/dispatch 记录表达，
       // 这里照样交出去，轮数才对得上。
       onRound?.({
@@ -239,6 +288,9 @@ export function createAgentLoop({
           },
         })),
       });
+
+      // **这一轮的对话交出去**：工具可能要在这一刻把这件事继续做下去。
+      onState?.({ convo });
 
       // 这一轮提前停下时，剩下的调用就「跳过」——
       // 但**它们仍然要有 tool 消息**，否则这一轮的 tool_calls 悬空。
@@ -327,6 +379,8 @@ export function createAgentLoop({
       const compacted = compactAgentMessages(convo, {});
       convo = compacted.messages;
       droppedTotal += compacted.dropped;
+      // 压缩换了新的数组：交出去的那份也要跟着换。
+      onState?.({ convo });
     }
 
     // 步数用尽：让模型用现在的上下文给个总结（规格 §12）。
@@ -355,6 +409,14 @@ export function createAgentLoop({
       toolCalls: toolCallCount,
       error: outcome === AGENT_OUTCOME.REPEATED_ERRORS ? lastError : '',
       baseUrl,
+      /**
+       * 这一轮走完时的对话。
+       *
+       * **给「带着对话继续」用**：前台把这件事交给后台时，
+       * 交出去的是这段对话，不是模型重写的一段说明——
+       * 用户说的原话、已经查到的结果，全都在里面。
+       */
+      convo,
     };
   }
 

@@ -1,4 +1,7 @@
 import { metaContractLines, META_MARKER, nowLine } from '../chat/prompt.js';
+import { snapshotSection } from '../snapshot.js';
+import { TASK_STATUS } from '../../../shared/assistant.js';
+import { TASK_STATUS_TEXT } from './record.js';
 
 /**
  * agent 的系统提示词与上下文管理。
@@ -32,6 +35,9 @@ export const MAX_AGENT_CONTEXT_CHARS = 24000;
 /** 一条工具结果最多进上下文多少字。 */
 export const MAX_AGENT_TOOL_RESULT_CHARS = 1500;
 
+/** 「你手头在做的事」最多列几件。 */
+const MAX_TASK_LINES = 5;
+
 /**
  * 审批策略的说明。
  *
@@ -47,6 +53,12 @@ const POLICY_TEXT = {
 /**
  * 组装 agent 的系统提示词。
  *
+ * ## 这份提示词只服务一个 agent
+ *
+ * 以前有两份：交互层那份（只说话）与执行层那份（干活）。
+ * 现在合成一份：**同一个 agent 在前台与后台跑**，提示词不该分叉——
+ * 分叉了，同一件事在两个地方就是两种做法。
+ *
  * @param {object} options
  * @param {object} [options.persona] 人设 {name, style, backstory}
  * @param {string[]} [options.facts] 长期记忆
@@ -55,6 +67,10 @@ const POLICY_TEXT = {
  * @param {string[]} [options.plugins] 能打开界面的插件（名字）
  * @param {string} [options.workspace] 工作目录（空 = 用户主目录）
  * @param {object} [options.approval] {policy, allowAlways}
+ * @param {string[]} [options.snapshot] 此刻正在发生的事
+ * @param {object[]} [options.taskStates] 手头在做的事
+ * @param {string} [options.criteria] 做完的标准（开工前定下的）
+ * @param {boolean} [options.canEscalate] 能不能把这件事交给后台继续做
  * @param {Date} [options.now]
  */
 export function buildAgentSystemPrompt({
@@ -65,6 +81,10 @@ export function buildAgentSystemPrompt({
   plugins = [],
   workspace = '',
   approval = {},
+  snapshot = [],
+  taskStates = [],
+  criteria = '',
+  canEscalate = false,
   now = new Date(),
 } = {}) {
   const name = String(persona?.name || '小桌').trim() || '小桌';
@@ -78,6 +98,7 @@ export function buildAgentSystemPrompt({
   const policy = String(approval?.policy || 'graded');
   const allowAlways = Array.isArray(approval?.allowAlways) ? approval.allowAlways : [];
   const workDir = String(workspace || '').trim();
+  const done = String(criteria || '').trim();
 
   const lines = [
     `你是「${name}」，一只住在用户桌面上的 Live2D 桌宠。`,
@@ -128,17 +149,44 @@ export function buildAgentSystemPrompt({
     `审批策略：${POLICY_TEXT[policy] || POLICY_TEXT.graded}`,
     allowAlways.length ? `永久放行的工具：${allowAlways.join('、')}` : '',
     '被拒绝不是错误：换个参数或换条路再试，别死磕同一个调用。',
-    '',
+    ''
+  );
+
+  // 做完的标准：**开工前定，结束时核对**。
+  // 没有它，模型说「做完了」就是它自己说了算。
+  if (done) {
+    lines.push('这件事做完的标准：', ...done.split('\n').map((c) => `- ${c}`), '');
+  }
+
+  lines.push(
     '做事的规矩：',
+    '- 动手之前先用一句话说清你要做什么（「你要我删的是 D:\\a.png，对吧」），' +
+      '说错了用户还能拦你。',
     '- 需要工具才能回答的，就去调工具；不要编造工具的结果。',
     '- 一轮里可以调多个工具，它们各自会给你结果。',
     '- 工具报错时读懂错误，换个参数或换条路再试；同一个错连着出三次就别试了。',
     '- 工具的结果里可能有噪声，自己挑出有用的部分。',
     '- 拿不准用户到底想要什么，就用问用户那个工具问一句：' +
       '把犹豫的地方说清楚，给几个能挑的选项。别自己猜。',
-    '',
+    '- 做完了要说清**做了什么**与**依据是什么**（哪个文件、哪条命令），' +
+      '别只说「好了」。',
+    ''
+  );
+
+  // 交出去继续做：**带着这段对话继续**，不是重写一遍。
+  if (canEscalate) {
+    lines.push(
+      '这件事要跑很久（要跑很久、要试很多次、用户等不了）的时候，' +
+        '调用「把这件事交出去继续做」那个工具：把目标与做完的标准写清楚。' +
+        '它会带着你现在的对话继续做，你跟用户说一句「我接着做」就行。',
+      '别为了省事就说「我去查一下」然后什么也不做——要么动手，要么交出去。',
+      ''
+    );
+  }
+
+  lines.push(
     '回答规则：',
-    '- 这是桌宠回给用户的一句话：中文口语，1~3 句，不超过 80 字。',
+    '- 这是桌宠回给用户的一句话：中文口语，1~3 句，不超过 80 字（要报清单或进展时最多 300 字）。',
     '- 只说结果和要点（「找到了，F 盘里有 3 个视频」），不要复述过程。',
     '- 不要提任何工具名、函数名、插件名，也不要说「后台任务」「派单」「派发」这类词。',
     '- 拿不准就照实说，别编。',
@@ -146,9 +194,36 @@ export function buildAgentSystemPrompt({
     ...metaContractLines(),
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     nowLine(when),
+    snapshotSection(snapshot),
+    taskStatesSection(taskStates),
   );
 
   return lines.filter((line) => line !== '').join('\n');
+}
+
+/**
+ * 「你手头在做的事」那一段。
+ *
+ * **只列没做完的**：做完的事写进历史里了，模型自己看得见。
+ *
+ * **里面不许出现工具名**：进了提示词，模型就会照着说给用户听——
+ * 所以那一步写的是人话标签（`lastStepLabel`）。
+ */
+function taskStatesSection(states) {
+  const list = (Array.isArray(states) ? states.filter(Boolean) : []).filter((t) =>
+    [TASK_STATUS.RUNNING, TASK_STATUS.QUEUED, TASK_STATUS.WAITING_APPROVAL].includes(t.status),
+  );
+  const head = '你手头在做的事：';
+  if (!list.length) return `${head}\n- 现在没有别的事在忙。`;
+  const shown = list.slice(0, MAX_TASK_LINES).map((t) => {
+    const status = TASK_STATUS_TEXT[t.status] || '';
+    const bits = [String(t.taskId || ''), status];
+    if (t.lastStepLabel) bits.push(`刚做完 ${t.lastStepLabel}`);
+    return `- ${t.title}（${bits.filter(Boolean).join('，')}）`;
+  });
+  const rest = list.length - shown.length;
+  if (rest > 0) shown.push(`- 还有 ${rest} 件在排队`);
+  return [head, ...shown].join('\n');
 }
 
 /**

@@ -7,7 +7,7 @@ import {
   buildHistoryMessages,
   buildChatMessages,
 } from '../../src/main/assistant/chat/prompt.js';
-import { buildInteractionPrompt } from '../../src/main/assistant/layer/prompt.js';
+import { buildAgentSystemPrompt } from '../../src/main/assistant/agent/prompt.js';
 import { LAYER } from '../../src/shared/assistant.js';
 
 /**
@@ -155,8 +155,8 @@ test('主动搭话：触发语要立住「历史是过去」这条规矩', () =>
   assert.equal(messages.at(-1).content, PROACTIVE_TRIGGER);
 });
 
-test('交互层提示词：「此刻」那一段要进提示词', () => {
-  const system = buildInteractionPrompt({ snapshot: ['在专注，还剩 12:00'] });
+test('agent 提示词：「此刻」那一段要进提示词', () => {
+  const system = buildAgentSystemPrompt({ snapshot: ['在专注，还剩 12:00'] });
   assert.match(system, /此刻正在发生的事/);
   assert.match(system, /在专注，还剩 12:00/);
 });

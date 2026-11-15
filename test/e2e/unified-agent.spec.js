@@ -1,18 +1,18 @@
-// 双层 agent 的端到端验证。
+// 统一 agent 的端到端验证。
 //
-// 盯的是四件事（规格 §11.2）：
-//   1. **派单 → 完成通知**：用户发一句要动手的话，桌宠先应一句，
+// 盯的是四件事：
+//   1. **交出去 → 完成通知**：用户发一句要动手的话，桌宠先应一句，
 //      做完再冒出一条结果；
 //   2. **中途搭话不丢结果**：任务跑着的时候用户又说话，
 //      两句答复都要在（这是旧版最硬的那条 bug）；
 //   3. **说「停掉刚才那个」**：任务真的停了；
 //   4. **模型不认工具**：退回普通对话，而且把这件事告诉用户。
 //
-// 桩接口靠**请求里的工具表**分辨是哪一层：
-// 交互层带着 task.submit，执行层不带。
+// 桩接口靠**请求里的工具表**分辨前台与后台：
+// 前台带着 task.run（它管得住任务），后台不带。
 //
-// **两层的延时是分开的**：交互层要秒级回应（几十毫秒），
-// 执行层可以慢慢跑（几秒）——这样才能造出「任务还在跑」的窗口。
+// **两边的延时是分开的**：前台要秒级回应（几十毫秒），
+// 后台可以慢慢跑（几秒）——这样才能造出「任务还在跑」的窗口。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { createServer } from 'node:http';
 import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
@@ -30,19 +30,19 @@ const USER_DATA = join(ROOT, '.tmp-e2e-two-layer');
  * 桩接口。
  *
  * @param {object} handlers
- * @param {Function} handlers.interaction 交互层怎么回（拿到请求体）
- * @param {Function} handlers.execution  执行层怎么回
- * @param {number} [handlers.delayMs] 交互层的延时
- * @param {number} [handlers.executionDelayMs] 执行层的延时
+ * @param {Function} handlers.foreground 前台怎么回（拿到请求体）
+ * @param {Function} handlers.background  后台怎么回
+ * @param {number} [handlers.delayMs] 前台的延时
+ * @param {number} [handlers.backgroundDelayMs] 后台的延时
  *
  * **处理器可以回「出错」**：回 `{ status, body }` 就按那个状态码与原文回，
  * 不用回正常响应。用来造「模型不认工具调用」那种 400（规格 §10.4 的退路）。
  */
 async function startStubLlm({
-  interaction,
-  execution,
+  foreground,
+  background,
   delayMs = 50,
-  executionDelayMs = 50,
+  backgroundDelayMs = 50,
 }) {
   // 挂起的定时器：关服时一并清掉，否则进程要等它们跑完才退。
   const timers = new Set();
@@ -56,12 +56,12 @@ async function startStubLlm({
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
-      seen.push({ isExecution, body });
-      const reply = isExecution ? execution(body) : interaction(body);
+      const isBackground = !names.includes('task.run');
+      seen.push({ isBackground, body });
+      const reply = isBackground ? background(body) : foreground(body);
       // 回 `{ status, body }` = 这个请求要出错。
       const isError = Boolean(reply) && typeof reply === 'object' && 'status' in reply;
-      const wait = isExecution ? executionDelayMs : delayMs;
+      const wait = isBackground ? backgroundDelayMs : delayMs;
       const timer = setTimeout(() => {
         timers.delete(timer);
         if (isError) {
@@ -209,7 +209,7 @@ async function waitForState(pick, timeoutMs = 15000) {
   return null;
 }
 
-test.describe('双层 agent', () => {
+test.describe('统一 agent', () => {
   test.beforeAll(async () => {
     await rm(USER_DATA, { recursive: true, force: true });
   });
@@ -220,12 +220,12 @@ test.describe('双层 agent', () => {
 
   test('派单 → 完成通知：两句都在', async () => {
     const stub = await startStubLlm({
-      interaction: (body) => {
-        // 交互层：第一轮派单，第二轮给答复。
+      foreground: (body) => {
+        // 前台：第一轮派单，第二轮给答复。
         const already = (body.messages || []).some((m) => m.role === 'tool');
-        return already ? say('我去看看。') : toolCall('task.submit', { title: '查视频', brief: '看看 video 下有什么' });
+        return already ? say('我去看看。') : toolCall('task.run', { goal: '查视频', done_when: '列出所有视频' });
       },
-      execution: () => say('video 下有 3 个视频。'),
+      background: () => say('video 下有 3 个视频。'),
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -277,7 +277,7 @@ test.describe('双层 agent', () => {
     // 这道防线落在**提示词**上：状态块在提示词里，模型一眼就能答，
     // 一次工具往返都不用花。
     const stub = await startStubLlm({
-      interaction: (body) => {
+      foreground: (body) => {
         const msgs = body.messages || [];
         const last = String(msgs.at(-1)?.content || '');
         if (last.includes('怎么样了')) {
@@ -285,11 +285,11 @@ test.describe('双层 agent', () => {
           return say('还在跑，我盯着呢。');
         }
         const already = msgs.some((m) => m.role === 'tool');
-        return already ? say('我去看看。') : toolCall('task.submit', { title: '查视频', brief: '看看 video 下有什么' });
+        return already ? say('我去看看。') : toolCall('task.run', { goal: '查视频', done_when: '列出所有视频' });
       },
-      execution: () => say('video 下有 3 个视频。'),
-      // 执行层拖着：让那件事在第二问时还在跑。
-      executionDelayMs: 8000,
+      background: () => say('video 下有 3 个视频。'),
+      // 后台拖着：让那件事在第二问时还在跑。
+      backgroundDelayMs: 8000,
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -315,7 +315,7 @@ test.describe('双层 agent', () => {
         { timeout: 30000 }
       );
 
-      const before = stub.seen.filter((r) => !r.isExecution).length;
+      const before = stub.seen.filter((r) => !r.isBackground).length;
       await panel.fill('#query', '那个怎么样了');
       await panel.press('#query', 'Control+Enter');
 
@@ -326,15 +326,16 @@ test.describe('双层 agent', () => {
       );
 
       // **只发了一次请求**：模型没有为了回答而调工具。
-      const asked = stub.seen.filter((r) => !r.isExecution).length;
+      const asked = stub.seen.filter((r) => !r.isBackground).length;
       expect(asked - before, `回答「怎么样了」多花了几次模型请求：${asked - before}`).toBe(1);
 
       // 状态块在提示词里：模型看得到那件事在忙什么。
-      const system = stub.seen.filter((r) => !r.isExecution).at(-1)?.body?.messages?.[0]?.content || '';
+      const system = stub.seen.filter((r) => !r.isBackground).at(-1)?.body?.messages?.[0]?.content || '';
       expect(system, '提示词里没有状态块').toContain('你手头在做的事');
       expect(system, '状态块里没有那件事的标题').toContain('查视频');
-      // 提示词里不许出现工具名。
-      expect(system, '提示词里出现了工具名').not.toContain('task.submit');
+      // **提示词里要列出工具**：模型得知道自己能调什么，才会去调。
+      // （不许出现工具名的是**给用户的答复**，不是提示词。）
+      expect(system, '提示词里没有工具表').toContain('task.run');
     } finally {
       await app.close();
       await stub.close();
@@ -343,13 +344,13 @@ test.describe('双层 agent', () => {
 
   test('真对话写出过程记录：状态文件里有一条模型原话', async () => {
     // **这道防线只能落在 e2e 上**：
-    // 交互层的记录靠 `index.js` 里的 `appendRecord: appendChatRecord` 接上，
-    // 而 `createInteractionBackend` 的默认值是 `appendRecord = () => {}`——
-    // 接线一没，交互层就静默地什么都不记，页面上「模型说了什么」永远是空的，
+    // 前台的记录靠 `index.js` 里的 `appendRecord: appendChatRecord` 接上，
+    // 而后端的默认值是 `appendRecord = () => {}`——
+    // 接线一没，前台就静默地什么都不记，页面上「模型说了什么」永远是空的，
     // **而且不报错**。`index.js` 依赖 electron，node --test 跑不了。
     const stub = await startStubLlm({
-      interaction: () => say('我先看看。'),
-      execution: () => say('不该走到的执行层。'),
+      foreground: () => say('我先看看。'),
+      background: () => say('不该走到的后台。'),
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -369,7 +370,7 @@ test.describe('双层 agent', () => {
       );
       expect(
         model,
-        '交互层的过程记录没写出来：生产接线（index.js 的 appendRecord）漏了吧'
+        '前台的过程记录没写出来：生产接线（index.js 的 appendRecord）漏了吧'
       ).toBeTruthy();
       expect(model.text, `模型原话不对：${JSON.stringify(model)}`).toContain('我先看看');
     } finally {
@@ -380,7 +381,7 @@ test.describe('双层 agent', () => {
 
   test('任务跑着的时候用户又说话：两句答复都在', async () => {
     const stub = await startStubLlm({
-      interaction: (body) => {
+      foreground: (body) => {
         const msgs = body.messages || [];
         const last = msgs.at(-1) || {};
         // 轮内的后续调用（工具结果刚回来）：给个答复。
@@ -393,11 +394,11 @@ test.describe('双层 agent', () => {
         // 「查完了」就不知道是哪个任务的结果，这条用例也白写了。
         const asked = String(last.content || '');
         if (asked.includes('顺便')) return say('顺便说一句。');
-        return toolCall('task.submit', { title: '查视频', brief: '看看' });
+        return toolCall('task.run', { goal: '查视频', done_when: '列出所有视频' });
       },
-      // 执行层慢一点：留出用户插话的时间。
-      execution: () => say('查完了。'),
-      executionDelayMs: 1500,
+      // 后台慢一点：留出用户插话的时间。
+      background: () => say('查完了。'),
+      backgroundDelayMs: 1500,
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -449,7 +450,7 @@ test.describe('双层 agent', () => {
 
   test('说「停掉刚才那个」：任务真的停了', async () => {
     const stub = await startStubLlm({
-      interaction: (body) => {
+      foreground: (body) => {
         const msgs = body.messages || [];
         const last = msgs.at(-1) || {};
         // 轮内的后续调用（工具结果刚回来）：给个答复。
@@ -460,7 +461,7 @@ test.describe('双层 agent', () => {
         const asked = String(last.content || '');
         if (asked.includes('停掉')) {
           // **从对话里找任务号**：真实的模型就是这么知道该停哪个的——
-          // 交互层看得见自己派过的单（dispatch 记录，规格 §6）。
+          // 前台看得见自己派过的单（dispatch 记录，规格 §6）。
           // 找不到就说明那条记录没进上下文，这条 e2e 正是要抓这个。
           const all = msgs.map((m) => String(m.content || '')).join('\n');
           // 派单记录现在写的是「开始做：查视频 <编号>」。
@@ -468,11 +469,11 @@ test.describe('双层 agent', () => {
           if (!at) return say('我不知道要停哪个任务。');
           return toolCall('task.cancel', { taskId: at[1] });
         }
-        return toolCall('task.submit', { title: '查视频', brief: '看看 video 下有什么' });
+        return toolCall('task.run', { goal: '查视频', done_when: '列出所有视频' });
       },
-      execution: () => say('video 下有 3 个视频。'),
-      // 执行层拖着：留出用户喊停的窗口。
-      executionDelayMs: 8000,
+      background: () => say('video 下有 3 个视频。'),
+      // 后台拖着：留出用户喊停的窗口。
+      backgroundDelayMs: 8000,
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -540,8 +541,8 @@ test.describe('双层 agent', () => {
 
   test('前台答复的记录：带轮数与模型名', async () => {
     const stub = await startStubLlm({
-      interaction: () => say('这条答复带了轮数。'),
-      execution: () => say('不该走到的执行层。'),
+      foreground: () => say('这条答复带了轮数。'),
+      background: () => say('不该走到的后台。'),
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);
@@ -575,7 +576,7 @@ test.describe('双层 agent', () => {
 
   test('模型不认工具：退回普通对话，而且告诉用户', async () => {
     const stub = await startStubLlm({
-      interaction: (body) => {
+      foreground: (body) => {
         const asked = String(body.messages?.at(-1)?.content || '');
         // 这个模型不认工具调用：回 400，**原文里提到工具**。
         // （要提到工具，主进程才认得出这是「不支持工具」而不是别的错——
@@ -589,9 +590,9 @@ test.describe('双层 agent', () => {
         return say('你好。');
       },
       // 退回之后走的是**普通对话**（请求里不带 tools），
-      // 桩接口把它当执行层那支处理，回一句普通答复。
-      execution: () => say('普通对话的答复。'),
-      executionDelayMs: 1500,
+      // 桩接口把它当后台那支处理，回一句普通答复。
+      background: () => say('普通对话的答复。'),
+      backgroundDelayMs: 1500,
     });
     await writeAssistantState(USER_DATA);
     const app = await launch(USER_DATA, stub.baseUrl);

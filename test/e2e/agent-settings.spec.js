@@ -20,7 +20,7 @@ const WORKSPACE = join(ROOT, '.tmp-e2e-agent-settings-workspace');
  * 桩接口。
  *
  * 靠**请求里的工具表**分辨是哪一层：
- * 交互层带着 task.submit，执行层不带。
+ * 前台带着 task.run，后台不带。
  * 执行层慢一拍：前台那句「我去看看」先说完，执行层才来要授权。
  */
 async function startStubLlm({ interaction, execution, executionDelayMs = 1200 }) {
@@ -33,7 +33,7 @@ async function startStubLlm({ interaction, execution, executionDelayMs = 1200 })
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       const reply = isExecution ? execution(body) : interaction(body);
       const wait = isExecution ? executionDelayMs : 50;
       const timer = setTimeout(() => {
@@ -282,7 +282,7 @@ test.describe('后台任务的设置', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -323,6 +323,13 @@ test.describe('后台任务的设置', () => {
 
       await approval.win.click('#actions button[data-decision="allow"]');
 
+      // **「每件事都问」下有两声**：交出去本身是一步，写文件是后台那一步。
+      // 前台不再有单独的交互层，每一步都在同一套规矩里。
+      await new Promise((r) => setTimeout(r, 300));
+      const writeApproval = await waitForApproval(app, 30000);
+      expect(writeApproval, '写文件那一步没有弹审批').toBeTruthy();
+      await writeApproval.win.click('#actions button[data-decision="allow"]');
+
       const second = await waitUntil(
         async () => (await readWorkspaceFile('note-2.txt')) !== null,
         20000
@@ -339,7 +346,7 @@ test.describe('后台任务的设置', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -372,7 +379,13 @@ test.describe('后台任务的设置', () => {
       await panel.fill('#query', '在工作区写个 note.txt');
       await panel.press('#query', 'Control+Enter');
 
-      // 文件写了，**没有**审批气泡。
+      // **「每件事都问」下，交出去那一步还是要点头**——
+      // 只有 fs.write 被勾成了「以后不问」。
+      const approval = await waitForApproval(app, 30000);
+      expect(approval, '交出去那一步没有弹审批').toBeTruthy();
+      await approval.win.click('#actions button[data-decision="allow"]');
+
+      // 文件写了，**没有**审批气泡（写文件那一步被永久放行了）。
       const wrote = await waitUntil(async () => (await readWorkspaceFile('note.txt')) !== null, 20000);
       expect(wrote, '永久放行之后文件没有写出来').toBeTruthy();
       expect(await findApproval(app), '永久放行的工具还是弹了审批').toBeNull();
@@ -389,7 +402,7 @@ test.describe('后台任务的设置', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};

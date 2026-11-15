@@ -20,7 +20,7 @@ const WORKSPACE = join(ROOT, '.tmp-e2e-approval-workspace');
  * 桩接口。
  *
  * 靠**请求里的工具表**分辨是哪一层：
- * 交互层带着 task.submit，执行层不带。
+ * 前台带着 task.run，后台不带。
  *
  * **执行层慢一拍**（`executionDelayMs`）：前台那句「我去看看」先说完，
  * 执行层才来要授权。
@@ -39,7 +39,7 @@ async function startStubLlm({ interaction, execution, executionDelayMs = 1500 })
     req.on('end', () => {
       const body = JSON.parse(raw || '{}');
       const names = (body.tools || []).map((t) => t?.function?.name || '');
-      const isExecution = !names.includes('task.submit');
+      const isExecution = !names.includes('task.run');
       const reply = isExecution ? execution(body) : interaction(body);
       const wait = isExecution ? executionDelayMs : 50;
       const timer = setTimeout(() => {
@@ -186,7 +186,7 @@ test.describe('审批气泡', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};
@@ -243,7 +243,7 @@ test.describe('审批气泡', () => {
       interaction: (body) => {
         const last = (body.messages || []).at(-1) || {};
         if (last.role === 'tool') return say('我去看看。');
-        return toolCall('task.submit', { title: '写个文件', brief: '在工作区写一个 note.txt' });
+        return toolCall('task.run', { goal: '写个文件', done_when: '在工作区写好 note.txt' });
       },
       execution: (body) => {
         const last = (body.messages || []).at(-1) || {};

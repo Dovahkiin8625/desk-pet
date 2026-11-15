@@ -246,7 +246,7 @@ export function createAgentRuntime({
         run: typeof run === 'function' ? run : async () => null,
         controller: null,
         scope: null,
-        // 待追加的指令（steer）：执行层在步骤边界取走。
+        // 待追加的指令（steer）：后台在步骤边界取走。
         steerNotes: [],
         // 归档了：不再出现在列表里，也不再计入「正在跑 N 个」。
         // **记录仍然留着**——那是安全审计。
