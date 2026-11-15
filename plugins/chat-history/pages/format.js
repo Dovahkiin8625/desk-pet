@@ -57,11 +57,29 @@ const DECISION_TEXT = {
  *
  * 规格 §10.4 画的是「`fs.list  src/`」——**工具名 + 它拿到的东西**。
  * 只画工具名的话，用户看到的是一串名字，看不出这个步骤到底做了什么。
+ *
+ * **后面再接上这一步的结果**：整条时间线在这里，
+ * 每一步拿到了什么，就该在这儿看得见。
  */
 export function stepLabel(step) {
   const name = String(step?.text || step?.meta?.tool || '步骤');
   const preview = argsPreview(step?.meta?.args);
-  return preview ? `${name}  ${preview}` : name;
+  const parts = [name];
+  if (preview) parts.push(preview);
+  // 出错的步骤不说结果：错在哪已经写在正文里了。
+  const result = step?.meta?.error ? '' : resultPreview(step?.meta?.result);
+  if (result) parts.push(`→ ${result}`);
+  return parts.join('  ');
+}
+
+/** 步骤结果最多留多少字。 */
+const MAX_RESULT = 60;
+
+/** 步骤结果的一行预览（太长就截断）。 */
+export function resultPreview(result) {
+  const text = String(result ?? '').trim();
+  if (!text) return '';
+  return text.length > MAX_RESULT ? `${text.slice(0, MAX_RESULT)}…` : text;
 }
 
 /**

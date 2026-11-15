@@ -51,6 +51,27 @@ test('步骤的一行字：什么都没有就说「步骤」', () => {
   assert.equal(stepLabel(null), '步骤');
 });
 
+test('步骤的一行字：后面接上这一步的结果', () => {
+  const label = stepLabel({
+    text: 'fs.list',
+    meta: { tool: 'fs.list', args: { path: 'src/' }, result: '列出了 12 个文件' },
+  });
+  assert.equal(label, 'fs.list  path: src/  → 列出了 12 个文件');
+});
+
+test('步骤的一行字：结果太长就截断', () => {
+  const label = stepLabel({ text: 'fs.read', meta: { result: 'x'.repeat(100) } });
+  assert.equal(label.length, 'fs.read  → '.length + 61);
+});
+
+test('步骤的一行字：出错的步骤不说结果', () => {
+  const label = stepLabel({
+    text: 'fs.write 出错：写不了',
+    meta: { tool: 'fs.write', result: '写了一半', error: '写不了' },
+  });
+  assert.equal(label, 'fs.write 出错：写不了');
+});
+
 test('参数预览：只看前两个参数', () => {
   const preview = argsPreview({ a: '1', b: '2', c: '3' });
   assert.equal(preview, 'a: 1  b: 2');
