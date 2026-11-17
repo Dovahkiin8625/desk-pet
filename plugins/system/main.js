@@ -10,6 +10,8 @@
  *
  * 设置（过热提醒）在页面自己的抽屉里，与剪贴板插件一个样子。
  */
+import { formatNetworkShort } from '../../src/shared/network.js';
+
 export default function createSystemPlugin() {
   /** 界面要的那一份数据。 */
   const stats = (ctx) => {
@@ -54,11 +56,64 @@ export default function createSystemPlugin() {
   /** 积木页面（自己的页面不在磁盘上时的退路）。 */
   const page = (ctx) => {
     const view = ctx.assistant.statusView();
+    const hot = view.thermal === 'serious' || view.thermal === 'critical';
+    const cpuText = typeof view.cpu === 'number' ? `${view.cpu}%` : '—';
+    const memText = typeof view.memory === 'number' ? `${view.memory}%` : '—';
+    const items = [
+      { icon: 'cpu', label: 'CPU', text: cpuText, value: view.cpu, hot: view.cpu >= 85 },
+      {
+        icon: 'memory',
+        label: '内存',
+        text: memText,
+        value: view.memory,
+        hot: view.memory >= 85,
+      },
+      ...(view.gpu && typeof view.gpu.util === 'number'
+        ? [
+            {
+              icon: 'monitor',
+              label: 'GPU',
+              text: `${view.gpu.util}%`,
+              value: view.gpu.util,
+              hot: view.gpu.util >= 90,
+            },
+          ]
+        : []),
+      {
+        icon: 'thermometer',
+        label: '温度',
+        text: view.thermalText || '—',
+        value: hot ? 100 : null,
+        hot,
+      },
+      ...(typeof view.onBattery === 'boolean'
+        ? [
+            {
+              icon: 'battery',
+              label: '电源',
+              text: view.onBattery ? '电池供电' : '接通电源',
+              value: null,
+              hot: false,
+            },
+          ]
+        : []),
+      ...(view.network
+        ? [
+            {
+              icon: 'wifi',
+              label: '网络',
+              text: formatNetworkShort(view.network) || '—',
+              value: typeof view.network.signal === 'number' ? view.network.signal : null,
+              hot: false,
+            },
+          ]
+        : []),
+    ];
     return ctx.ui.makePage({
       pluginId: 'system',
       title: '系统状态',
       subtitle: 'CPU · 内存 · GPU · 温度 · 电源 · 网络',
-      blocks: [ctx.ui.textBlock(view.text)],
+      blocks: [ctx.ui.statsBlock({ items })],
       drawer: [ctx.ui.toggleBlock('hot-alert', '过热时提醒我', view.hotAlert)],
     });
   };

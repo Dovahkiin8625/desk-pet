@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from '../protocol.js';
+import { appIconPath } from '../appIcon.js';
 import { placeBesidePet } from '../placement.js';
 import { PLUGIN_WINDOW_MODE } from '../../shared/plugin.js';
 
@@ -143,6 +144,7 @@ export function createPluginWindowController({
       skipTaskbar: isWidget,
       alwaysOnTop: spec.alwaysOnTop,
       backgroundColor: isWidget ? '#00000000' : '#fffdf8',
+      icon: appIconPath(rootDir),
       webPreferences: {
         preload: join(rootDir, 'src', 'preload', 'plugin.cjs'),
         contextIsolation: true,

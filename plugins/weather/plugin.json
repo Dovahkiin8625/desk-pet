@@ -32,10 +32,29 @@
       "risk": "write"
     }
   ],
+  "settings": [
+    {
+      "key": "effectEnabled",
+      "label": "桌宠天气效果",
+      "type": "boolean",
+      "default": false,
+      "hint": "开着时，桌宠会根据当前天气与季节，随机偶尔播一阵雨 / 风 / 雪 / 晴 / 落叶。",
+      "hidden": true
+    },
+    {
+      "key": "effect",
+      "label": "效果",
+      "type": "select",
+      "default": "自动",
+      "options": ["自动", "下雨", "刮风", "下雪", "晴天", "落叶"],
+      "hint": "「自动」按当前天气与季节播；选中一个时，预览与自动播放都用它。",
+      "hidden": true
+    }
+  ],
   "window": {
     "title": "天气",
-    "width": 620,
-    "height": 520,
+    "width": 720,
+    "height": 600,
     "refreshMs": 0
   }
 }

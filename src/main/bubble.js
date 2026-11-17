@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from './protocol.js';
+import { appIconPath } from './appIcon.js';
 import { placeBesidePet, DEFAULT_SIDES } from './placement.js';
 import { MESSAGE_KIND, DEFAULT_TTL_MS } from '../shared/assistant.js';
 import { createAskInbox } from './bubbleAsk.js';
@@ -593,6 +594,7 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       skipTaskbar: true,
       alwaysOnTop: true,
       backgroundColor: '#00000000',
+      icon: appIconPath(rootDir),
       webPreferences: {
         preload: join(rootDir, 'src', 'preload', 'bubble.cjs'),
         contextIsolation: true,

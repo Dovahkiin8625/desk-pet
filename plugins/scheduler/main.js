@@ -414,11 +414,12 @@ export default function createSchedulerPlugin(ctx, options = {}) {
                   id: t.id,
                   label: t.name,
                   hint: `${describeSchedule(t.schedule)} · ${t.type === 'command' ? '命令' : '派单'}`,
+                  icon: 'clock',
                   // **点条目不删它**：删只走右边的 ✕。
                   removeId: `rm-${t.id}`,
                 }))
               )
-            : pageCtx.ui.emptyBlock('还没有定时任务'),
+            : pageCtx.ui.emptyBlock('还没有定时任务', 'clock'),
           pageCtx.ui.textBlock('添加与编辑在插件自己的页面里。'),
         ],
       });

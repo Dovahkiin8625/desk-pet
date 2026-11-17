@@ -314,6 +314,99 @@ test.describe('剪贴板插件', () => {
     }
   });
 
+  test('独立窗口：点别处就自动关掉', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+
+      await copyText(app, once('点别处就走'));
+      const frame = await openClipboardPlugin(panel);
+      await expect(frame.locator('li.row .text').first()).toHaveText(once('点别处就走'), {
+        timeout: 10000,
+      });
+
+      // 分离成独立窗口。
+      await panel.click('#detach');
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win, '剪贴板的独立窗口没有出现').toBeTruthy();
+      await win.waitForLoadState('domcontentloaded');
+
+      // 等插件页面自己的脚本跑起来（列表都画出来了，监听也挂上了）。
+      const winFrame = win.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('li.row').first()).toBeVisible({ timeout: 10000 });
+      const iframe = win.frames().find((f) => f.url().includes('/plugins/clipboard/pages/history.html'));
+      expect(iframe, '插件页面 iframe 没有装进来').toBeTruthy();
+
+      // 模拟「点击别处」：窗口先拿到焦点，再失焦。
+      // 钩子挂在插件页面自己的 window 上（处理器在 iframe 里跑），
+      // 事件派发在壳窗口上（监听挂在壳的 window 上）；
+      // 钩子把 hasFocus 钉死 false，无头环境里默认恒为 true。
+      await iframe.evaluate(() => {
+        window.__clipboardHasFocus = () => false;
+      });
+      await win.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await win.waitForTimeout(500);
+      await win.evaluate(() => window.dispatchEvent(new Event('blur')));
+
+      const winStillOpen = () =>
+        app.windows().some((w) => {
+          try {
+            return w.url().includes('/renderer/plugin-window/index.html');
+          } catch {
+            return false;
+          }
+        });
+      await expect.poll(winStillOpen, { timeout: 10000 }).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('独立窗口：焦点还在窗口里时不会自动关', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+
+      await copyText(app, once('点我选也别关'));
+      const frame = await openClipboardPlugin(panel);
+      await expect(frame.locator('li.row .text').first()).toHaveText(once('点我选也别关'), {
+        timeout: 10000,
+      });
+
+      // 分离成独立窗口。
+      await panel.click('#detach');
+      const win = await findWindow(app, '/renderer/plugin-window/index.html');
+      expect(win, '剪贴板的独立窗口没有出现').toBeTruthy();
+      await win.waitForLoadState('domcontentloaded');
+
+      // 等插件页面自己的脚本跑起来（列表都画出来了，监听也挂上了）。
+      const winFrame = win.frameLocator('#plugin-frame');
+      await expect(winFrame.locator('li.row').first()).toBeVisible({ timeout: 10000 });
+      const iframe = win.frames().find((f) => f.url().includes('/plugins/clipboard/pages/history.html'));
+      expect(iframe, '插件页面 iframe 没有装进来').toBeTruthy();
+
+      // 钩子把 hasFocus 钉死 true：点列表行那一类「内部换焦点」不许关窗口。
+      await iframe.evaluate(() => {
+        window.__clipboardHasFocus = () => true;
+      });
+      await win.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await win.waitForTimeout(500);
+      await win.evaluate(() => window.dispatchEvent(new Event('blur')));
+      await win.waitForTimeout(1500);
+
+      const stillOpen = app.windows().some((w) => {
+        try {
+          return w.url().includes('/renderer/plugin-window/index.html');
+        } catch {
+          return false;
+        }
+      });
+      expect(stillOpen, '点列表时窗口不该关').toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('双击一条：那条内容被写回剪贴板', async () => {
     const { app, pet } = await launch();
     try {

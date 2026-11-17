@@ -8,8 +8,9 @@
       /*
        * 系统状态的面板与独立窗口。
        *
-       * 颜色、控件全部走 theme.css 的变量（页面里链着那份），
-       * 这里只管**排版**：三条用量怎么画、底下那行字怎么摆。
+       * 与天气面板同一套语言：图标 tile + 大字数值 + 细进度条，
+       * 用得狠了整卡染红。颜色、控件全部走 theme.css 的变量，
+       * 这里只管排版。
        */
       html,
       body {
@@ -33,91 +34,134 @@
         display: flex;
         flex-direction: column;
         min-height: 0;
+        box-sizing: border-box;
       }
       /* 独立窗口：铺满整个视口（高度是用户拖出来的）。 */
       body:not(.dp-panel) .status {
         height: 100vh;
       }
 
+      /* ---------------- 过热横幅 ---------------- */
+      .banner {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 12px 12px 0;
+        padding: 10px 14px;
+        border-radius: var(--dp-radius);
+        border: 1px solid var(--dp-danger-border);
+        background: var(--dp-danger-bg);
+        color: var(--dp-danger);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .banner[hidden] { display: none; }
+      .banner .dp-icon { font-size: 17px; flex: none; }
+
       /* ---------------- 三条用量 ---------------- */
       .meters {
         flex: 1 1 auto;
         min-height: 0;
-        display: flex;
-        flex-direction: column;
+        overflow-y: auto;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
         padding: 12px;
+        align-content: start;
       }
-      /* 独立窗口里内容少，让它居中；面板里就贴着上面。 */
+      /* 独立窗口里内容少，让它整体居中；面板里贴着上面。 */
       body:not(.dp-panel) .meters {
-        justify-content: center;
+        align-content: center;
+      }
+      @media (max-width: 480px) {
+        .meters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       .card {
-        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 14px 13px;
         border: 1px solid var(--dp-border-soft);
         border-radius: var(--dp-radius-lg);
         background: var(--dp-surface);
       }
-      .meter {
-        display: grid;
-        grid-template-columns: 44px minmax(0, 1fr) 48px;
-        align-items: center;
-        gap: 4px 12px;
+      .stat-head { display: flex; align-items: center; gap: 7px; }
+      .stat-icon {
+        width: 24px; height: 24px; border-radius: 7px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--dp-accent-soft); color: var(--dp-accent-ink);
       }
-      .meter + .meter {
-        margin-top: 16px;
+      .stat-icon .dp-icon { width: 14px; height: 14px; }
+      .card.hot .stat-icon { background: var(--dp-danger); color: #fff; }
+      .stat-label { font-size: 12px; color: var(--dp-text-soft); }
+      .stat-value {
+        font-size: 22px; font-weight: 600; line-height: 1.2;
+        font-variant-numeric: tabular-nums;
       }
-      .meter .name {
-        font-size: 13px;
-        color: var(--dp-text-soft);
+      .card.hot .stat-value { color: var(--dp-danger); }
+      .stat-note {
+        font-size: 11px; color: var(--dp-text-faint);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        min-height: 13px;
       }
-      .meter .track {
-        height: 10px;
+      .track {
+        height: 6px;
         border-radius: 999px;
-        background: var(--dp-border-soft);
+        background: var(--dp-surface-sunken);
         overflow: hidden;
       }
-      .meter .track i {
+      .track i {
         display: block;
         height: 100%;
         width: 0;
         border-radius: 999px;
-        background: linear-gradient(90deg, var(--dp-accent), var(--dp-accent-strong));
-        transition: width 0.35s ease;
-      }
-      /* 用得狠了换个颜色：一眼就知道哪条红。 */
-      .meter.hot .track i {
-        background: var(--dp-danger);
-      }
-      .meter .value {
-        text-align: right;
-        font-size: 13px;
-        font-variant-numeric: tabular-nums;
-      }
-      /* 补充说明（显存多少、显卡叫什么）：占在条的下面。 */
-      .meter .note {
-        grid-column: 2 / -1;
-        font-size: 11px;
-        color: var(--dp-text-faint);
+        background: var(--dp-accent-strong);
+        transition: width 0.4s ease;
+        position: relative;
         overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
+      /* 缓慢走过的一道高光：条子是「活的」。 */
+      .track i::after {
+        content: '';
+        position: absolute; inset: 0;
+        background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.45) 50%, transparent 80%);
+        transform: translateX(-100%);
+        animation: stat-shine 2.8s ease-in-out infinite;
+      }
+      @keyframes stat-shine { 60%, 100% { transform: translateX(100%); } }
+      .card.hot .track i { background: var(--dp-danger); }
 
-      /* ---------------- 网络那一行 ---------------- */
-      .netline {
+      /* ---------------- 底下那行字里的三件小事 ---------------- */
+      .info-row {
         flex: none;
-        padding: 0 12px 8px;
-        font-size: 11px;
-        color: var(--dp-text-soft);
-        font-variant-numeric: tabular-nums;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        display: flex;
+        gap: 8px;
+        padding: 0 12px 10px;
       }
-      .netline:empty {
-        display: none;
+      .info-tile {
+        flex: 1 1 0;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--dp-border-soft);
+        border-radius: var(--dp-radius);
+        background: var(--dp-surface);
       }
+      .info-tile .stat-icon { width: 22px; height: 22px; }
+      .info-tile .stat-icon .dp-icon { width: 13px; height: 13px; }
+      .info-tile .info-meta { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+      .info-tile .info-label { font-size: 11px; color: var(--dp-text-faint); }
+      .info-tile .info-text {
+        font-size: 12px; font-weight: 600; color: var(--dp-text-soft);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      /* 温度到 serious 以上：整格染红。 */
+      .info-tile.hot { border-color: var(--dp-danger-border); background: var(--dp-danger-bg); }
+      .info-tile.hot .stat-icon { background: var(--dp-danger); color: #fff; }
+      .info-tile.hot .info-text { color: var(--dp-danger); }
 
       /* ---------------- 底下那行 ---------------- */
       .gear {
@@ -144,11 +188,33 @@
   </head>
   <body class="dp-page">
     <div class="status">
-      <div class="meters">
-        <div class="card" id="meters"></div>
-      </div>
+      <div class="banner" id="banner" hidden><span class="icon" data-icon="thermometer"></span><span id="bannerText">机器很热，先歇一会儿或把负载降下来</span></div>
 
-      <div class="netline" id="net"></div>
+      <div class="meters" id="meters"></div>
+
+      <div class="info-row">
+        <div class="info-tile" id="thermalTile">
+          <span class="stat-icon"><span class="icon" data-icon="thermometer"></span></span>
+          <span class="info-meta">
+            <span class="info-label">温度</span>
+            <span class="info-text" id="thermalText">—</span>
+          </span>
+        </div>
+        <div class="info-tile" id="powerTile">
+          <span class="stat-icon"><span class="icon" data-icon="battery"></span></span>
+          <span class="info-meta">
+            <span class="info-label">电源</span>
+            <span class="info-text" id="powerText">—</span>
+          </span>
+        </div>
+        <div class="info-tile" id="netTile">
+          <span class="stat-icon"><span class="icon" data-icon="wifi"></span></span>
+          <span class="info-meta">
+            <span class="info-label">网络</span>
+            <span class="info-text" id="netText">—</span>
+          </span>
+        </div>
+      </div>
 
       <footer class="dp-footer">
         <span class="grow" id="info">正在读系统状态…</span>

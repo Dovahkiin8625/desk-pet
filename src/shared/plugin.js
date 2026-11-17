@@ -285,6 +285,8 @@ function normalizeSettingDeclaration(raw) {
       default: def,
       options,
       hint: str(raw.hint).trim().slice(0, 200),
+      // 只收进读写，不画在设置抽屉里（界面由插件自己画，见天气面板）。
+      hidden: raw.hidden === true,
     },
   };
 }

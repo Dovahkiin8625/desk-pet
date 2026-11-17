@@ -13,9 +13,9 @@ export default function createRemindersPlugin() {
       subtitle: view.total === 0 ? '没有待触发的提醒' : `${view.total} 条提醒`,
       blocks: [
         view.total === 0
-          ? ctx.ui.emptyBlock('没有待触发的提醒')
+          ? ctx.ui.emptyBlock('例如：「30分钟后喝水」、「下午三点吃药」', 'bell')
           : ctx.ui.listBlock(
-              view.items.map((r) => ({ id: r.id, label: r.label, hint: r.hint })),
+              view.items.map((r) => ({ id: r.id, label: r.label, hint: r.hint, icon: 'bell' })),
             ),
         ctx.ui.inputBlock('add', '例如：30分钟后喝水', '添加'),
       ],

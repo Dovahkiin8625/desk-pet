@@ -241,12 +241,21 @@
       border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
       background: var(--surface);
       cursor: pointer;
+      transition: background-color .13s ease, transform .13s ease, box-shadow .13s ease;
     }
     .plugin-row.off { background: var(--surface-sunken); }
-    .plugin-row:hover { background: var(--surface-hover); }
+    .plugin-row:hover { background: var(--surface-hover); transform: translateY(-1px); box-shadow: 0 3px 10px var(--dp-shadow); }
     .plugin-row.off .p-name { color: var(--muted); }
-    .p-icon { flex: none; font-size: 16px; line-height: 1; display: inline-flex; color: var(--muted); }
-    .plugin-row:not(.off) .p-icon { color: var(--accent-ink); }
+    /* 开着的插件，图标染成强调色、垫一块浅底——一眼分得清谁在工作。 */
+    .p-icon {
+      flex: none; font-size: 16px; line-height: 1; display: inline-flex;
+      width: 34px; height: 34px; border-radius: 9px;
+      align-items: center; justify-content: center;
+      color: var(--muted);
+      background: var(--surface-sunken);
+      border: 1px solid var(--border-hair);
+    }
+    .plugin-row:not(.off) .p-icon { color: var(--accent-ink); background: var(--accent-soft); border-color: transparent; }
     .p-text { flex: 1 1 auto; min-width: 0; }
     .p-name { display: block; font-weight: 600; }
     .p-desc {
@@ -279,8 +288,9 @@
       border: 1px solid var(--border-hair); border-radius: var(--radius-sm);
       background: var(--surface);
       cursor: pointer;
+      transition: background-color .13s ease, transform .13s ease, box-shadow .13s ease;
     }
-    .tool-row:hover { background: var(--surface-hover); }
+    .tool-row:hover { background: var(--surface-hover); transform: translateY(-1px); box-shadow: 0 3px 10px var(--dp-shadow); }
     .tool-row input[type="checkbox"] {
       flex: none; width: 15px; height: 15px; accent-color: var(--accent);
     }
@@ -432,9 +442,9 @@
       border: 1px solid var(--border-input); border-radius: var(--radius-sm);
       background: var(--surface-2); color: var(--text-2);
       font: inherit; cursor: pointer;
-      transition: background-color .12s ease;
+      transition: background-color .12s ease, transform .12s ease, border-color .12s ease;
     }
-    .btn:hover { background: var(--surface-hover); }
+    .btn:hover { background: var(--surface-hover); transform: translateY(-1px); }
     .btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
     .btn.primary:hover { border-color: var(--accent-ink); }
     .btn.danger { background: var(--surface); border-color: var(--danger-border); color: var(--danger); }

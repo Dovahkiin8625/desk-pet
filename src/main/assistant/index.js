@@ -23,6 +23,8 @@ import { buildSnapshotLines } from './snapshot.js';
 import * as gpu from './gpu.js';
 import * as network from './network.js';
 import * as weather from './weather.js';
+import * as weatherFx from '../../shared/weatherEffect.js';
+import { weatherIconName } from '../../shared/weatherIcon.js';
 import { createClipboardWatcher, truncateClipboard } from './clipboard.js';
 import { synthesizeCached } from './tts/minimax.js';
 import { createTapTalk } from './tapTalk.js';
@@ -145,6 +147,19 @@ export function createAssistant({  userDataDir,
    * 这里晚一点拿到也没关系。
    */
   getPlugins = null,
+  /**
+   * 把一次天气特效推给渲染层（偶尔随机 / 插件里点预览）。
+   *
+   * 助理只负责「决定播什么时候播」，怎么演是渲染层的事。
+   */
+  onWeatherEffect = null,
+  /**
+   * 天气插件的「桌宠天气效果」配置（{ effectEnabled, effect }）。
+   *
+   * **注入的是取值函数**：插件宿主比助理晚一步建好。
+   * 没开 / 拿不到时当成没开这个功能。
+   */
+  getWeatherEffectConfig = null,
 }) {
   let state = null;
   // 桌宠被隐藏时排队的消息（最多 5 条）。
@@ -161,6 +176,10 @@ export function createAssistant({  userDataDir,
   // 上一次检查热状态/天气的时间。
   let lastThermalCheck = 0;
   let lastWeatherCheck = 0;
+  // 天气特效：上一次掷骰子的时刻，与上一次真的播出去的时刻。
+  // 后者从启动时记起——刚开机不该立刻来一阵。
+  let lastFxCheck = 0;
+  let lastFxAt = Date.now();
   // 上次说「我好热」的时间：别每分钟喊一次。
   let lastHotAlertAt = 0;
   // 应用启动的时刻：主动搭话要等一段时间才开口。
@@ -941,11 +960,18 @@ export function createAssistant({  userDataDir,
   /** 番茄钟当前状态（插件界面用）。 */
   function pomodoroView(now = Date.now()) {
     const p = state.pomodoro;
+    const remain = pomodoro.remaining(p, now);
+    const duration = Number.isFinite(p.durationMs) && p.durationMs > 0 ? p.durationMs : 1;
     return {
       phase: p.phase,
       text: pomodoro.pomodoroText(p, now),
       running: p.phase === pomodoro.PHASE.FOCUS || p.phase === pomodoro.PHASE.BREAK,
       paused: p.phase === pomodoro.PHASE.PAUSED,
+      // 给倒计时圆环用：还剩多少、整段多长、走了几成。
+      remainingMs: remain,
+      remainingText: pomodoro.formatRemaining(remain),
+      durationMs: duration,
+      progress: Math.max(0, Math.min(1, 1 - remain / duration)),
     };
   }
 
@@ -960,6 +986,18 @@ export function createAssistant({  userDataDir,
       city: state.weather.city,
       enabled: Boolean(state.weather.enabled),
       text: last ? weather.weatherLine(last.city, last) : '',
+      // 结构化的数值：天气面板要画图标与大字，只能给数字/代码。
+      // 磁盘上的旧数据可能缺字段——给，但**缺多少认多少**（界面按有没有画）。
+      code: Number.isFinite(last?.code) ? last.code : null,
+      temperature: Number.isFinite(last?.temperature) ? last.temperature : null,
+      humidity: Number.isFinite(last?.humidity) ? last.humidity : null,
+      wind: Number.isFinite(last?.wind) ? last.wind : null,
+      // 给天气主卡的条件文字（「晴」「小雨」……）：整句 text 里还带着城市/温度，
+      // 主卡自己排版，不直接用整句。
+      condition: Number.isFinite(last?.code) ? weather.weatherText(last.code) : '',
+      at: Number.isFinite(last?.at) ? last.at : 0,
+      // 主卡图标名：WMO 代码 → 图标集里的名字（渲染层只照着画）。
+      icon: weatherIconName(Number.isFinite(last?.code) ? last.code : null),
     };
   }
 
@@ -1014,6 +1052,81 @@ export function createAssistant({  userDataDir,
       return act({ emotion: 'happy', message: '天气开好了，先设置一个城市吧' });
     }
     return act({ emotion: 'happy', message: '天气播报开好了' });
+  }
+
+  // ------------------------------------------------------------------
+  // 桌宠天气效果
+  // ------------------------------------------------------------------
+
+  /** 「自动」抽效果要用的当前情况：最近一次天气 + 季节（0-based 月份）。 */
+  function weatherFxConditions() {
+    const last = state?.weather?.last;
+    return {
+      code: last?.code,
+      wind: last?.wind,
+      month: new Date().getMonth(),
+    };
+  }
+
+  /**
+   * 桌宠天气效果选择器的数据（天气插件正文用）。
+   *
+   * 效果开关与效果选择**不画在设置抽屉里**：清单里那两项标了 `hidden`，
+   * 配置读写照旧走宿主那一套（`settings:effectEnabled` / `settings:effect`），
+   * 界面由天气插件自己拼（小方框预览需要画布，设置抽屉画不了）。
+   */
+  function weatherEffectView() {
+    const cfg = getWeatherEffectConfig?.() || null;
+    const choice = String(cfg?.effect ?? '自动');
+    const conditions = weatherFxConditions();
+    const autoPick = weatherFx.resolveAutoEffect(conditions);
+    const options = weatherFx.WEATHER_EFFECT_OPTIONS.map((value) => {
+      const key = weatherFx.normalizeEffectChoice(value);
+      return {
+        value,
+        label: value,
+        icon: weatherFx.WEATHER_EFFECT_ICON[key] || 'sparkles',
+        effect: key,
+        // 「自动」写清楚它现在会播哪一种——不看预览猜不出来。
+        sub: key === 'auto' ? `播${weatherFx.effectLabel(autoPick)}` : '',
+      };
+    });
+    return {
+      enabled: cfg?.effectEnabled === true,
+      // 清单里存的就是中文选项名（「自动」「下雪」……）：直接对齐。
+      choice: weatherFx.WEATHER_EFFECT_OPTIONS.includes(choice) ? choice : '自动',
+      hint: '开着时桌宠会根据当前天气与季节，随机偶尔播一阵雨 / 风 / 雪 / 晴 / 落叶。',
+      options,
+    };
+  }
+
+  /**
+   * 预览一种效果（天气插件里的「预览效果」按钮）。
+   *
+   * **不管开关开着没**：预览是用户点名要看的，不是自动播放。
+   * 选择是「自动」时按当前天气与季节抽。
+   */
+  function previewWeatherEffect(selection) {
+    if (isPetVisible && !isPetVisible()) {
+      return { ok: false, message: '桌宠不在屏幕上，先叫它出来吧' };
+    }
+    const effect = weatherFx.resolveEffectChoice(selection, weatherFxConditions());
+    onWeatherEffect?.(effect);
+    return { ok: true, message: `正在预览「${weatherFx.effectLabel(effect)}」`, effect };
+  }
+
+  /** 「随机偶尔」的一阵：每隔几分钟掷一次骰子，掷中了才播。 */
+  function maybePlayWeatherEffect(now) {
+    if (now - lastFxCheck < weatherFx.EFFECT_CHECK_MS) return;
+    lastFxCheck = now;
+    const cfg = getWeatherEffectConfig?.();
+    if (!cfg || cfg.effectEnabled !== true) return;
+    if (now - lastFxAt < weatherFx.EFFECT_MIN_GAP_MS) return;
+    if (isPetVisible && !isPetVisible()) return;
+    if (Math.random() >= weatherFx.EFFECT_TRIGGER_CHANCE) return;
+    const effect = weatherFx.resolveEffectChoice(cfg.effect, weatherFxConditions());
+    lastFxAt = now;
+    onWeatherEffect?.(effect);
   }
 
   // ------------------------------------------------------------------
@@ -1656,6 +1769,9 @@ export function createAssistant({  userDataDir,
       void reportWeather(state.weather.city);
     }
 
+    // 桌宠天气效果：偶尔随机来一阵
+    maybePlayWeatherEffect(now);
+
     // 主动搭话：条件最多、优先级最低——它只是「锦上添花」，
     // 绝不能挤掉提醒和报时。
     maybeProactive(now);
@@ -1793,6 +1909,8 @@ export function createAssistant({  userDataDir,
     remindersView,
     pomodoroView,
     weatherView,
+    // 桌宠天气效果选择器的数据（天气面板正文用；开关与选择不画在设置抽屉里）。
+    weatherEffectView,
     // 查一次天气。天气插件的「查一下天气」按钮与 agent 的天气工具都靠它。
     fetchWeather,
     statusView,
@@ -1810,6 +1928,8 @@ export function createAssistant({  userDataDir,
     resetPomodoro,
     setWeatherCity,
     setWeatherEnabled,
+    // 预览一阵桌宠天气特效（天气插件的「预览效果」按钮）。
+    previewWeatherEffect,
     setHotAlertEnabled,
     setClipboardEnabled,
     // —— agent ——

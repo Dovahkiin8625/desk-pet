@@ -49,6 +49,7 @@ export function buildPanelPage(ui, data) {
           // 跟插件自己的动作名混在一起迟早认错。
           actionId: 'select-target',
           label: t.label,
+          icon: config.mode === 'window' ? 'frame' : 'monitor',
           // 选中的那个标出来：不然用户不知道这次会录哪一块。
           hint: t.id === selectedId ? '已选' : t.hint || '',
         }))

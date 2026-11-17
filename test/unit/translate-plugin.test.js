@@ -16,6 +16,7 @@ import {
   resolveTarget,
   translateWithPublic,
 } from '../../plugins/translate/lib/translate.js';
+import { variableNamesFor } from '../../plugins/translate/lib/variables.js';
 
 /**
  * 翻译插件。
@@ -148,6 +149,27 @@ test('翻译：公共接口回错误就抛出去', async () => {
   );
 });
 
+test('变量名：英文短语给出小驼峰与大驼峰', () => {
+  assert.deepEqual(variableNamesFor('user name'), { lower: 'userName', upper: 'UserName' });
+  assert.deepEqual(variableNamesFor('User-Name'), { lower: 'userName', upper: 'UserName' });
+  assert.deepEqual(variableNamesFor('user_name'), { lower: 'userName', upper: 'UserName' });
+  assert.deepEqual(variableNamesFor('get user name'), { lower: 'getUserName', upper: 'GetUserName' });
+  assert.deepEqual(variableNamesFor('order 2 items'), { lower: 'order2Items', upper: 'Order2Items' });
+  // 顺带把撇号黏着的词当一个词看。
+  assert.deepEqual(variableNamesFor("don't panic"), { lower: 'dontPanic', upper: 'DontPanic' });
+  // 单个词也行。
+  assert.deepEqual(variableNamesFor('user'), { lower: 'user', upper: 'User' });
+});
+
+test('变量名：不像变量名时不给', () => {
+  assert.equal(variableNamesFor(''), null);
+  assert.equal(variableNamesFor('数据库'), null, '中文译文不给');
+  assert.equal(variableNamesFor('hello 世界'), null, '带非 ASCII 的不给');
+  assert.equal(variableNamesFor('class'), null, '保留字不给');
+  assert.equal(variableNamesFor('2 hours ago'), null, '数字开头不给');
+  assert.equal(variableNamesFor('one two three four five six'), null, '词太多不给');
+});
+
 // ---------------------------------------------------------------------------
 // 插件接在宿主上
 // ---------------------------------------------------------------------------
@@ -213,6 +235,78 @@ test('翻译插件：翻的引擎是设置里选的那个', async () => {
     assert.equal(result.result, '译好的那句话');
     assert.match(prompt, /翻译成中文/);
   } finally {
+    await cleanup();
+  }
+});
+
+test('翻译插件：自动变量命名——默认关，开了才给命名', async () => {
+  const assistant = fakeAssistant({
+    complete: async () => ({ ok: true, text: 'user name' }),
+  });
+  const { host, cleanup } = await makeHost({ assistant, inputText: '用户名' });
+  try {
+    // 默认关：译文能当变量名也不给。
+    const off = await host.act('translate', 'translate', { text: '用户名' });
+    assert.equal(off.result, 'user name');
+    assert.equal(off.autoVariableName, false);
+    assert.equal(off.variables, null);
+
+    // 开了：同一个译文这次给出两种写法。
+    const on = await host.act('translate', 'setting', { key: 'autoVariableName', value: true, text: '用户名' });
+    assert.equal(on.autoVariableName, true);
+    assert.deepEqual(on.variables, { lower: 'userName', upper: 'UserName' });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('翻译插件：自动变量命名——中文译文不给命名', async () => {
+  const assistant = fakeAssistant({
+    complete: async () => ({ ok: true, text: '用户名' }),
+  });
+  const { host, cleanup } = await makeHost({ assistant, inputText: 'user name' });
+  try {
+    await host.act('translate', 'setting', { key: 'autoVariableName', value: true, text: 'user name' });
+    const result = await host.act('translate', 'translate', { text: 'user name' });
+    assert.equal(result.result, '用户名');
+    assert.equal(result.variables, null);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('翻译插件：复制——写进剪贴板并回报', async () => {
+  const written = [];
+  globalThis.__deskPetTranslateClipboardWriter = async (text) => {
+    written.push(text);
+  };
+  const { host, cleanup } = await makeHost({ inputText: 'hello world' });
+  try {
+    const result = await host.act('translate', 'copy', { text: 'userName' });
+    assert.equal(result.copied?.ok, true);
+    assert.equal(result.copied?.message, '已复制到剪贴板');
+    assert.deepEqual(written, ['userName']);
+
+    const empty = await host.act('translate', 'copy', { text: '  ' });
+    assert.equal(empty.copied?.ok, false);
+    assert.equal(written.length, 1, '空文字不该写剪贴板');
+  } finally {
+    delete globalThis.__deskPetTranslateClipboardWriter;
+    await cleanup();
+  }
+});
+
+test('翻译插件：复制——写不进去就说明白', async () => {
+  globalThis.__deskPetTranslateClipboardWriter = async () => {
+    throw new Error('剪贴板被占用');
+  };
+  const { host, cleanup } = await makeHost({ inputText: 'hello world' });
+  try {
+    const result = await host.act('translate', 'copy', { text: 'userName' });
+    assert.equal(result.copied?.ok, false);
+    assert.match(result.copied?.message || '', /剪贴板被占用/);
+  } finally {
+    delete globalThis.__deskPetTranslateClipboardWriter;
     await cleanup();
   }
 });

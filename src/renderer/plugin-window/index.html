@@ -60,7 +60,9 @@
       color: var(--dp-text-soft);
       cursor: pointer;
       font-size: 15px;
+      transition: background-color .12s ease, color .12s ease, transform .12s ease;
     }
+    #head button:hover { transform: translateY(-1px); }
     #head button:hover { background: var(--dp-surface-active); color: var(--dp-text); }
     #head button[hidden] { display: none; }
     /* 置顶开着时高亮：一眼看得出它压着别人。 */

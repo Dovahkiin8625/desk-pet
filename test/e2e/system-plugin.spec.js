@@ -69,17 +69,16 @@ test.describe('系统状态插件', () => {
       const panel = await openSystemPlugin(app, pet);
       const frame = panel.frameLocator('#plugin-frame');
 
-      // 三条用量：CPU、内存、GPU。
-      await expect(frame.locator('.meter')).toHaveCount(3, { timeout: 20000 });
-      await expect(frame.locator('.meter .name').first()).toHaveText('CPU');
-      await expect(frame.locator('.meter .name').nth(1)).toHaveText('内存');
-      await expect(frame.locator('.meter .name').nth(2)).toHaveText('GPU');
+      // 三条用量：CPU、内存、GPU（图标卡 + 大字 + 进度条）。
+      await expect(frame.locator('.card')).toHaveCount(3, { timeout: 20000 });
+      await expect(frame.locator('.card .stat-label').nth(0)).toHaveText('CPU');
+      await expect(frame.locator('.card .stat-label').nth(1)).toHaveText('内存');
+      await expect(frame.locator('.card .stat-label').nth(2)).toHaveText('GPU');
 
-      // 底下那行字：温度与电源。
-      await expect(frame.locator('#info')).toContainText('温度', { timeout: 20000 });
-
-      // 网络那一行：连上了还是没连上。
-      await expect(frame.locator('#net')).toContainText(/已连接|未连接/, { timeout: 20000 });
+      // 底下三格小事：温度、电源、网络。
+      await expect(frame.locator('#thermalText')).not.toBeEmpty({ timeout: 20000 });
+      await expect(frame.locator('#powerText')).toContainText(/已接电|电池供电|—/, { timeout: 20000 });
+      await expect(frame.locator('#netText')).not.toBeEmpty({ timeout: 20000 });
     } finally {
       await app.close();
     }
@@ -113,8 +112,8 @@ test.describe('系统状态插件', () => {
       await pluginWin.waitForLoadState('domcontentloaded');
 
       const frame = pluginWin.frameLocator('#plugin-frame');
-      await expect(frame.locator('.meter')).toHaveCount(3, { timeout: 20000 });
-      await expect(frame.locator('#info')).toContainText('温度', { timeout: 20000 });
+      await expect(frame.locator('.card')).toHaveCount(3, { timeout: 20000 });
+      await expect(frame.locator('#thermalText')).not.toBeEmpty({ timeout: 20000 });
     } finally {
       await app.close();
     }

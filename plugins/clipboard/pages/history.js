@@ -136,7 +136,8 @@ function renderList() {
   el.list.textContent = '';
   if (!list.length) {
     el.empty.hidden = false;
-    el.empty.textContent = keyword ? '没有匹配的' : '还没有复制过东西';
+    const text = el.empty.querySelector('.empty-text');
+    if (text) text.textContent = keyword ? `没有匹配「${query.trim()}」的` : '还没有复制过东西';
     return;
   }
   el.empty.hidden = true;
@@ -457,6 +458,48 @@ surface.onData((data) => {
 surface.onTick((data) => {
   if (data) applyState(data);
 });
+
+// —— 独立窗口：点别处就收起（像 CopyQ）——
+//
+// 独立窗口是快捷键呼出来的：用户多半是冲着「贴一下」来的，
+// 不想贴了点别处，窗口就不该留着。面板里不适用——面板失焦
+// 自己会收；小部件常驻桌面，也不算。
+if (!surface.inPanel && surface.mode !== 'widget') {
+  // 页面在壳的 iframe 里（小部件才被直接加载）：监听壳的 window。
+  const host = window.parent && window.parent !== window ? window.parent : window;
+  const closeWindow = host.plugin?.window?.close;
+  if (typeof closeWindow === 'function') {
+    // 「点别处关掉」只在窗口拿到过焦点之后才算数——
+    // 窗口是 show() 带焦点弹出来的，focus 往往早于本页加载，
+    // 光等 focus 事件会一辈子等不到，所以拿 hasFocus 兜底。
+    let everFocused = false;
+    let focusedAt = Infinity; // 最近一次处于焦点状态的时刻
+    const hasFocus = () => {
+      try {
+        return host.document?.hasFocus?.() === true || document.hasFocus?.() === true;
+      } catch {
+        return true; // 跨文档读不到时别误关——点列表时关掉窗口比点别处不关更糟
+      }
+    };
+    const markFocused = () => {
+      everFocused = true;
+      focusedAt = Date.now();
+    };
+    if (hasFocus()) markFocused();
+    host.addEventListener('focus', markFocused);
+    host.addEventListener('blur', () => {
+      // blur 也会在壳与 iframe 之间换焦点时触发（点列表的行就是这种），
+      // 所以别直接关：隔一小会儿问一眼「现在到底有没有焦点」，没有才关。
+      setTimeout(() => {
+        if (!everFocused || Date.now() - focusedAt < 300) return;
+        const focused =
+          typeof window.__clipboardHasFocus === 'function' ? window.__clipboardHasFocus() : hasFocus();
+        if (focused) return;
+        void closeWindow.call(host.plugin.window);
+      }, 50);
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 报高度：面板里报一个定值（plugin.json 的 window.height）

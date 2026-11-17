@@ -33,10 +33,27 @@
         </div>
         <textarea
           id="result"
-          class="dp-input area"
+          class="dp-input area copyable"
           placeholder="译文在这儿…"
+          title="点一下复制译文"
           readonly
         ></textarea>
+        <div class="vars" id="varsBox" hidden>
+          <div class="vars-head">
+            <span class="label">变量名</span>
+            <span class="hint">点一下复制</span>
+          </div>
+          <div class="vars-row">
+            <button type="button" class="var-item" id="varLower" title="点一下复制">
+              <code id="varLowerText"></code>
+              <span class="var-kind">小驼峰</span>
+            </button>
+            <button type="button" class="var-item" id="varUpper" title="点一下复制">
+              <code id="varUpperText"></code>
+              <span class="var-kind">大驼峰</span>
+            </button>
+          </div>
+        </div>
       </section>
 
       <footer class="dp-footer">
@@ -45,6 +62,8 @@
           <span class="icon" data-icon="settings"></span>
         </button>
       </footer>
+
+      <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
     </div>
 
     <script type="module" src="translate.js"></script>

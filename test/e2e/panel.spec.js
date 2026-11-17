@@ -1,10 +1,11 @@
 // 插件面板与插件窗口的端到端验证。
 //
-// 覆盖四件事：
+// 覆盖五件事：
 //   1. 面板列出**磁盘上的**插件（插件是可插拔的，不是写死的清单）；
 //   2. 输入框不只是搜索：它也能直接跟桌宠说话；
 //   3. 面板的卡片四周留白放得下投影——底部的投影不会被窗口切掉；
-//   4. 插件能分离成独立窗口与桌面小部件，设置窗口里能开关插件。
+//   4. 插件能分离成独立窗口与桌面小部件，设置窗口里能开关插件；
+//   5. 输入框为空时，插件按最近使用顺序排。
 import { test, expect, _electron as electron } from '@playwright/test';
 import { rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -116,9 +117,10 @@ test.describe('插件面板', () => {
 
       // 输入框：图标与提示都要说清楚「它也能聊天」。
       // 图标是 SVG（不是 emoji）：画出来了、而且不是文字。
-      const sparkIcon = panel.locator('#searchbar .icon svg');
+      // （#searchbar 下现在还有清空按钮里的图标，所以只数直属的那个。）
+      const sparkIcon = panel.locator('#searchbar > .icon svg');
       await expect(sparkIcon).toHaveCount(1);
-      await expect(panel.locator('#searchbar .icon')).toHaveText('');
+      await expect(panel.locator('#searchbar > .icon')).toHaveText('');
       const placeholder = await panel.locator('#query').getAttribute('placeholder');
       expect(placeholder).toContain('搜索');
       expect(placeholder).toContain('跟桌宠说点什么');
@@ -130,6 +132,70 @@ test.describe('插件面板', () => {
       });
       await panel.fill('#query', '在吗');
       await panel.waitForFunction(() => window.__panel?.hasChat === true, null, { timeout: 10000 });
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('输入框右边的 ✕：有字才出现，点一下清空', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+
+      // 空查询：按钮藏起来。
+      await panel.fill('#query', '');
+      await expect(panel.locator('#clear-query')).toBeHidden();
+
+      // 有字：冒出来；点一下：输入框归空、按钮又藏起来。
+      await panel.fill('#query', 'daiban');
+      await expect(panel.locator('#clear-query')).toBeVisible();
+      await panel.click('#clear-query');
+      await expect(panel.locator('#query')).toHaveValue('');
+      await expect(panel.locator('#clear-query')).toBeHidden();
+      expect(await panel.evaluate(() => window.__panel?.query)).toBe('');
+      // 清空之后焦点留在输入框里：接着打字不用再点一下。
+      expect(await panel.evaluate(() => document.activeElement?.id)).toBe('query');
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('输入框为空时，插件按最近使用顺序排', async () => {
+    const { app, pet } = await launch();
+    try {
+      const panel = await openPanel(app, pet);
+
+      // 空查询：先记下默认顺序，挑一个不在最前面的**插件**（内置功能不算：打开设置会收起面板）。
+      await panel.fill('#query', '');
+      await panel.waitForFunction(
+        () => window.__panel?.resultIds?.includes('todos') && window.__panel?.resultIds?.includes('pomodoro'),
+        null,
+        { timeout: 10000 }
+      );
+      const before = await panel.evaluate(() => window.__panel.resultIds);
+      // resultIds 只放插件，挑一个不在最前面的。
+      const target = ['todos', 'pomodoro', 'reminders'].find((id) => id !== before[0]) || 'todos';
+
+      // 打开那个插件，再按 Esc 回到搜索视图。
+      await panel.evaluate((id) => {
+        const row = document.querySelector(`#results li[data-plugin-id="${id}"]`);
+        if (!row) throw new Error(`找不到「${id}」那一行`);
+        row.click();
+      }, target);
+      await panel.waitForFunction(() => window.__panel?.view === 'plugin', null, {
+        timeout: 10000,
+      });
+      // 插件视图里输入框是藏着的：把 Esc 派发给 document 自己。
+      await panel.evaluate(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      await panel.waitForFunction(() => window.__panel?.view === 'search', null, {
+        timeout: 10000,
+      });
+
+      // 刚打开的插件排到最前面了。
+      const after = await panel.evaluate(() => window.__panel.resultIds);
+      expect(after[0]).toBe(target);
     } finally {
       await app.close();
     }

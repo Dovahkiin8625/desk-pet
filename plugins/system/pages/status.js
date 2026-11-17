@@ -10,8 +10,8 @@
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
-import { hydrateIcons } from '/src/renderer/ui/icons.js';
-import { formatNetwork } from '/src/shared/network.js';
+import { hydrateIcons, iconSvg } from '/src/renderer/ui/icons.js';
+import { formatNetworkShort } from '/src/shared/network.js';
 
 const surface = bindSurface();
 
@@ -28,41 +28,60 @@ document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));
 const el = {
   meters: document.getElementById('meters'),
   info: document.getElementById('info'),
-  net: document.getElementById('net'),
+  banner: document.getElementById('banner'),
+  bannerText: document.getElementById('bannerText'),
+  thermalTile: document.getElementById('thermalTile'),
+  thermalText: document.getElementById('thermalText'),
+  powerText: document.getElementById('powerText'),
+  netTile: document.getElementById('netTile'),
+  netText: document.getElementById('netText'),
   gear: document.getElementById('gearBtn'),
 };
 
 /** 主进程给的状态。 */
 let state = null;
 
+const CARDS = [
+  { id: 'cpu', icon: 'cpu', label: 'CPU' },
+  { id: 'memory', icon: 'memory', label: '内存' },
+  { id: 'gpu', icon: 'monitor', label: 'GPU' },
+];
+
 /**
  * 三条用量：建一次，之后只改数值。
  *
  * 重建的话，进度条每秒都从头长一遍——看着像闪了一下。
  */
-const rows = ['CPU', '内存', 'GPU'].map((title) => {
-  const row = document.createElement('div');
-  row.className = 'meter';
+const cards = CARDS.map(({ id, icon, label }) => {
+  const card = document.createElement('div');
+  card.className = 'card';
 
+  const head = document.createElement('div');
+  head.className = 'stat-head';
+  const tile = document.createElement('span');
+  tile.className = 'stat-icon';
+  tile.append(iconSvg(icon));
   const name = document.createElement('span');
-  name.className = 'name';
-  name.textContent = title;
+  name.className = 'stat-label';
+  name.textContent = label;
+  head.append(tile, name);
 
-  const track = document.createElement('span');
+  const value = document.createElement('div');
+  value.className = 'stat-value';
+
+  const track = document.createElement('div');
   track.className = 'track';
   const fill = document.createElement('i');
   track.append(fill);
 
-  const value = document.createElement('span');
-  value.className = 'value';
+  const note = document.createElement('div');
+  note.className = 'stat-note';
 
-  const note = document.createElement('span');
-  note.className = 'note';
-
-  row.append(name, track, value, note);
-  el.meters.append(row);
-  return { row, fill, value, note };
+  card.append(head, value, track, note);
+  el.meters.append(card);
+  return { id, card, fill, value, note };
 });
+const [cpuCard, memCard, gpuCard] = cards;
 
 // ---------------------------------------------------------------------------
 // 抽屉：过热提醒
@@ -90,12 +109,12 @@ drawer.body.append(field, hint);
 // ---------------------------------------------------------------------------
 
 /** 画一条用量。采不到的数（null）就画成空条——报 0% 是在说谎。 */
-function setMeter(row, percent, note) {
+function setCard(card, percent, note) {
   const known = typeof percent === 'number' && Number.isFinite(percent);
-  row.fill.style.width = known ? `${Math.max(0, Math.min(100, percent))}%` : '0%';
-  row.value.textContent = known ? `${Math.round(percent)}%` : '—';
-  row.row.classList.toggle('hot', known && percent >= 85);
-  row.note.textContent = note || '';
+  card.fill.style.width = known ? `${Math.max(0, Math.min(100, percent))}%` : '0%';
+  card.value.textContent = known ? `${Math.round(percent)}%` : '—';
+  card.card.classList.toggle('hot', known && percent >= 85);
+  card.note.textContent = note || ' ';
 }
 
 /** 显存：用了多少、一共多少。 */
@@ -105,21 +124,32 @@ function vramText(gpu) {
   return `显存 ${gb(gpu.memUsed)}/${gb(gpu.memTotal)}`;
 }
 
+/** 温度到这个档就该叫它一声：横幅与整格染红。 */
+function isTooHot(thermal) {
+  return thermal === 'serious' || thermal === 'critical';
+}
+
 function render() {
   if (!state) return;
-  setMeter(rows[0], state.cpu, '');
-  setMeter(rows[1], state.memory, state.memoryText || '');
-  setMeter(rows[2], state.gpu?.util ?? null, state.gpu?.name || '');
+  setCard(cpuCard, state.cpu, '');
+  setCard(memCard, state.memory, state.memoryText || '');
+  setCard(gpuCard, state.gpu?.util ?? null, state.gpu?.name || '');
 
-  const parts = [];
-  if (state.thermalText) parts.push(`温度 ${state.thermalText}`);
-  if (state.onBattery === true) parts.push('电池供电');
-  else if (state.onBattery === false) parts.push('已接电');
+  // 温度：横幅 + 整格染色（serious/critical 时才嚷嚷）。
+  const hot = isTooHot(state.thermal);
+  el.banner.hidden = !hot;
+  if (hot) el.bannerText.textContent = `机器${state.thermalText || '很热'}，先歇一会儿或把负载降下来`;
+  el.thermalTile.classList.toggle('hot', hot);
+  el.thermalText.textContent = state.thermalText || '未知';
+
+  el.powerText.textContent = state.onBattery === true ? '电池供电' : state.onBattery === false ? '已接电' : '—';
+
+  const net = formatNetworkShort(state.network);
+  el.netText.textContent = net || '—';
+  el.netTile.title = net.length > 30 ? net : '';
+
   const vram = vramText(state.gpu);
-  if (vram) parts.push(vram);
-  el.info.textContent = parts.join(' · ') || '状态未知';
-
-  el.net.textContent = formatNetwork(state.network);
+  el.info.textContent = vram || (state.onBattery ? '电池供电中' : '状态正常');
 
   if (hotAlert.checked !== Boolean(state.hotAlert)) hotAlert.checked = Boolean(state.hotAlert);
 }

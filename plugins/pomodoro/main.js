@@ -27,11 +27,22 @@ export default function createPomodoroPlugin() {
       buttons.push({ id: 'start-break', label: `开始休息 ${m.break} 分钟` });
     }
     buttons.push({ id: 'reset', label: '重置' });
+    const variant = view.paused ? 'paused' : view.running ? (view.phase === 'break' ? 'break' : 'focus') : 'idle';
+    const phase = view.paused ? '已暂停' : view.running ? (view.phase === 'break' ? '休息中' : '专注中') : '番茄钟';
     return ctx.ui.makePage({
       pluginId: 'pomodoro',
       title: '番茄钟',
       subtitle: view.text,
-      blocks: [ctx.ui.textBlock(view.text), ctx.ui.buttonsBlock(buttons)],
+      blocks: [
+        ctx.ui.timerBlock({
+          variant,
+          phase,
+          remainingText: view.remainingText,
+          progress: view.progress,
+          sub: view.running ? '完成这一轮，就去伸个懒腰' : view.paused ? '随时可以继续' : '挑一件事，开始专注',
+        }),
+        ctx.ui.buttonsBlock(buttons),
+      ],
     });
   };
 

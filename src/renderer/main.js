@@ -10,6 +10,7 @@ import { inDoubleTapWindow } from './pet/doubleTap.js';
 import { createTapVoiceGate } from './pet/tapVoiceGate.js';
 import { createSilhouette } from './pet/silhouette.js';
 import { idleReaction } from './pet/behavior.js';
+import { playWeatherEffect } from './pet/weatherEffect.js';
 import {
   EVENT,
   applyEvent,
@@ -106,6 +107,8 @@ window.__pet = {
   silhouetteReady: false,
   // 「透明处不吃鼠标」当前是否生效。
   clickThrough: false,
+  // 桌宠天气特效（偶尔随机 / 插件里点「预览效果」）：哪种、何时开始、播过几阵。
+  weatherEffect: { active: false, name: null, startedAt: 0, plays: 0 },
   // 这个点在不在形象上（null = 还没量出轮廓）。
   // 既是诊断面，也是测试的探针：可点击区域完全由它决定。
   isOnFigure: (x, y) => {
@@ -919,6 +922,12 @@ function registerChannels() {
   window.pet.onVolume?.((v) => {
     if (typeof v !== 'number') return;
     window.__pet.volume = setMasterVolume(v);
+  });
+
+  // 桌宠天气特效：偶尔随机 / 天气插件里点了「预览效果」。
+  window.pet.onWeatherEffect?.((effect) => {
+    if (!effect) return;
+    playWeatherEffect(effect);
   });
 
   // 系统光标位置：主进程以 10Hz 轮询发过来（窗口内坐标）。

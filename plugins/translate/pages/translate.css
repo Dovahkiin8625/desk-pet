@@ -131,6 +131,102 @@ textarea.area {
   color: var(--dp-text);
 }
 
+/* 译文点一下就复制：光标示意一下。 */
+textarea.copyable {
+  cursor: pointer;
+}
+
+/* 变量名那一块（自动变量命名开着、译文能当变量名时）。 */
+.vars {
+  margin-top: 8px;
+}
+
+.vars-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.vars-head .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dp-text-soft);
+}
+
+.vars-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.var-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--dp-border);
+  border-radius: 8px;
+  background: var(--dp-surface-2);
+  color: var(--dp-text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.var-item:hover {
+  border-color: var(--dp-accent-strong);
+  background: var(--dp-surface-active);
+}
+
+.var-item code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-item .var-kind {
+  flex: none;
+  font-size: 11px;
+  color: var(--dp-text-faint);
+}
+
+/* 浮在底下的提示（「已复制到剪贴板」）。 */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 10;
+  max-width: min(90%, 420px);
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--dp-border);
+  background: var(--dp-surface-2);
+  color: var(--dp-text);
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+  animation: toast-in 0.16s ease-out;
+}
+
+.toast.error {
+  border-color: var(--dp-danger, #e5484d);
+  color: var(--dp-danger, #e5484d);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 /* 抽屉里的下拉：跟着字段那一行排。 */
 .dp-field select {
   flex: none;

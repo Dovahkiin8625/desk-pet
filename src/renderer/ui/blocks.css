@@ -1,6 +1,145 @@
 @import url('/src/renderer/ui/theme.css');
 
 /*
+ * 天气主卡：图标 + 大字温度。
+ *
+ * 这是天气插件的正文——放 blocks.css 而不是插件里，
+ * 是因为独立窗口与面板共用这一份块的样式（见下）。
+ */
+.block-weather {
+  padding: 16px 18px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius-lg);
+  background: linear-gradient(135deg, var(--dp-accent-soft) 0%, var(--dp-surface) 78%);
+  margin-bottom: 12px;
+}
+.weather-main { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.weather-icon {
+  flex: none;
+  width: 74px; height: 74px;
+  border-radius: 20px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border-soft);
+  color: var(--dp-accent-strong);
+}
+.weather-icon .dp-icon { width: 42px; height: 42px; }
+.weather-temp {
+  font-size: 54px; font-weight: 300; line-height: 1; letter-spacing: -1px;
+  color: var(--dp-text);
+  font-variant-numeric: tabular-nums;
+}
+.weather-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.weather-city { font-size: 13px; color: var(--dp-text-soft); }
+.weather-text { font-size: 17px; font-weight: 600; }
+.weather-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+.weather-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--dp-text-soft);
+  background: var(--dp-surface);
+  border: 1px solid var(--dp-border-soft);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.weather-chip .dp-icon { font-size: 13px; }
+
+/*
+ * 桌宠天气效果：开关 + 带小方框预览的选项。
+ *
+ * 小方框是一个循环播的粒子画布（blocks.js 画），
+ * 「自动」轮着演示五种——选的时候直接看到它会播什么。
+ */
+.block-effects {
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius-lg);
+  background: var(--dp-surface);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.effects-toggle {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 2px 2px 11px;
+  border-bottom: 1px solid var(--dp-border-soft);
+  cursor: pointer;
+}
+.effects-toggle input { margin-top: 2px; accent-color: var(--dp-accent-strong); flex: none; }
+.effects-toggle-text { display: flex; flex-direction: column; gap: 2px; }
+.effects-toggle-title { font-size: 13px; font-weight: 600; }
+.effects-toggle-hint { font-size: 12px; color: var(--dp-text-faint); }
+.effects-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+}
+.effect-option {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 6px 4px 7px;
+  font: inherit; color: var(--dp-text);
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.effect-option:hover { border-color: var(--dp-accent-strong); transform: translateY(-1px); }
+.effect-option.selected {
+  border-color: var(--dp-accent-strong);
+  box-shadow: 0 0 0 1px var(--dp-accent-strong);
+  background: var(--dp-accent-soft);
+}
+.effect-box {
+  position: relative;
+  width: 100%; height: 46px;
+  border-radius: var(--dp-radius-sm);
+  overflow: hidden;
+  display: block;
+  /* 预览背景常年是傍晚天色：亮粒子（雪/光尘）与暗粒子（雨/落叶）都看得见。 */
+  background: linear-gradient(180deg, #202b40 0%, #2c3a55 70%, #374560 100%);
+}
+.effect-preview { width: 100%; height: 100%; display: block; }
+.effect-badge {
+  position: absolute; top: 3px; right: 3px;
+  width: 16px; height: 16px;
+  border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-accent);
+  border: 1px solid var(--dp-accent-strong);
+  color: var(--dp-accent-ink);
+}
+.effect-badge .dp-icon { width: 10px; height: 10px; stroke-width: 2.6; }
+.effect-label { font-size: 12px; line-height: 1.3; }
+.effect-sub {
+  font-size: 10px; color: var(--dp-text-faint); margin-top: -2px; line-height: 1.2;
+  text-align: center; white-space: nowrap; max-width: 100%; overflow: hidden;
+}
+
+/* 效果选择器底部的「预览」：满宽、强调色，一眼就看到。 */
+.effects-preview {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px 12px;
+  font: inherit; font-weight: 600;
+  color: var(--dp-accent-ink);
+  background: var(--dp-accent);
+  border: 1px solid var(--dp-accent-strong);
+  border-radius: var(--dp-radius);
+  cursor: pointer;
+}
+.effects-preview:hover { background: var(--dp-accent-strong); }
+.effects-preview .dp-icon { font-size: 15px; }
+
+/* 宽版（独立窗口）：天气主卡更舒展一些。 */
+@container surface (min-width: 560px) {
+  .weather-icon { width: 84px; height: 84px; border-radius: 22px; }
+  .weather-icon .dp-icon { width: 48px; height: 48px; }
+  .weather-temp { font-size: 60px; }
+  .weather-text { font-size: 18px; }
+  .effect-box { height: 54px; }
+}
+
+/*
  * 插件页面里「块」的样式。
  *
  * 面板与插件的独立窗口共用这一份（同 blocks.js）：
@@ -10,18 +149,45 @@
  * 否则「一份设计系统」就名存实亡了。
  */
 
-.block-text { white-space: pre-wrap; word-break: break-word; }
-.block-empty { color: var(--dp-text-faint); padding: 10px 0; }
+.block-text { white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; }
+.block-empty {
+  color: var(--dp-text-faint);
+  padding: 22px 0 18px;
+  margin-bottom: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  text-align: center;
+}
+.block-empty-icon {
+  width: 58px; height: 58px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-accent-soft); color: var(--dp-accent-ink);
+  border: 1px solid var(--dp-border-soft);
+}
+.block-empty-icon .dp-icon { width: 26px; height: 26px; }
 .block-list { list-style: none; margin: 0 0 10px; padding: 0; }
 .block-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  border-radius: 8px;
+  gap: 9px;
+  padding: 8px 9px;
+  border-radius: 10px;
   cursor: pointer;
+  transition: background-color .15s ease, transform .15s ease;
 }
-.block-list li:hover { background: var(--dp-surface); }
+.block-list li:hover { background: var(--dp-surface); transform: translateX(2px); }
+/* 条目的左侧图标块：让列表「有看头」。 */
+.item-icon {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-accent-soft);
+  color: var(--dp-accent-ink);
+  border: 1px solid var(--dp-border-soft);
+}
+.item-icon .dp-icon { width: 16px; height: 16px; }
+.item-icon.done { background: color-mix(in srgb, var(--dp-ok) 16%, var(--dp-surface)); color: var(--dp-ok); border-color: transparent; }
+.block-list li:focus-visible { outline: 2px solid var(--dp-accent-strong); outline-offset: -2px; }
 .block-list li.done .label { color: var(--dp-text-faint); text-decoration: line-through; }
 .block-list .label { flex: 1; word-break: break-word; }
 .block-list .hint { color: var(--dp-text-faint); font-size: 12px; white-space: nowrap; }
@@ -44,11 +210,11 @@
   padding: 7px 10px;
   border: 1px solid var(--dp-border);
   border-radius: var(--dp-radius);
-  background: #fff;
+  background: var(--dp-input-bg);
   color: inherit;
 }
 .block-input input:focus { outline: 2px solid var(--dp-accent); outline-offset: 1px; }
-.block-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.block-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .block-buttons button {
   font: inherit;
   padding: 6px 13px;
@@ -63,6 +229,17 @@
 }
 .block-buttons button:hover { background: var(--dp-surface-hover); }
 .block-buttons button.primary { background: var(--dp-accent); border-color: var(--dp-accent-strong); }
+.block-buttons button:focus-visible {
+  outline: 2px solid var(--dp-accent-strong);
+  outline-offset: 1px;
+}
+.block-toggle input:focus-visible { outline: 2px solid var(--dp-accent-strong); outline-offset: 1px; }
+.effect-option:focus-visible,
+.effects-preview:focus-visible {
+  outline: 2px solid var(--dp-accent-strong);
+  outline-offset: 2px;
+}
+.effects-toggle input:focus-visible { outline: 2px solid var(--dp-accent-strong); outline-offset: 1px; }
 .block-toggle {
   display: flex;
   align-items: center;
@@ -85,7 +262,7 @@
   font: inherit; padding: 6px 10px;
   border: 1px solid var(--dp-border);
   border-radius: var(--dp-radius);
-  background: #fff; color: inherit;
+  background: var(--dp-input-bg); color: inherit;
 }
 .block-settings input[type="checkbox"] {
   flex: none; width: 15px; height: 15px; accent-color: var(--dp-accent-strong);
@@ -138,3 +315,129 @@
   .block-settings input[type="number"],
   .block-settings select { flex: 1 1 auto; width: 100%; box-sizing: border-box; }
 }
+
+/*
+ * 鍊掕鏃跺渾鐜紙鐣寗閽燂級銆? *
+ * 鐜蛋鐨勬槸 SVG 鎻忚竟锛歵rack 閾哄簳锛宲rogress 鎸夊凡璧版瘮渚嬬敾鍓╀綑寮х嚎锛? * 涓撴敞鐢ㄤ富棰樺己璋冭壊銆佷紤鎭敤銆屽ソ銆嶇豢銆佹殏鍋滃帇鐏扳€斺€斾竴鐪煎垎寰楁竻鍦ㄥ共浠€涔堛€? */
+.block-timer {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 18px 16px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius-lg);
+  background: linear-gradient(160deg, var(--dp-accent-soft) 0%, var(--dp-surface) 75%);
+}
+.timer-phase {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; letter-spacing: 0.08em; color: var(--dp-text-soft);
+}
+.timer-dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--dp-text-faint);
+}
+.block-timer[data-variant="focus"] .timer-dot { background: var(--dp-accent-strong); animation: timer-pulse 1.6s ease-in-out infinite; }
+.block-timer[data-variant="break"] .timer-dot { background: var(--dp-ok); animation: timer-pulse 1.6s ease-in-out infinite; }
+@keyframes timer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dp-accent-strong) 55%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--dp-accent-strong) 0%, transparent); }
+}
+.timer-face { position: relative; width: 148px; height: 148px; }
+.timer-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring-track { fill: none; stroke: var(--dp-surface-sunken); stroke-width: 9; }
+.ring-progress {
+  fill: none; stroke: var(--dp-accent-strong); stroke-width: 9; stroke-linecap: round;
+  transition: stroke-dashoffset 0.8s ease, stroke 0.3s ease;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--dp-accent-strong) 55%, transparent));
+}
+.block-timer[data-variant="break"] .ring-progress { stroke: var(--dp-ok); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--dp-ok) 55%, transparent)); }
+.block-timer[data-variant="paused"] .ring-progress { stroke: var(--dp-text-faint); filter: none; }
+.block-timer[data-variant="idle"] .ring-progress { stroke: var(--dp-border); filter: none; }
+.timer-time {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 34px; font-weight: 300; letter-spacing: 1px;
+  font-variant-numeric: tabular-nums; color: var(--dp-text);
+}
+.timer-sub { font-size: 12px; color: var(--dp-text-soft); }
+
+/*
+ * 鏁版嵁鍗★紙绯荤粺鐘舵€侊級銆? *
+ * 姣忛」涓€寮犲皬鍗★細鍥炬爣銆佹爣绛俱€佸ぇ鏁板€笺€佺粏杩涘害鏉★紱
+ * 杩囩儹/杩囪浇鏃舵暣鍗℃煋涓婅绀鸿壊銆傝繘搴︽潯甯︿竴閬撶紦鎱㈣蛋杩囩殑楂樺厜銆? */
+.block-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.stat-card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--dp-border-soft);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+}
+.stat-card.hot {
+  border-color: var(--dp-danger-border);
+  background: var(--dp-danger-bg);
+}
+.stat-head { display: flex; align-items: center; gap: 6px; }
+.stat-icon {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-accent-soft); color: var(--dp-accent-ink);
+}
+.stat-card.hot .stat-icon { background: var(--dp-danger); color: #fff; }
+.stat-icon .dp-icon { width: 13px; height: 13px; }
+.stat-label { font-size: 11px; color: var(--dp-text-soft); letter-spacing: 0.02em; }
+.stat-value {
+  font-size: 17px; font-weight: 600; line-height: 1.25;
+  font-variant-numeric: tabular-nums; word-break: break-word;
+}
+.stat-card.hot .stat-value { color: var(--dp-danger); }
+.stat-bar {
+  height: 5px; border-radius: 999px;
+  background: var(--dp-surface-sunken);
+  overflow: hidden;
+}
+.stat-bar i {
+  display: block; height: 100%;
+  border-radius: 999px;
+  background: var(--dp-accent-strong);
+  transition: width 0.6s ease;
+  position: relative; overflow: hidden;
+}
+.stat-bar i::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.45) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: stat-shine 2.8s ease-in-out infinite;
+}
+@keyframes stat-shine { 60%, 100% { transform: translateX(100%); } }
+.stat-card.hot .stat-bar i { background: var(--dp-danger); }
+
+/*
+ * 涓昏鍖猴紙闊充箰/鎴浘绛夛級锛氬浘鏍?tile + 澶ф爣棰?+ 涓€琛屽皬瀛楋紝
+ * 涓庡ぉ姘斾富鍗″悓涓€瀹舵棌鐨勬笎鍙樺崱銆? */
+.block-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius-lg);
+  background: linear-gradient(135deg, var(--dp-accent-soft) 0%, var(--dp-surface) 78%);
+}
+.hero-icon {
+  flex: none; width: 52px; height: 52px; border-radius: 15px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-bg); color: var(--dp-accent-strong);
+  border: 1px solid var(--dp-border-soft);
+}
+.hero-icon .dp-icon { width: 28px; height: 28px; }
+.hero-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hero-title {
+  font-size: 16px; font-weight: 600; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hero-subtitle { font-size: 12px; color: var(--dp-text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+

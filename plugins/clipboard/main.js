@@ -69,13 +69,6 @@ export default function createClipboardPlugin(ctx) {
   let status = '';
   /** 快捷键注册不成功的理由（界面上显示）。 */
   let hotkeyError = '';
-  /**
-   * 用户打开过界面吗。
-   *
-   * 没打开过就**不抢**快捷键：一个从来没人用过的插件，
-   * 一开机就占着 Ctrl+Shift+V，很讨人厌。
-   */
-  let hotkeyArmed = false;
   /** 现在注册着的快捷键（变了才重注册）。 */
   let hotkeyState = { active: false, show: '', paste: '' };
   /** 写盘的队列：两个写同时来会抢同一个 .tmp 文件，内容可能串。 */
@@ -238,10 +231,16 @@ export default function createClipboardPlugin(ctx) {
   // 快捷键
   // -------------------------------------------------------------------------
 
-  /** 快捷键什么时候生效。 */
+  /**
+   * 快捷键什么时候生效。
+   *
+   * - **桌宠启动就生效**：插件开着、设了对应的快捷键，启动时就注册——
+   *   不开界面也能按，它存在的意义正是这个。
+   * - **插件被关掉之后**：不生效（2 秒一轮盯着，关了就注销）。
+   */
   function syncHotkeys() {
     const cfg = settings();
-    const want = hotkeyArmed && ctx.host.isEnabled('clipboard');
+    const want = ctx.host.isEnabled('clipboard');
     if (!want) {
       if (hotkeyState.active) {
         clearHotkeys();
@@ -382,17 +381,11 @@ export default function createClipboardPlugin(ctx) {
   }, 2000);
   watchTimer.unref?.();
 
-  // 界面开合：用户打开过剪贴板，快捷键就一直有效
-  //（面板失焦会自己收起来——「不开界面也能按」正是快捷键的意义）。
+  // 界面开合：贴东西是个眼下的活儿，顺手把粘贴助手预热一下，
+  // 第一贴就不用付一遍 PowerShell 的启动 + C# 编译。
   ctx.host.onSurfaceChange?.((pluginId, open) => {
     if (pluginId !== 'clipboard') return;
-    if (open) {
-      hotkeyArmed = true;
-      // 用户多半是来贴东西的：趁界面开着把粘贴助手拉起来（预热），
-      // 第一贴就不用付一遍 PowerShell 的启动 + C# 编译。
-      warmPasteHelper(pasteScript);
-    }
-    syncHotkeys();
+    if (open) warmPasteHelper(pasteScript);
   });
 
   app.on('before-quit', () => {
@@ -402,13 +395,16 @@ export default function createClipboardPlugin(ctx) {
     void disposePasteHelper();
   });
 
-  // 一装上就开始记（插件开着才记）。
+  // 一装上就开始记（插件开着才记）；快捷键同理，启动就注册。
   //
   // **等一拍再开始**：工厂函数跑的时候，宿主还没把这个插件登记进去
   // （`ctx.host.isEnabled` 那会儿问不到），登记好了才知道自己开着没有。
   // 晚一拍开始，剪贴板的「基准」才取对——取晚了就把用户刚复制的那条
   // 当成了旧内容（于是它永远不会被记下来）。
-  setTimeout(() => syncRecorder(), 0);
+  setTimeout(() => {
+    syncRecorder();
+    syncHotkeys();
+  }, 0);
 
   // -------------------------------------------------------------------------
   // 界面
@@ -621,8 +617,7 @@ export default function createClipboardPlugin(ctx) {
         status = result.message || '设置没存上';
         return;
       }
-      // 用户刚设的快捷键：得**立刻**能用（不然得再开一次界面才生效）。
-      hotkeyArmed = true;
+      // 刚设的快捷键：得**立刻**能用。
       syncHotkeys();
     }
   }
@@ -688,17 +683,25 @@ export default function createClipboardPlugin(ctx) {
                 id: item.id,
                 label: blockLabel(item),
                 hint: item.pinned ? '固定' : timeLabel(item.at),
+                icon: kindIcon(item),
                 actionId: 'paste',
                 removeId: 'remove',
               }))
             )
-          : ctx.ui.emptyBlock('还没有复制过东西'),
+          : ctx.ui.emptyBlock('还没有复制过东西', 'clipboard'),
         ctx.ui.buttonsBlock([
           { id: 'paste-latest', label: '粘贴最近一条', primary: true },
           { id: 'clear', label: '清空历史' },
         ]),
       ],
     });
+  }
+
+  /** 积木条目左侧的小图标：按复制内容的类型来。 */
+  function kindIcon(item) {
+    if (item.kind === 'image') return 'image';
+    if (item.kind === 'files') return 'folder';
+    return 'note';
   }
 
   /** 积木按钮上那一行字（按类型来）。 */

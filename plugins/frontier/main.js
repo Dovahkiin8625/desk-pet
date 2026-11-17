@@ -356,6 +356,7 @@ export default function createFrontierPlugin() {
                 id: item.url,
                 label: NUMBERED.has(selected) ? `${i + 1}. ${item.title}` : item.title,
                 hint: itemHint(selected, item),
+                icon: 'globe',
                 actionId: 'open',
               })),
             )
@@ -365,8 +366,9 @@ export default function createFrontierPlugin() {
                 : entry?.error
                   ? `暂时拉不到（${entry.error}）`
                   : '暂时没有内容，点「刷新」再试',
+              'globe',
             ),
-        ctx.ui.buttonsBlock([{ id: 'refresh', label: '刷新' }]),
+        ctx.ui.buttonsBlock([{ id: 'refresh', label: '刷新', icon: 'refresh' }]),
       ],
       status,
     });

@@ -30,6 +30,11 @@ export async function readJson(dir, fileName, fallback, label = fileName) {
   }
 }
 
+/** 改名可能被瞬时占用挡住的错误码：Windows 上杀软/反复读的进程
+ *  常把 rename 撞成 EPERM/EBUSY/EACCES——退一步等等，大多自己就好了。 */
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY', 'EEXIST']);
+const RENAME_RETRY_DELAYS_MS = [0, 30, 60, 120, 240];
+
 /** 原子写一个 JSON 文件（先写临时文件，再 rename）。 */
 export async function writeJson(dir, fileName, value) {
   await mkdir(dir, { recursive: true });
@@ -37,13 +42,13 @@ export async function writeJson(dir, fileName, value) {
   const tmp = join(dir, `${fileName}.tmp`);
   await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
   try {
-    await rename(tmp, target);
+    await renameWithRetry(tmp, target);
+    return value;
   } catch (err) {
     // 改名失败：临时文件留在那儿，下次启动前先清掉。
     await unlink(tmp).catch(() => {});
     throw err;
   }
-  return value;
 }
 
 /**
@@ -56,13 +61,29 @@ export async function writeJson(dir, fileName, value) {
  * **半截的 mp3 会被当成有效缓存一直用下去**——
  * 桌宠那句话从此永远是哑的，而且没有任何地方会报错。
  */
+/** 带重试的 rename（与 writeJson 同一套：Windows 上偶发 EPERM/EBUSY）。 */
+async function renameWithRetry(tmp, target) {
+  let lastErr = null;
+  for (const delay of RENAME_RETRY_DELAYS_MS) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    try {
+      await rename(tmp, target);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!RENAME_RETRY_CODES.has(err?.code)) break;
+    }
+  }
+  throw lastErr;
+}
+
 export async function writeFileAtomic(dir, fileName, data) {
   await mkdir(dir, { recursive: true });
   const target = join(dir, fileName);
   const tmp = join(dir, `${fileName}.tmp`);
   await writeFile(tmp, data);
   try {
-    await rename(tmp, target);
+    await renameWithRetry(tmp, target);
   } catch (err) {
     await unlink(tmp).catch(() => {});
     throw err;

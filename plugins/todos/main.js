@@ -16,13 +16,14 @@ export default function createTodosPlugin() {
       subtitle: view.total === 0 ? '一件事都没有' : `还有 ${view.pending} 件事没做完`,
       blocks: [
         view.total === 0
-          ? ctx.ui.emptyBlock('还没有待办事项')
+          ? ctx.ui.emptyBlock('还没有待办事项，在下面写一条吧', 'check-square')
           : ctx.ui.listBlock(
               view.items.map((t) => ({
                 id: t.id,
                 label: t.label,
                 done: t.done,
                 hint: t.done ? '已完成' : '',
+                icon: t.done ? 'check' : 'check-square',
               })),
             ),
         ctx.ui.inputBlock('add', '要做什么？', '添加'),

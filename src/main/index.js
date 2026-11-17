@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { registerSchemePrivileges, registerAppProtocol, appUrl } from './protocol.js';
+import { appIconPath } from './appIcon.js';
 import {
   USER_MODELS_URL_PREFIX,
   userModelsDir,
@@ -1012,6 +1013,7 @@ function openSettings() {
     maximizable: false,
     title: '桌面宠物 · 设置',
     autoHideMenuBar: true,
+    icon: appIconPath(ROOT),
     // 先藏着，等页面画好再显示：窗口自己的底色是白的，
     // 深色主题下先亮一下再变暗，很扎眼。
     show: false,
@@ -1130,6 +1132,9 @@ function formatBytes(bytes) {
 }
 
 app.whenReady().then(async () => {
+  // Windows 任务栏按 AppUserModelId 分组：不给的话，
+  // 桌面宠物的窗口会和别的 Electron 应用混进同一个按钮里（还带 Electron 的图标）。
+  app.setAppUserModelId('desk-pet.app');
   // 用户导入的 Live2D 模型存在 userData 里（安装目录可能没有写权限），
   // 给它一个虚拟根：渲染层就能用和内置模型一样的 URL 形状去取它们。
   //
@@ -1429,6 +1434,15 @@ app.whenReady().then(async () => {
     onSound: (name) => {
       if (win && !win.isDestroyed()) win.webContents.send('pet:sound', { name });
     },
+    // 桌宠天气特效：渲染层盖一层画布演粒子。
+    onWeatherEffect: (effect) => {
+      if (win && !win.isDestroyed()) win.webContents.send('pet:weatherEffect', { effect });
+    },
+    // 天气插件的「桌宠天气效果」配置（插件宿主是唯一真相）。
+    // 助理比宿主先建好，所以传的是取值函数——读的时候宿主已就绪；
+    // 插件被关掉时视为没开这个功能。
+    getWeatherEffectConfig: () =>
+      plugins && plugins.isEnabled('weather') ? plugins.getConfig('weather') : null,
     // 桌宠可见吗：桌宠被藏起来时不该凭空浮一个气泡窗口。
     isPetVisible: () => Boolean(win && !win.isDestroyed() && win.isVisible()),
     // 本机程序索引：agent 的 `app.launch` 工具要用它。

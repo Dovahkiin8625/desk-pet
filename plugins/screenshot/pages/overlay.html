@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>截图</title>
+    <link rel="stylesheet" href="overlay.css" />
+  </head>
+  <body>
+    <canvas id="bg"></canvas>
+    <div id="hole"></div>
+    <canvas id="ink"></canvas>
+    <!-- 抓屏那半秒盖着的半透明黑纱：罩子立刻出现，画面到了再撤掉。 -->
+    <div id="veil"></div>
+    <div class="tools" id="tools">
+      <button type="button" data-cmd="ocr">识别文本</button>
+      <span class="sep"></span>
+      <button type="button" data-cmd="shape">图形</button>
+      <button type="button" data-cmd="arrow">箭头</button>
+      <button type="button" data-cmd="pen">画笔</button>
+      <button type="button" data-cmd="text">文本</button>
+      <button type="button" data-cmd="mosaic">马赛克</button>
+      <span class="sep"></span>
+      <button type="button" data-cmd="undo">撤销</button>
+      <button type="button" data-cmd="save">保存</button>
+      <button type="button" data-cmd="pin">置顶</button>
+      <span class="sep"></span>
+      <button type="button" data-cmd="finish" class="ok">√</button>
+      <button type="button" data-cmd="cancel" class="no">×</button>
+    </div>
+    <div class="options" id="options"></div>
+    <input id="txt" type="text" />
+    <script src="overlay.js"></script>
+  </body>
+</html>

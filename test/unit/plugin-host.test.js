@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -784,6 +784,71 @@ test('宿主：读出来的时候也夹一遍（plugins.json 可能被手改过�
       width: PLUGIN_WINDOW_LIMITS.maxWidth,
       height: PLUGIN_WINDOW_LIMITS.minHeight,
     });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：记住插件的使用时间（落盘 plugins.json 的 lastUsed 里）', async () => {
+  const { host, root, userData } = await makeHost();
+  try {
+    // 没用过：清单里的 lastUsed 是 0。
+    assert.equal(host.list()[0].lastUsed, 0);
+
+    assert.equal(await host.recordUse('todos'), true);
+    const used = host.list()[0].lastUsed;
+    assert.ok(used > 0, '记录后清单里应该有时间戳');
+
+    const saved = JSON.parse(await readFile(join(userData, 'plugins.json'), 'utf8'));
+    assert.equal(saved.lastUsed.todos, used);
+
+    // 重启宿主：记录还在。
+    const fresh = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await fresh.load();
+    assert.equal(fresh.list()[0].lastUsed, used);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：plugins.json 手改出的 lastUsed 垃圾值会被丢掉', async () => {
+  const { root, userData } = await makeHost();
+  try {
+    await writeFile(
+      join(userData, 'plugins.json'),
+      JSON.stringify({ lastUsed: { todos: 'not-a-number', ghost: 123, '  ': -5 } }),
+      'utf8'
+    );
+    const fresh = await createPluginHost({
+      rootDir: root,
+      userDataDir: userData,
+      assistant: fakeAssistant(),
+      openSettings: () => {},
+    });
+    await fresh.load();
+    assert.equal(fresh.list()[0].lastUsed, 0, '坏掉的值不该进清单');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：recordUse 通知监听者（清单的顺序可以重算了）', async () => {
+  const { host, root } = await makeHost();
+  try {
+    let notified = 0;
+    host.onChange(() => {
+      notified += 1;
+    });
+    await host.recordUse('todos');
+    assert.equal(notified, 1);
+    // 不存在的插件：不记、也不通知。
+    assert.equal(await host.recordUse('nope'), false);
+    assert.equal(notified, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

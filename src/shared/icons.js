@@ -88,6 +88,38 @@ export const ICONS = Object.freeze({
     '<polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>',
   'cloud-sun':
     '<circle cx="6.5" cy="6.5" r="2.6"></circle><line x1="6.5" y1="1.6" x2="6.5" y2="2.8"></line><line x1="1.6" y1="6.5" x2="2.8" y2="6.5"></line><line x1="3.2" y1="3.2" x2="4" y2="4"></line><line x1="9.8" y1="3.2" x2="9" y2="4"></line><path d="M18 12h-1.26A7 7 0 1 0 10 21h8a4.5 4.5 0 0 0 0-9z"></path>',
+  sun:
+    '<circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"></line><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"></line><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"></line>',
+  cloud:
+    '<path d="M17.5 19a4.5 4.5 0 0 0 .42-8.98 7 7 0 0 0-13.65 1.7A4 4 0 0 0 6 19h11.5z"></path>',
+  'cloud-rain':
+    '<path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path><line x1="16" y1="13" x2="16" y2="21"></line><line x1="8" y1="13" x2="8" y2="21"></line><line x1="12" y1="15" x2="12" y2="23"></line>',
+  'cloud-drizzle':
+    '<path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"></path><line x1="8" y1="19" x2="8" y2="19"></line><line x1="8" y1="23" x2="8" y2="23"></line><line x1="12" y1="17" x2="12" y2="17"></line><line x1="12" y1="21" x2="12" y2="21"></line><line x1="16" y1="19" x2="16" y2="19"></line><line x1="16" y1="23" x2="16" y2="23"></line>',
+  'cloud-snow':
+    '<path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"></path><line x1="8" y1="16" x2="8.01" y2="16"></line><line x1="8" y1="20" x2="8.01" y2="20"></line><line x1="12" y1="18" x2="12.01" y2="18"></line><line x1="12" y1="22" x2="12.01" y2="22"></line><line x1="16" y1="16" x2="16.01" y2="16"></line><line x1="16" y1="20" x2="16.01" y2="20"></line>',
+  'cloud-fog':
+    '<path d="M20 15.5a4.5 4.5 0 0 0-2-8.47h-.93A7.5 7.5 0 1 0 5.5 13"></path><line x1="4" y1="18" x2="20" y2="18"></line><line x1="7" y1="21.5" x2="17" y2="21.5"></line>',
+  'cloud-lightning':
+    '<path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"></path><polyline points="13 11 9 17 15 17 11 23"></polyline>',
+  wind:
+    '<path d="M9.59 4.59A2 2 0 1 1 11 8H2"></path><path d="M12.59 19.41A2 2 0 1 0 14 16H2"></path><path d="M17.73 7.73A2.5 2.5 0 1 1 19.5 12H2"></path>',
+  droplet:
+    '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>',
+  leaf:
+    '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"></path><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"></path>',
+  refresh:
+    '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>',
+  cpu:
+    '<rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line>',
+  thermometer:
+    '<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path>',
+  battery:
+    '<rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect><line x1="23" y1="13" x2="23" y2="11"></line>',
+  wifi:
+    '<path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line>',
+  memory:
+    '<rect x="2" y="6" width="20" height="9" rx="2"></rect><line x1="6" y1="18" x2="6" y2="21"></line><line x1="10" y1="18" x2="10" y2="21"></line><line x1="14" y1="18" x2="14" y2="21"></line><line x1="18" y1="18" x2="18" y2="21"></line><line x1="6" y1="10.5" x2="7" y2="10.5"></line><line x1="10" y1="10.5" x2="11" y2="10.5"></line><line x1="14" y1="10.5" x2="15" y2="10.5"></line>',
 });
 
 /** 清单里没写图标（或写了个不存在的）时用这个。 */

@@ -20,6 +20,12 @@
  *   但要能连上——连不上时页面上会说明白。
  *
  * 译成什么语言也是设置里定的：默认自动（外文→中文，中文→英语）。
+ *
+ * 另外：
+ *
+ * - **自动变量命名**（默认关的设置项）：译文是能当变量名的英文短语时，
+ *   页面上自动给出小驼峰 / 大驼峰两种写法；
+ * - 译文点击即复制到剪贴板（页面浮出「已复制到剪贴板」）。
  */
 import {
   LANGUAGES,
@@ -29,6 +35,8 @@ import {
   resolveTarget,
   translateWithPublic,
 } from './lib/translate.js';
+import { variableNamesFor } from './lib/variables.js';
+import { writeClipboard } from './lib/clipboard.js';
 
 /** 引擎的名字（设置里存的就是它）。 */
 const ENGINE_LLM = '大模型';
@@ -45,6 +53,7 @@ export default function createTranslatePlugin(ctx) {
     return {
       engine: String(cfg.engine || ENGINE_LLM),
       target: String(cfg.target || TARGET_AUTO),
+      autoVariableName: cfg.autoVariableName === true || cfg.autoVariableName === 'true',
     };
   }
 
@@ -73,13 +82,19 @@ export default function createTranslatePlugin(ctx) {
     const key = cacheKey(text, cfg);
     const hit = cache.key === key;
     const target = resolveTarget(text, cfg.target);
+    const result = hit ? cache.result : '';
+    // 自动变量命名开着、译文能当变量名：给出小驼峰 / 大驼峰两种写法。
+    const variables =
+      cfg.autoVariableName && result ? variableNamesFor(result) : null;
     return {
       text,
-      result: hit ? cache.result : '',
+      result,
       busy: hit ? cache.busy : false,
       status: hit ? cache.status : '',
       engine: cfg.engine,
       target: cfg.target,
+      autoVariableName: cfg.autoVariableName,
+      variables,
       // 译成什么、原文是什么语：页面上要写清楚。
       targetName: target.name,
       sourceIsChinese: target.source === 'zh',
@@ -164,9 +179,17 @@ export default function createTranslatePlugin(ctx) {
     }
     if (action === 'setting') {
       const key = String(input.key || '');
-      const value = String(input.value ?? '');
-      if (key === 'engine' || key === 'target') {
+      const value = input.value ?? '';
+      if (key === 'autoVariableName') {
+        // 只影响变量命名不影响译文：存上就行，不用重翻。
         const saved = await ctx.host.setConfig({ [key]: value });
+        if (saved && saved.ok === false) {
+          cache = { ...cache, status: saved.message || '设置没存上', busy: false };
+        }
+        return payload(String(input.text ?? sourceText()));
+      }
+      if (key === 'engine' || key === 'target') {
+        const saved = await ctx.host.setConfig({ [key]: String(value) });
         if (saved && saved.ok === false) {
           cache = { ...cache, status: saved.message || '设置没存上', busy: false };
           return payload(String(input.text ?? sourceText()));
@@ -178,6 +201,22 @@ export default function createTranslatePlugin(ctx) {
         return payload(text);
       }
       return payload(String(input.text ?? sourceText()));
+    }
+    if (action === 'copy') {
+      // 把文字写进剪贴板：译文、变量名都走这条（页面上点一下就复制）。
+      const text = String(input.text ?? '');
+      let copied;
+      if (!text.trim()) {
+        copied = { ok: false, message: '没有可复制的东西' };
+      } else {
+        try {
+          await writeClipboard(text);
+          copied = { ok: true, message: '已复制到剪贴板' };
+        } catch (err) {
+          copied = { ok: false, message: `复制不了：${err?.message || err}` };
+        }
+      }
+      return { ...payload(String(input.source ?? sourceText())), copied };
     }
     return payload(sourceText());
   }
@@ -195,21 +234,44 @@ export default function createTranslatePlugin(ctx) {
     const text = sourceText();
     const cfg = settings();
     const key = cacheKey(text, cfg);
-    const result = cache.key === key ? cache.result : '';
+    const hit = cache.key === key;
+    const result = hit ? cache.result : '';
+    const variables = cfg.autoVariableName && result ? variableNamesFor(result) : null;
     return currentCtx.ui.makePage({
       pluginId: 'translate',
       title: '翻译',
       subtitle: text ? `译成${resolveTarget(text, cfg.target).name}` : '输入框里没有文字',
-      status: cache.key === key ? cache.status : '',
+      status: hit ? cache.status : '',
       blocks: [
+        currentCtx.ui.heroBlock({
+          icon: 'globe',
+          title: '翻译',
+          subtitle: variables
+            ? `变量名：${variables.lower}（小驼峰） / ${variables.upper}（大驼峰）`
+            : '把输入框里的文字译成另一种语言',
+        }),
         currentCtx.ui.inputBlock('translate', '要翻译的文字…', '翻译', text),
         ...(result ? [currentCtx.ui.textBlock(result)] : []),
+        ...(result
+          ? [currentCtx.ui.buttonsBlock([{ id: 'copy', label: '复制译文', icon: 'clipboard' }])]
+          : []),
       ],
     });
   }
 
   /** 积木页面里的一个动作。 */
   async function action(currentCtx, actionId, value) {
+    if (String(actionId) === 'copy') {
+      // 复制译文：积木页按钮走这条——与 iframe 页面的 copy 动作同一件事。
+      const text = String(cache.result || '');
+      if (!text.trim()) return { ...page(currentCtx), status: '没有可复制的东西' };
+      try {
+        await writeClipboard(text);
+        return { ...page(currentCtx), status: '已复制到剪贴板' };
+      } catch (err) {
+        return { ...page(currentCtx), status: `复制不了：${err?.message || err}` };
+      }
+    }
     if (String(actionId) === 'translate') {
       const text = String(value || '').trim();
       if (text) {

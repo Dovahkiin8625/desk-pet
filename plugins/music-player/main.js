@@ -96,12 +96,15 @@ export default function createMusicPlayerPlugin(ctx) {
     const blocks = [];
     const cur = s.current;
     blocks.push(
-      ctx2.ui.textBlock(
-        cur ? `《${cur.title}》${cur.artist ? ` — ${cur.artist}` : ''}` : '还没在放'
-      ),
-      ctx2.ui.textBlock(
-        `${formatTime(s.position)} / ${formatTime(s.duration)}${s.playing ? '' : '（暂停）'}`
-      ),
+      ctx2.ui.heroBlock({
+        icon: 'music',
+        title: cur ? `《${cur.title}》` : '还没在放',
+        subtitle: cur
+          ? `${cur.artist ? `${cur.artist} · ` : ''}${formatTime(s.position)} / ${formatTime(s.duration)}${s.playing ? '' : '（暂停）'}`
+          : s.trackCount
+            ? `${s.sourceLabel} ${s.trackCount} 首`
+            : '还没有歌',
+      }),
       ctx2.ui.buttonsBlock([
         { id: 'prev', label: '上一首', icon: 'prev' },
         { id: 'toggle', label: s.playing ? '暂停' : '播放', icon: s.playing ? 'pause' : 'play', primary: true },
@@ -116,12 +119,13 @@ export default function createMusicPlayerPlugin(ctx) {
             id: String(i),
             label: t.artist ? `${t.title} — ${t.artist}` : t.title,
             hint: i === s.index ? '在放' : '',
+            icon: i === s.index ? 'play' : 'note',
             actionId: 'select',
           }))
         )
       );
     } else {
-      blocks.push(ctx2.ui.emptyBlock('这个列表还没有歌。用下面的按钮把歌加进来。'));
+      blocks.push(ctx2.ui.emptyBlock('这个列表还没有歌。用下面的按钮把歌加进来。', 'music'));
     }
     blocks.push(
       ctx2.ui.listBlock(
@@ -129,6 +133,7 @@ export default function createMusicPlayerPlugin(ctx) {
           id: p.id,
           label: `${p.name}（${p.count} 首）`,
           hint: p.id === s.activePlaylistId ? '在放' : '',
+          icon: 'music',
           actionId: 'playlist-select',
           removeId: p.id === s.defaultPlaylistId ? '' : 'playlist-delete',
         }))

@@ -1,0 +1,90 @@
+{
+  "id": "screenshot",
+  "name": "截图",
+  "icon": "image",
+  "description": "在桌面上框选一块，标注、识别上面的文字",
+  "keywords": [
+    "截图",
+    "截屏",
+    "截取屏幕",
+    "抓屏",
+    "screenshot",
+    "jietu",
+    "jieping",
+    "快捷键",
+    "ocr",
+    "识别文字",
+    "文字识别",
+    "提取文字"
+  ],
+  "entry": "main.js",
+  "window": {
+    "page": "pages/shot.html",
+    "title": "截图",
+    "width": 380,
+    "height": 260,
+    "refreshMs": 0
+  },
+  "settings": [
+    {
+      "key": "language",
+      "label": "识别语言",
+      "type": "select",
+      "default": "自动",
+      "options": ["自动", "中文", "英文"],
+      "hint": "「自动」用系统的中英双语识别：汉字认得准，英文也认得准。"
+    },
+    {
+      "key": "saveDir",
+      "label": "保存目录",
+      "type": "text",
+      "default": "",
+      "hint": "留空 = 图片文件夹下的「截图」子目录。"
+    },
+    {
+      "key": "hotkey",
+      "label": "全局快捷键",
+      "type": "text",
+      "default": "Control+Shift+A",
+      "hint": "按下就直接开始截图（桌宠启动就生效）。Electron 的写法，例如 Control+Shift+A；留空 = 不设。"
+    }
+  ],
+  "tools": [
+    {
+      "name": "screenshot.capture",
+      "label": "截屏",
+      "description": "截一张当前屏幕（可以指定显示器 id），把图片存到磁盘，返回文件路径。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "displayId": {
+            "type": "string",
+            "description": "要截哪块显示器的 id；不给就截主屏幕。"
+          }
+        }
+      },
+      "risk": "read"
+    },
+    {
+      "name": "screenshot.ocr",
+      "label": "识别图片文字",
+      "description": "识别一张图片里的文字（Windows 自带的 OCR，支持中英文），返回识别出来的文本。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "图片文件的路径。"
+          }
+        },
+        "required": ["path"]
+      },
+      "risk": "read"
+    }
+  ],
+  "skill": {
+    "name": "screenshot",
+    "description": "用户要看屏幕上的字、要把屏幕上的东西记下来或存下来时用它",
+    "file": "skill.md"
+  }
+}

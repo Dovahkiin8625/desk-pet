@@ -2,8 +2,8 @@
   "id": "translate",
   "name": "翻译",
   "icon": "globe",
-  "description": "翻译输入框里的文字：外文译成中文，中文译成英语",
-  "keywords": ["translate", "translation", "fanyi", "翻译", "中译英", "英译中", "译文"],
+  "description": "翻译输入框里的文字：外文译成中文，中文译成英语；能当变量名时自动给出小驼峰 / 大驼峰",
+  "keywords": ["translate", "translation", "fanyi", "翻译", "中译英", "英译中", "译文", "变量名", "variable", "bianliangming"],
   "panelInput": { "label": "翻译" },
   "window": {
     "title": "翻译",
@@ -20,6 +20,13 @@
       "default": "大模型",
       "options": ["大模型", "公共接口"],
       "hint": "「大模型」用设置里已经配好的 API Key；「公共接口」是免费的公共翻译服务，要能连上外网。"
+    },
+    {
+      "key": "autoVariableName",
+      "label": "自动变量命名",
+      "type": "boolean",
+      "default": false,
+      "hint": "译文能当变量名时（比如英文短语），自动给出小驼峰 / 大驼峰两种写法，点一下就复制"
     },
     {
       "key": "target",

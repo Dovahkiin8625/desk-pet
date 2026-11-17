@@ -39,6 +39,7 @@ const CONTENT_SCORE = 600;
 const searchEl = document.getElementById('search');
 const panelEl = document.getElementById('panel');
 const queryEl = document.getElementById('query');
+const clearQueryEl = document.getElementById('clear-query');
 const resultsEl = document.getElementById('results');
 const emptyEl = document.getElementById('empty');
 const searchStatusEl = document.getElementById('search-status');
@@ -143,8 +144,12 @@ function appendHighlighted(el, text, positions, field) {
   if (last < text.length) el.append(text.slice(last));
 }
 
-/**
- * 插件自带页面报来的**内容高度**（像素）。
+/** 清空按钮只在输入框里有字的时候露出来。 */
+function updateClearButton() {
+  clearQueryEl.hidden = !queryEl.value;
+}
+
+/** 插件自带页面报来的**内容高度**（像素）。
  *
  * 是页面自己量的（它知道自己有多高），不是这里量的。
  * 0 = 还没收到（页面刚装上，还没来得及量）。
@@ -298,6 +303,8 @@ function toRow(kind, hit) {
     row.name = String(plugin.name || '');
     row.desc = String(plugin.description || '');
     row.icon = plugin.icon || 'plugin';
+    // 最近使用时间：输入框为空时，插件按它排。
+    row.lastUsed = Number(plugin.lastUsed) || 0;
     return row;
   }
   if (kind === 'app') {
@@ -366,7 +373,14 @@ function renderResults() {
   // 插件排在前面：**分数相同就是插件赢**。中文系统上装的东西常常同名
   // （Windows 自带的「待办」就是一个），那种时候用户想要的是桌宠自己的待办，
   // 而不是把另一个程序打开。
-  results = hits.sort((a, b) => b.score - a.score);
+  //
+  // 输入框为空时没有分数可比（全 0）：改成按**最近使用时间**排——
+  // 用过的插件浮到最上面，没用过的保持声明顺序（稳定排序保证）。
+  if (trimmed) {
+    results = hits.sort((a, b) => b.score - a.score);
+  } else {
+    results = hits.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+  }
   // 聊天入口**常驻**在列表末尾：搜不到插件时它就是唯一的一项，
   // 回车自然落到它身上；搜到了插件时可以用 ↓ 选中它，或者 Ctrl+Enter 直接发。
   if (trimmed) {
@@ -471,6 +485,7 @@ function renderResults() {
   });
 
   emptyEl.hidden = results.length > 0;
+  updateClearButton();
   window.__panel.query = queryEl.value;
   // resultIds 只放**插件**的 id（聊天项与程序项都不是插件）。
   window.__panel.resultIds = results.filter((h) => h.kind === 'plugin').map((h) => h.id);
@@ -769,7 +784,8 @@ function scheduleFileSearch(query) {
   }, 120);
 }
 
-queryEl.addEventListener('input', () => {
+/** 输入框里的字变了：查询、状态、文件结果全部重来一遍。 */
+function handleQueryChange() {
   activeIndex = 0;
   // 上一次的启动结果已经过时了：换了个查询，那行字就该清掉。
   setSearchStatus('');
@@ -779,6 +795,20 @@ queryEl.addEventListener('input', () => {
   scheduleFileSearch(queryEl.value);
   // 主进程要知道输入框里现在是什么（插件要「吃」它）。
   window.panel?.setQuery?.(queryEl.value);
+}
+
+queryEl.addEventListener('input', handleQueryChange);
+
+// 清空：输入框归空、列表跟着重画，焦点留在框里继续打字。
+clearQueryEl.addEventListener('click', () => {
+  if (!queryEl.value) return;
+  queryEl.value = '';
+  handleQueryChange();
+  try {
+    queryEl.focus();
+  } catch {
+    /* ignore */
+  }
 });
 
 // 面板刚打开时，主进程把剪贴板里最近的文本递过来。

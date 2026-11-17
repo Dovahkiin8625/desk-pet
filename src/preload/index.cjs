@@ -95,6 +95,10 @@ contextBridge.exposeInMainWorld('pet', {
       cb(payload?.emotion, typeof payload?.mood === 'number' ? payload.mood : 0)
     );
   },
+  // 桌宠天气特效：主进程偶尔推过来（或用户在天气插件里点了「预览效果」）。
+  onWeatherEffect: (cb) => {
+    ipcRenderer.on('pet:weatherEffect', (_e, payload) => cb(payload?.effect));
+  },
   // 合成好的语音：主进程合成完发过来，渲染层播放并驱动口型。
   // 第三个参数是语音的 id：播完要用它回报主进程。
   onSpeak: (cb) => {

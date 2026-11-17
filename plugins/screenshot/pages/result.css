@@ -1,0 +1,57 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f7f7f8;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #2f2f34;
+  color: #f2f2f2;
+  font: 13px/1.2 "Microsoft YaHei", sans-serif;
+}
+
+.head span {
+  flex: 1;
+}
+
+.head button {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f2f2f2;
+  font: 12px/1.2 "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+}
+
+.head button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+pre {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: #fff;
+  color: #1b1b1f;
+  font: 13px/1.6 "Microsoft YaHei", sans-serif;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}

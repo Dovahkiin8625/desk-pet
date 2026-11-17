@@ -1,0 +1,140 @@
+/* plugins/screenshot/pages/shot.css
+   截图插件的页面样式。共用 theme.css 的设计系统，这里只管自己的布局。 */
+
+body {
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.sc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* 独立窗口里：按视口铺满，内容自己滚。 */
+body:not(.dp-panel) .sc {
+  height: 100vh;
+}
+
+/* 面板里：定高（plugin.json 的 window.height），内容在内部滚。 */
+body.dp-panel {
+  overflow: hidden;
+}
+body.dp-panel .sc {
+  height: 100%;
+}
+
+.hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hero .dp-button.big {
+  padding: 10px 28px;
+  font-size: 15px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dp-text-faint);
+  text-align: center;
+}
+
+/* 底部那行字与齿轮按钮。 */
+.dp-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dp-border-soft);
+  color: var(--dp-text-soft);
+  font-size: 12px;
+}
+
+.dp-footer .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 全局快捷键 —— */
+
+.hk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * 键帽。
+ *
+ * 用 <kbd> 而不是输入框：这个值**只能靠「改」来改**，
+ * 摆成输入框会让人以为能直接打字（打了也没用）。
+ * 底下多一条边是键帽的立体感。
+ */
+.hk-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border: 1px solid var(--dp-border);
+  border-bottom-width: 2px;
+  border-radius: var(--dp-radius-sm);
+  background: var(--dp-surface);
+  color: var(--dp-text);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 正在等用户按键：键帽亮起来。 */
+.hk-key.capturing {
+  border-color: var(--dp-accent-strong);
+  background: var(--dp-accent);
+  color: var(--dp-accent-ink);
+}
+
+.dp-button.small {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* 快捷键注册失败（被占着 / 写法不对）：让用户看得见。 */
+.hotkey-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dp-danger, #e5484d);
+}
+
+.gear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+}
+
+.gear:hover {
+  background: var(--dp-surface-active);
+  color: var(--dp-text);
+}

@@ -231,11 +231,22 @@ body.dp-panel .clip {
 }
 
 .empty {
-  margin: 18px 8px;
-  text-align: center;
+  margin: 34px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   color: var(--dp-text-faint);
   font-size: 13px;
 }
+.empty .icon {
+  width: 54px; height: 54px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--dp-accent-soft);
+  color: var(--dp-accent-ink);
+  border: 1px solid var(--dp-border-soft);
+}
+.empty .icon .dp-icon { width: 24px; height: 24px; }
 
 /* ---------------------------------------------------------------------------
  * 底部条

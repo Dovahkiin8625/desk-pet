@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { appUrl } from './protocol.js';
+import { appIconPath } from './appIcon.js';
 import { restorePosition, clampToDisplays, displayForPoint } from './display.js';
 import { fitWindowSize, anchoredPosition } from '../shared/viewport.js';
 import { scaleVisibleRect, windowRectForVisible } from '../shared/petRect.js';
@@ -53,6 +54,7 @@ export function createPetWindow({ rootDir, settings, displays }) {
     skipTaskbar: true,
     alwaysOnTop: true,
     backgroundColor: '#00000000',
+    icon: appIconPath(rootDir),
     webPreferences: {
       preload: join(rootDir, 'src', 'preload', 'index.cjs'),
       contextIsolation: true,

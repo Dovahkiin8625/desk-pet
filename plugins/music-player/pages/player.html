@@ -496,14 +496,24 @@
         color: var(--dp-accent-ink);
       }
       #empty {
-        margin: 4px 16px 12px;
-        padding: 14px;
+        margin: 6px 16px 14px;
+        padding: 22px 14px 18px;
         font-size: 13px;
-        color: var(--dp-text-soft);
+        color: var(--dp-text-faint);
         text-align: center;
-        border: 1px dashed var(--dp-border-soft);
-        border-radius: var(--dp-radius);
+        border: 1px dashed var(--dp-border);
+        border-radius: var(--dp-radius-lg);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
       }
+      #empty .icon {
+        width: 52px; height: 52px; border-radius: 999px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--dp-accent-soft); color: var(--dp-accent-ink);
+      }
+      #empty .icon .dp-icon { width: 24px; height: 24px; }
       #empty[hidden] {
         display: none;
       }
@@ -905,7 +915,7 @@
             <button id="pl-folder" class="add" type="button" title="把一个文件夹里的歌加进这个歌单"><span class="icon" data-icon="folder"></span></button>
           </div>
           <ul id="list"></ul>
-          <div id="empty">这个列表还没有歌。用上面的按钮把歌加进来。</div>
+          <div id="empty"><span class="icon" data-icon="music"></span><span class="empty-text">这个列表还没有歌。用上面的按钮把歌加进来。</span></div>
         </main>
       </div>
 

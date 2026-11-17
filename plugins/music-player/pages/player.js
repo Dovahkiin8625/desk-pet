@@ -377,9 +377,12 @@ function renderList() {
   el.playAll.disabled = !(state.tracks || []).length;
   const noMatch = Boolean(filter.trim()) && !el.list.children.length;
   el.empty.hidden = (state.tracks || []).length > 0 && !noMatch;
-  el.empty.textContent = noMatch
-    ? '没找到匹配的歌。'
-    : '这个列表还没有歌。用上面的按钮把歌加进来。';
+  const emptyText = el.empty.querySelector('.empty-text');
+  if (emptyText) {
+    emptyText.textContent = noMatch
+      ? '没找到匹配的歌。'
+      : '这个列表还没有歌。用上面的按钮把歌加进来。';
+  }
   const cover = (state.covers || {})[state.activePlaylistId];
   if (cover) {
     el.mainCoverImg.src = cover;

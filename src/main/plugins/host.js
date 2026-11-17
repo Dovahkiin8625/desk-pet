@@ -12,6 +12,11 @@ import {
   emptyBlock,
   messagesBlock,
   settingsBlock,
+  weatherBlock,
+  effectsBlock,
+  timerBlock,
+  statsBlock,
+  heroBlock,
 } from '../../shared/panel.js';
 import {
   canDetach,
@@ -64,6 +69,11 @@ const UI = Object.freeze({
   toggleBlock,
   emptyBlock,
   messagesBlock,
+  weatherBlock,
+  effectsBlock,
+  timerBlock,
+  statsBlock,
+  heroBlock,
 });
 
 export async function createPluginHost({
@@ -233,6 +243,18 @@ export async function createPluginHost({
       prefs?.windowSizes && typeof prefs.windowSizes === 'object' ? prefs.windowSizes : {}
     ).filter(([, size]) => size && typeof size === 'object')
   );
+  /**
+   * 插件的最近使用时间：id → 毫秒时间戳。
+   *
+   * 面板输入框为空时，插件按它排（最近用过的排最前面）。
+   * 与「启用状态」「窗口尺寸」同一个文件——它们都是宿主管的、
+   * 与插件代码无关的东西。
+   */
+  const lastUsed = new Map(
+    Object.entries(
+      prefs?.lastUsed && typeof prefs.lastUsed === 'object' ? prefs.lastUsed : {}
+    ).filter(([, at]) => Number.isFinite(at) && at > 0)
+  );
 
   /** 把尺寸夹到上下限里。 */
   function clampSize(width, height) {
@@ -288,21 +310,54 @@ export async function createPluginHost({
   }
 
   /**
+   * 记一次插件的使用（打开），并落盘。
+   *
+   * **只有用户（或 agent）真的把插件打开这个动作算数**：
+   * 周期刷新、数据推送都不算——它们每 refreshMs 跑一次，
+   * 算进去的话每个插件都是「刚用过」，排序白排。
+   *
+   * 内存里先更新完再落盘（清单马上就要按它排），落盘失败只记一行日志。
+   */
+  async function recordUse(id) {
+    const key = String(id || '');
+    if (!records.has(key)) return false;
+    lastUsed.set(key, Date.now());
+    prefs = { ...prefs, lastUsed: Object.fromEntries(lastUsed) };
+    // 清单变了（最近使用顺序变了）：面板按它重排——先让清单生效，落盘别挡路。
+    notifyChange();
+    try {
+      await writeJson(userDataDir, PREFS_FILE, prefs);
+    } catch (err) {
+      console.warn('[desk-pet] 插件的使用记录保存失败：', err?.message);
+    }
+    return true;
+  }
+
+  /**
    * 插件自己的配置项（清单里声明的那些），配上当前值。
    *
    * 配置项**只出现在插件自己的页面里**——不在桌宠的【设置】里，
    * 也不在别的地方。宿主按清单的声明渲染控件。
    */
+  /**
+   * 插件**自己**声明的配置项（清单里那些），配上当前值。
+   *
+   * `hidden: true` 的项**不进抽屉**：值照样存盘、`getConfig` 照样读得到，
+   * 只是不画在设置抽屉里——天气面板把「桌宠天气效果」直接放在正文里画，
+   * 清单里还挂着这些项只是为了让宿主照旧管它们的读写。
+   */
   function settingsItems(record) {
     const values = getConfig(record.manifest.id);
-    return (record.manifest.settings || []).map((item) => ({
-      key: item.key,
-      label: item.label,
-      type: item.type,
-      options: item.options,
-      hint: item.hint,
-      value: values[item.key],
-    }));
+    return (record.manifest.settings || [])
+      .filter((item) => item.hidden !== true)
+      .map((item) => ({
+        key: item.key,
+        label: item.label,
+        type: item.type,
+        options: item.options,
+        hint: item.hint,
+        value: values[item.key],
+      }));
   }
 
   /**
@@ -319,10 +374,12 @@ export async function createPluginHost({
    */
   function withSettingsBlock(record, page) {
     if (!page || !Array.isArray(page.blocks)) return page;
-    if (!(record.manifest.settings || []).length) return page;
+    const items = settingsItems(record);
+    // 全部配置项都是 hidden（正文里自己画了）时：抽屉里不该留一块空控件。
+    if (!items.length) return page;
     return {
       ...page,
-      drawer: [...(page.drawer || []), settingsBlock(settingsItems(record))],
+      drawer: [...(page.drawer || []), settingsBlock(items)],
     };
   }
 
@@ -373,7 +430,11 @@ export async function createPluginHost({
         setEnabled: (id, enabled) => setEnabled(id, enabled),
         isEnabled: (id) => isEnabled(id),
         /** 把插件分离成独立窗口 / 小部件。 */
-        openWindow: (id, mode) => windowOpener?.open(id, mode) || { ok: false },
+        openWindow: (id, mode) => {
+          const result = windowOpener?.open(id, mode) || { ok: false };
+          if (result && result.ok !== false) void recordUse(id);
+          return result;
+        },
         closeWindow: (id) => windowOpener?.close(id) || { ok: false },
         /**
          * 插件的界面开合了：第一个界面挂上来 / 最后一个摘掉。
@@ -456,6 +517,8 @@ export async function createPluginHost({
       hasPage: Boolean(m.window?.page),
       pageUrl: pageUrlOf(m.id),
       source: record.source,
+      // 最近使用时间（毫秒时间戳；0 = 从没用过）：面板空查询按它排。
+      lastUsed: lastUsed.get(m.id) || 0,
     };
   }
 
@@ -962,6 +1025,8 @@ export async function createPluginHost({
     getConfig,
     /** 改某个插件的配置值并落盘。 */
     setConfig,
+    /** 记一次插件的使用（打开）。 */
+    recordUse,
     open,
     action,
     data,
@@ -981,8 +1046,17 @@ export async function createPluginHost({
     isAgentEnabled,
     /** 开/关「这个插件接给 agent」，并落盘。 */
     setAgentEnabled,
-    /** 把插件分离成独立窗口 / 桌面小部件。 */
-    openWindow: (id, mode) => windowOpener?.open(id, mode) || { ok: false, message: '窗口还没准备好' },
+    /**
+     * 把插件分离成独立窗口 / 桌面小部件。
+     *
+     * 从面板点开、从 agent 打开都走这条：算一次「使用」。
+     */
+    openWindow: (id, mode) => {
+      const result =
+        windowOpener?.open(id, mode) || { ok: false, message: '窗口还没准备好' };
+      if (result && result.ok !== false) void recordUse(id);
+      return result;
+    },
     /** 关掉某个插件的窗口。 */
     closeWindow: (id) => windowOpener?.close(id) || { ok: false },
     get: (id) => records.get(id) || null,

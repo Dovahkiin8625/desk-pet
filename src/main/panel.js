@@ -1,6 +1,7 @@
 import { BrowserWindow, clipboard, ipcMain, Menu } from 'electron';
 import { basename, join } from 'node:path';
 import { appUrl } from './protocol.js';
+import { appIconPath } from './appIcon.js';
 import { placeBesidePet } from './placement.js';
 import { maxPanelHeight } from './panelHeight.js';
 import {
@@ -321,6 +322,7 @@ export function createPanelController({
       skipTaskbar: true,
       alwaysOnTop: true,
       backgroundColor: '#00000000',
+      icon: appIconPath(rootDir),
       webPreferences: {
         preload: join(rootDir, 'src', 'preload', 'panel.cjs'),
         contextIsolation: true,
@@ -401,6 +403,8 @@ export function createPanelController({
       hide();
       return;
     }
+    // 记一次使用：输入框为空时，插件按最近使用顺序排。
+    void plugins.recordUse?.(pluginId);
     currentPluginId = pluginId;
     // 面板工作台的界面落点：**只有插件自带页面**时才挂上——
     // 那种页面在 iframe 里，数据要经它送进去。

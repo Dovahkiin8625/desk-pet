@@ -44,6 +44,11 @@
       color: var(--dp-text);
       -webkit-user-select: text;
       user-select: text;
+      /* 弹入：小缩放 + 上移，像从桌宠那儿「冒」出来。 */
+      animation: bubble-in 0.18s ease-out;
+    }
+    @keyframes bubble-in {
+      from { opacity: 0; transform: scale(0.92) translateY(4px); }
     }
     #bubble.hidden { display: none; }
 

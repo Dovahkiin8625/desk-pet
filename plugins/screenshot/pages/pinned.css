@@ -1,0 +1,43 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  background: rgba(32, 32, 36, 0.94);
+  color: #ececec;
+  font: 12px/1.2 "Microsoft YaHei", sans-serif;
+  -webkit-app-region: drag;
+}
+
+.bar span {
+  flex: 1;
+}
+
+.bar button {
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ececec;
+  font: 12px/1.2 "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.bar button:hover {
+  background: rgba(220, 38, 38, 0.85);
+}
+
+img {
+  display: block;
+  width: 100%;
+  background: #fff;
+}

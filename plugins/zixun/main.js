@@ -281,11 +281,15 @@ export default function createZixunPlugin() {
                 id: item.url,
                 label: HOT_IDS.has(selected) ? `${i + 1}. ${item.title}` : item.title,
                 hint: itemHint(selected, item),
+                icon: 'globe',
                 actionId: 'open',
               })),
             )
-          : ctx.ui.emptyBlock(entry?.error ? `暂时拉不到（${entry.error}）` : '暂时没有内容，点「刷新」再试'),
-        ctx.ui.buttonsBlock([{ id: 'refresh', label: '刷新' }]),
+          : ctx.ui.emptyBlock(
+              entry?.error ? `暂时拉不到（${entry.error}）` : '暂时没有内容，点「刷新」再试',
+              'globe'
+            ),
+        ctx.ui.buttonsBlock([{ id: 'refresh', label: '刷新', icon: 'refresh' }]),
       ],
       status,
     });
