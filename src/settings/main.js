@@ -20,6 +20,7 @@ import {
 } from './toolBatch.js';
 import { hydrateIcons, iconSvg } from '../renderer/ui/icons.js';
 import { bindTheme } from '../renderer/ui/theme.js';
+import { initPersonaName } from '../renderer/ui/persona.js';
 import { normalizeMode } from '../shared/theme.js';
 
 const modelSelect = document.getElementById('model');
@@ -41,6 +42,8 @@ hydrateIcons();
 
 // 主题：跟着主进程推来的那一套变（用户在别处换了主题，这边也换）。
 bindTheme(window.pet);
+// 静态文案里的「{name}」与「桌宠」统统换成人设名（默认「小桌」）。
+initPersonaName();
 
 // 桌面助理
 //

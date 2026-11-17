@@ -743,6 +743,13 @@ export function createBubbleController({ rootDir, getPetWindow, getPetRect, getD
       send('pet:bubblePlacement', placement);
     },
     isOpen: () => Boolean(win && !win.isDestroyed() && win.isVisible()),
+    /**
+     * 给气泡窗口发一条频道消息（人设名之类的系统通道用）。
+     *
+     * 懒创建的窗口可能还不存在：这时不需要补发——
+     * 页面起来时会主动 invoke 拿当前值。
+     */
+    send: (channel, payload) => send(channel, payload),
     /** 桌宠被隐藏时：气泡也不该留在桌面上。 */
     onPetHidden: () => {
       if (win && !win.isDestroyed() && win.isVisible()) hide();

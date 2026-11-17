@@ -1,6 +1,7 @@
 import { disposeTextures } from './texture.js';
 import { pickModelClass } from '../live2dRuntime.js';
 import { disposeSpineModel } from '../spine/model.js';
+import { disposeVideoModel } from '../video/model.js';
 
 /**
  * 加载 Live2D 模型。
@@ -16,7 +17,7 @@ import { disposeSpineModel } from '../spine/model.js';
  * （见 live2dRuntime.js），混用会得到 "Missing settings."。
  */
 export async function loadPetModel(manifest) {
-  const base = manifest?.base || '/assets/live2d/models';
+  const base = manifest?.base || '/assets/models';
   const settingsName = manifest?.modelFile || manifest?.model3 || `${manifest.id}.model3.json`;
   const modelUrl = `${base}/${manifest.id}/${settingsName}`;
   const ModelClass = pickModelClass(manifest?.cubismVersion);
@@ -43,6 +44,15 @@ export function disposePetModel(model) {
       /* ignore */
     }
     return released;
+  }
+  // 视频形象：视频元素、blob URL 与纹理都在这里释放。
+  if (model.__kind === 'video') {
+    try {
+      return disposeVideoModel(model);
+    } catch (err) {
+      console.warn('[desk-pet] 视频形象释放失败：', err?.message);
+      return 0;
+    }
   }
   let released = 0;
   try {

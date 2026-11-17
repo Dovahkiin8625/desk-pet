@@ -1,4 +1,5 @@
 import { bindTheme } from '../ui/theme.js';
+import { initPersonaName } from '../ui/persona.js';
 
 const bubble = document.getElementById('bubble');
 const titleEl = document.getElementById('title');
@@ -253,6 +254,8 @@ function cancelStream(payload) {
 
 // 主题：跟着主进程推来的那一套变。
 bindTheme(window.bubble);
+// 静态文案里的「{name}」与「桌宠」统统换成人设名（默认「小桌」）。
+initPersonaName();
 
 window.bubble?.onShow?.((message) => render(message));
 

@@ -126,7 +126,7 @@ test('setHotkey：与另一个槽位撞组合要说清楚是被**自己人**占�
   const ok = controller.setHotkey('panelHotkey', 'Control+Shift+D');
   assert.equal(ok, false);
   assert.equal(statuses[statuses.length - 1].state, 'error');
-  assert.match(statuses[statuses.length - 1].error, /呼出 \/ 隐藏桌宠/);
+  assert.match(statuses[statuses.length - 1].error, /呼出 \/ 隐藏小桌/);
   // 没有落盘，也没有注册。
   assert.equal(settings.panelHotkey, '');
   assert.equal(registered.has('Control+Shift+D'), false);

@@ -50,13 +50,14 @@ function buildMotionItem(actions) {
 
 /** 基础菜单。托盘与右键都用它。 */
 export function menuTemplate(actions) {
+  const petName = actions.personaName?.() || '小桌';
   const items = [
     { label: '显示 / 隐藏', click: () => actions.toggleVisible() },
     { type: 'separator' },
   ];
-  // 停靠（藏到屏幕边缘外）时才出现「取回桌宠」。
+  // 停靠（藏到屏幕边缘外）时才出现「取回{人设名}」。
   if (actions.isDocked?.()) {
-    items.push({ label: '取回桌宠', click: () => actions.retrievePet?.() });
+    items.push({ label: `取回${petName}`, click: () => actions.retrievePet?.() });
     items.push({ type: 'separator' });
   }
   items.push({

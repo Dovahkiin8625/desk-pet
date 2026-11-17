@@ -1,4 +1,5 @@
 import { iconSvg } from './icons.js';
+import { applyPersonaName } from './persona.js';
 
 /**
  * 插件页面里「块」的画法。
@@ -766,4 +767,7 @@ export function renderPage(page, { body, drawer, onAction } = {}) {
     const node = renderBlock(block, { onAction });
     if (node) target.append(node);
   }
+  // 页面里凡是「桌宠 / 桌面宠物」的文字，换成人设名（默认「小桌」）。
+  applyPersonaName(body);
+  if (target !== body) applyPersonaName(target);
 }

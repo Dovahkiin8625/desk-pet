@@ -1,6 +1,7 @@
 import { createStage } from './pet/stage.js';
 import { createSpineStage } from './spine/stage.js';
 import { loadSpineModel, deriveSpineMotions } from './spine/model.js';
+import { loadVideoModel } from './video/model.js';
 import { applyLive2DCoreCompat } from './live2dCoreCompat.js';
 import { loadManifest, resolveMotionSpec } from './pet/manifest.js';
 import { loadPetModel, disposePetModel } from './pet/model.js';
@@ -13,6 +14,7 @@ import { idleReaction } from './pet/behavior.js';
 import { playWeatherEffect } from './pet/weatherEffect.js';
 import {
   EVENT,
+  EMOTION_EXPRESSION,
   applyEvent,
   boredomLevel,
   clampMood,
@@ -283,6 +285,24 @@ function applyEmotion(event) {
 }
 
 /**
+ * 视频形象：把「表情语义」当作 clip 的触发器。
+ *
+ * 视频没有脸，表情系统到它这里就是死路。应用里「原本要套表情的地方」
+ * 改为播放绑定了这个表情语义的视频片段（没有绑定就什么也不播——
+ * 与 live2d 的降级规则一致）。
+ */
+function showVideoEmotionClip(semantic) {
+  if (currentManifest?.type !== 'video' || !currentModel?.motion) return;
+  const spec = semantic ? currentManifest?.motions?.[semantic] : null;
+  if (!spec) return;
+  try {
+    currentModel.motion(spec.group, spec.index)?.catch?.(() => {});
+  } catch {
+    /* 缺失时静默跳过 */
+  }
+}
+
+/**
  * 直接换上某个语义情绪的表情。
  *
  * 与 applyEmotion 分开：助理那边来的事件已经带着**语义情绪**
@@ -294,7 +314,11 @@ function showEmotion(emotion) {
   emotionState = { ...emotionState, emotion };
   window.__pet.emotion = emotion;
   const name = expressionNameFor(currentManifest, emotion);
-  if (!name || !currentModel?.expression) return;
+  if (!name || !currentModel?.expression) {
+    // 视频形象：没有表情，播放绑定这个情绪语义的 clip。
+    showVideoEmotionClip(EMOTION_EXPRESSION[emotion]);
+    return;
+  }
   try {
     currentModel.expression(name)?.catch?.(() => {});
   } catch {
@@ -639,18 +663,24 @@ async function doMountModel(modelId, token) {
   }
 
   const isSpine = manifest.type === 'spine';
+  const isVideo = manifest.type === 'video';
   // Spine 的舞台按需创建：只有真的要挂 Spine 模型时才建第二块画布。
+  // 视频形象走 Live2D 那块画布（普通 Sprite，零额外运行时）。
   const target = isSpine ? await ensureSpineStage() : stage;
 
   let model;
   try {
-    model = isSpine ? await loadSpineModel(manifest, target) : await loadPetModel(manifest);
+    model = isSpine
+      ? await loadSpineModel(manifest, target)
+      : isVideo
+        ? await loadVideoModel(manifest)
+        : await loadPetModel(manifest);
   } catch (err) {
     // 加载失败时旧模型仍挂在舞台上，用户不会看到桌宠凭空消失。
     // 但失败的加载可能已经把纹理塞进了全局缓存，必须清掉，
     // 否则反复失败的切换会不断堆积显存。
-    if (!isSpine) {
-      disposeTexturesUnderPath(`${manifest.base || '/assets/live2d/models'}/${manifest.id}/`);
+    if (!isSpine && !isVideo) {
+      disposeTexturesUnderPath(`${manifest.base || '/assets/models'}/${manifest.id}/`);
     }
     throw err;
   }
@@ -1086,6 +1116,9 @@ async function boot() {
         } catch {
           /* ignore */
         }
+      } else if (currentManifest?.type === 'video') {
+        // 视频形象：没有表情，播绑定这个情绪语义的 clip。
+        showVideoEmotionClip(EMOTION_EXPRESSION[emotionState.emotion]);
       }
       // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
       resetIdleTimer();
@@ -1167,7 +1200,19 @@ async function boot() {
       // 透明处别急着把窗口变成「不吃鼠标事件」（见 lastTapAt 的说明）。
       lastTapAt = Date.now();
 
-      if (reaction.expressionName && currentModel?.expression) {
+      // 视频形象：表情语义直接当 clip 的触发器。
+      // 点身体有 smile 绑定时优先于 tapBody 绑定（菜单里都能点到两条）。
+      const videoExprSpec =
+        currentManifest?.type === 'video' && reaction.expressionSemantic
+          ? currentManifest?.motions?.[reaction.expressionSemantic]
+          : null;
+      if (videoExprSpec && currentModel?.motion) {
+        try {
+          currentModel.motion(videoExprSpec.group, videoExprSpec.index)?.catch?.(() => {});
+        } catch {
+          /* 缺失时静默跳过 */
+        }
+      } else if (reaction.expressionName && currentModel?.expression) {
         try {
           // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
           // 被拒绝的 promise 会变成未处理拒绝，违反「渲染进程不得产生未捕获错误」。
@@ -1196,6 +1241,9 @@ async function boot() {
       window.__pet.lastTapDecision = decision;
 
       const playMotion = () => {
+        // 视频形象：上面的「表情语义→clip」已经代表了这次点击，
+        // 不再叠加 tapHead/tapBody 的动作。
+        if (videoExprSpec) return;
         if (!reaction.motionSpec || !currentModel?.motion) return;
         try {
           currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});

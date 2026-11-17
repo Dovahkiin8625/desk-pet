@@ -4,6 +4,7 @@ import { appUrl } from './protocol.js';
 import { appIconPath } from './appIcon.js';
 import { placeBesidePet } from './placement.js';
 import { maxPanelHeight } from './panelHeight.js';
+import { createClipboardTracker } from './clipboardTracker.js';
 import {
   makeSearchView,
   makePluginView,
@@ -42,6 +43,9 @@ const PANEL_WIDTH = 420;
 
 /** 面板高度的下限（窗口按内容撑开，但要有边界）。 */
 const MIN_HEIGHT = 160;
+
+/** 自动填进输入框的剪贴板内容，最多只认这么久之内复制的。 */
+const PREFILL_MAX_AGE_MS = 60_000;
 
 /** 失焦后多久才收起来：躲开「刚弹出时的假失焦」。 */
 const BLUR_GRACE_MS = 300;
@@ -101,6 +105,11 @@ export function createPanelController({
    * 同一段文字只自动填一次：剪贴板没换内容就不该反复塞同样的东西。
    */
   let lastPrefilled = '';
+  /** 盯着剪贴板记「最近一次变化的时刻」：面板预填只认一分钟内复制的。 */
+  const clipboardTracker = createClipboardTracker({
+    grab: () => clipboard.readText(),
+  });
+  clipboardTracker.start();
 
   function send(channel, payload) {
     if (!win || win.isDestroyed()) return;
@@ -261,6 +270,8 @@ export function createPanelController({
    * 用户刚在别处复制了一段话（正要粘到桌宠这儿说话），
    * 面板一开就该把那段话摆在那儿——省一次 Ctrl+V。
    *
+   * **只填一分钟内复制的**：更早的内容不填。
+   *
    * **同一段文字只自动填一次**：填过的那段再来不重填。
    * 剪贴板换了内容才算新的，照填不误。
    *
@@ -273,6 +284,7 @@ export function createPanelController({
       .then((text) => {
         if (typeof text !== 'string' || !text.trim()) return;
         if (text === lastPrefilled) return;
+        if (Date.now() - clipboardTracker.changedAt() > PREFILL_MAX_AGE_MS) return;
         lastPrefilled = text;
         send('panel:prefill', text);
       })
@@ -728,6 +740,13 @@ export function createPanelController({
       if (!win || win.isDestroyed() || !win.isVisible()) return;
       place();
     },
+    /**
+     * 给面板窗口发一条频道消息（人设名之类的系统通道用）。
+     *
+     * 懒创建的窗口可能还不存在：这时不需要补发——
+     * 页面起来时会主动 invoke 拿当前值。
+     */
+    send: (channel, payload) => send(channel, payload),
     /** 桌宠被隐藏时：面板也不该留在桌面上。 */
     onPetHidden: () => {
       if (win && !win.isDestroyed() && win.isVisible()) hide();

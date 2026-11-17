@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+﻿const { contextBridge, ipcRenderer } = require('electron');
 
 /**
  * 气泡窗口**专用**的 preload。
@@ -9,6 +9,11 @@ const { contextBridge, ipcRenderer } = require('electron');
  * 多给它一份能力就多一份攻击面——它跟主进程之间还隔着 IPC。
  */
 contextBridge.exposeInMainWorld('bubble', {
+  // 人设名：界面凡是指代「它」的地方都用它。
+  personaName: () => ipcRenderer.invoke('pet:personaName'),
+  onPersonaName: (cb) => {
+    ipcRenderer.on('pet:personaName', (_e, payload) => cb(String(payload?.name ?? payload ?? '')));
+  },
   // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
   // 当前的主题：刚打开的窗口靠它知道自己该是浅色还是深色。
   theme: () => ipcRenderer.invoke('pet:theme'),

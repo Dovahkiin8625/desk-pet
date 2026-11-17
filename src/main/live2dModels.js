@@ -3,33 +3,35 @@ import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { readJson, writeJson } from './store.js';
 import { detectCubismVersion, settingsFieldForVersion } from '../shared/live2d.js';
 import { SPINE_TYPE } from '../shared/spine.js';
+import { VIDEO_TYPE } from '../shared/video.js';
 import { findSpineVariant, isSpineGameConfig, planSpineImport } from './spineModels.js';
+import { readAvatarJson, planVideoImport } from './videoModels.js';
 
-// 用户导入的 Live2D 模型：**注册表、校验、导入、删除**都归这里管。
+// 用户导入的形象模型：**注册表、校验、导入、删除**都归这里管。
 //
 // 为什么模型不进程序安装目录：装到 Program Files 下没有写权限，
-// 而「让用户自己往 assets/live2d/models/ 里拷模型、还要手写 index.json」
+// 而「让用户自己往 assets/models/ 里拷模型、还要手写 index.json」
 // 根本不算一个功能——那是开发步骤。所以导入的模型一律落在用户数据目录：
 //
-//   <userData>/live2d/models/<id>/    模型文件（递归复制）
-//   <userData>/live2d/registry.json   用户注册表
+//   <userData>/models/<id>/    模型文件（递归复制）
+//   <userData>/models/registry.json   用户注册表
 //
-// 内置注册表（assets/live2d/index.json）**一个字节都不动**：
+// 内置注册表（assets/models/index.json）**一个字节都不动**：
 // 它跟着程序走，只读；用户的东西另开一份。
 
 /** 内置模型的 URL 前缀（相对 app:// 根）。 */
-export const BUNDLED_MODELS_URL_PREFIX = '/assets/live2d/models';
+export const BUNDLED_MODELS_URL_PREFIX = '/assets/models';
 
 /** 用户导入模型的 URL 前缀（相对 app:// 根，由 protocol.js 映射到 userData）。 */
 export const USER_MODELS_URL_PREFIX = '/__models__';
 
 /** 用户模型目录与注册表在 userData 下的位置。 */
 export function userModelsDir(userDataDir) {
-  return join(userDataDir, 'live2d', 'models');
+  return join(userDataDir, 'models');
 }
 
 export function userRegistryDir(userDataDir) {
-  return join(userDataDir, 'live2d');
+  return join(userDataDir, 'models');
 }
 
 // 导入的体积上限。
@@ -54,13 +56,15 @@ function normalizeEntry(entry, { base, source }) {
   const isCubism2 = typeof entry.model2 === 'string' && entry.model2 !== '';
   // Spine 模型没有「设置文件」：它的骨架与图集在 pet.json 里点名。
   const isSpine = entry.type === SPINE_TYPE;
+  // 视频形象同理：骨架是 avatar.json 本身。
+  const isVideo = entry.type === VIDEO_TYPE;
   return {
     ...entry,
     id,
     // 名字缺失时退回 id：下拉框里出现「undefined」比显示 id 更糟。
     name: typeof entry.name === 'string' && entry.name !== '' ? entry.name : id,
-    manifest: entry.manifest || `${id}/pet.json`,
-    model3: isSpine
+    manifest: entry.manifest || (isVideo ? `${id}/avatar.json` : `${id}/pet.json`),
+    model3: isVideo || isSpine
       ? entry.model3 || ''
       : isCubism2
         ? entry.model3 || ''
@@ -71,10 +75,10 @@ function normalizeEntry(entry, { base, source }) {
   };
 }
 
-/** 读内置注册表（assets/live2d/index.json）。损坏时返回空列表，但必须留痕。 */
+/** 读内置注册表（assets/models/index.json）。损坏时返回空列表，但必须留痕。 */
 async function readBundledRegistry(rootDir) {
   try {
-    const text = await readFile(join(rootDir, 'assets', 'live2d', 'index.json'), 'utf8');
+    const text = await readFile(join(rootDir, 'assets', 'models', 'index.json'), 'utf8');
     const parsed = JSON.parse(text);
     const list = Array.isArray(parsed.models) ? parsed.models : [];
     return list
@@ -90,7 +94,7 @@ async function readBundledRegistry(rootDir) {
 
 /** 读用户注册表。文件不存在是正常情况（还没导入过模型）。 */
 export async function readUserRegistry(userDataDir) {
-  const raw = await readJson(userRegistryDir(userDataDir), 'registry.json', null, 'live2d/registry.json');
+  const raw = await readJson(userRegistryDir(userDataDir), 'registry.json', null, 'models/registry.json');
   const list = Array.isArray(raw?.models) ? raw.models : [];
   return list
     .map((entry) => normalizeEntry(entry, { base: USER_MODELS_URL_PREFIX, source: 'user' }))
@@ -124,13 +128,13 @@ export async function readMergedRegistry(rootDir, userDataDir, { includeRemoved 
  *
  * 为什么是「记一份清单」而不是删文件：内置模型躺在程序安装目录下，
  * 装到 Program Files 下根本没有写权限——删不掉。内置注册表
- * （assets/live2d/index.json）也跟着程序走、只读，更不该被改写。
+ * （assets/models/index.json）也跟着程序走、只读，更不该被改写。
  *
  * 所以「删除内置形象」的实际含义是**从形象列表里移除**：
  * 模型文件仍在程序目录里，清掉这份清单就能让它重新出现。
  */
 export async function readRemovedBundled(userDataDir) {
-  const raw = await readJson(userRegistryDir(userDataDir), 'removed.json', null, 'live2d/removed.json');
+  const raw = await readJson(userRegistryDir(userDataDir), 'removed.json', null, 'models/removed.json');
   const list = Array.isArray(raw?.models) ? raw.models : [];
   return new Set(list.filter((id) => typeof id === 'string' && id.trim() !== '').map((id) => id.trim()));
 }
@@ -278,6 +282,22 @@ async function collectSettingsHits(dir) {
   const hits = [];
   let foreign = null;
   let spineConfigFile = '';
+  // 视频形象：目录根有 avatar.json 且 type 为 video。
+  // 它的优先级高于一切——avatar.json 是这个程序自己的格式，
+  // 作者放这么一个文件就是冲着视频形象来的。
+  const avatar = await readAvatarJson(dir);
+  if (avatar.problem) {
+    foreign = { modelRoot: dir, file: 'avatar.json', foreign: true, reason: avatar.problem };
+  } else if (avatar.avatar) {
+    hits.push({
+      modelRoot: dir,
+      file: 'avatar.json',
+      kind: 'video',
+      version: 0,
+      score: 100,
+      name: typeof avatar.avatar.name === 'string' ? avatar.avatar.name : '',
+    });
+  }
   for (const e of entries) {
     if (!e.isFile() || !e.name.toLowerCase().endsWith('.json')) continue;
     const c = { modelRoot: dir, file: e.name };
@@ -687,6 +707,9 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
   if (found.kind === 'spine') {
     return importSpineModelDir({ sourceDir, variant: found.variant, rootDir, userDataDir, onProgress });
   }
+  if (found.kind === 'video') {
+    return importVideoModelDir({ sourceDir, rootDir, userDataDir, onProgress });
+  }
   if (found.ambiguous) {
     console.warn('[desk-pet] 所选目录里有多个模型设置文件，取其中最可信的：', found.file);
   }
@@ -793,6 +816,61 @@ export async function importModelDir({ sourceDir, rootDir, userDataDir, onProgre
     return { ...entry, base: USER_MODELS_URL_PREFIX, source: 'user' };
   } catch (err) {
     // 回滚：删掉已复制的目录。留下半截模型只会让下次导入撞上残留。
+    await rm(destRoot, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * 导入一个**视频**形象目录。
+ *
+ * 与 Spine 的导入流程同构，但复制的东西要少得多：
+ * avatar.json + 被引用到的视频文件。缺失的条目（file: null）直接剔除，
+ * 原因带出去给用户看；没有一条可用视频才算失败。
+ */
+async function importVideoModelDir({ sourceDir, rootDir, userDataDir, onProgress }) {
+  const name = basename(sourceDir);
+  const existing = await readMergedRegistry(rootDir, userDataDir, { includeRemoved: true });
+  const takenIds = existing.map((m) => m.id);
+  const base = slugifyModelId(name) || 'video';
+  const id = uniqueModelId(base, takenIds);
+
+  const destRoot = join(userModelsDir(userDataDir), id);
+  try {
+    const plan = await planVideoImport(sourceDir, { id, name });
+
+    onProgress?.({ phase: 'copy', copied: 0, total: plan.files.length, file: '' });
+    let copied = 0;
+    for (const f of plan.files) {
+      const dest = join(destRoot, f.to);
+      await mkdir(dirname(dest), { recursive: true });
+      await copyFile(f.from, dest);
+      copied += 1;
+      onProgress?.({ phase: 'copy', copied, total: plan.files.length, file: basename(f.to) });
+    }
+    // 规整后的清单：缺失的条目已剔除，id/name 已填好。
+    await writeJson(destRoot, 'avatar.json', plan.pet);
+
+    // 跳过的条目打到控制台：注册表条目不留警告，
+    // 用户只在导入这一次看到「缺了什么」。
+    for (const w of plan.warnings) {
+      console.warn('[desk-pet] 视频形象导入：', w);
+    }
+
+    const entry = { id, name: plan.pet.name, type: VIDEO_TYPE, manifest: `${id}/avatar.json` };
+    const currentRegistry = await readUserRegistry(userDataDir);
+    await writeUserRegistry(userDataDir, [...currentRegistry, entry]);
+
+    onProgress?.({ phase: 'done', copied, total: copied, file: '' });
+    return {
+      ...entry,
+      base: USER_MODELS_URL_PREFIX,
+      source: 'user',
+      // 导入结果里带上警告：设置窗口可以直接显示「缺了什么」，
+      // 而不是让用户去猜桌宠为什么不会比心。
+      warnings: plan.warnings,
+    };
+  } catch (err) {
     await rm(destRoot, { recursive: true, force: true }).catch(() => {});
     throw err;
   }

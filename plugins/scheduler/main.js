@@ -22,6 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { personaText } from '../../src/shared/personaName.js';
 
 import { createStore } from './lib/store.js';
 import {
@@ -457,7 +458,7 @@ export default function createSchedulerPlugin(ctx, options = {}) {
             const task = r.task;
             return {
               text: `加好了定时任务「${name}」：${describeSchedule(task.schedule)}，${
-                kind === 'command' ? '到点执行那条命令' : '到点派给桌宠去做'
+                kind === 'command' ? '到点执行那条命令' : personaText('到点派给桌宠去做')
               }。`,
               data: { id: task.id, name: task.name, schedule: task.schedule },
             };

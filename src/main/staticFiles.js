@@ -40,9 +40,9 @@ export function isDeniedResource(filePath) {
  * 把 app:// 请求的 URL 路径解析为项目内的真实文件路径。
  * 任何越界（目录穿越）一律返回 null。
  *
- * virtualRoots 是「URL 前缀 → 真实目录」的映射：用户导入的 Live2D 模型
+ * virtualRoots 是「URL 前缀 → 真实目录」的映射：用户导入的形象模型
  * 存在 userData 里，不在项目目录中，于是给它一个虚拟根
- * （如 `/__models__` → `<userData>/live2d/models`）。
+ * （如 `/__models__` → `<userData>/models/<id>`）。
  * 虚拟根同样受越界检查约束——它能提供的只有那个目录里的东西。
  */
 export function resolveStaticFile(rootDir, urlPath, virtualRoots = null) {

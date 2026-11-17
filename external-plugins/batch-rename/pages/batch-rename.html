@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>批量重命名</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        font: var(--dp-font);
+        color: var(--dp-text);
+        background: var(--dp-bg);
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+
+      /* ---------------- 顶栏 ---------------- */
+      #topbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px 0;
+      }
+      #topbar h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .spacer { flex: 1; }
+
+      /* ---------------- 规则卡 ---------------- */
+      #rules {
+        margin: 10px 14px 0;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: var(--dp-surface);
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+      }
+      .tab {
+        font: inherit;
+        font-size: 12.5px;
+        padding: 5px 16px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--dp-text-soft);
+        cursor: pointer;
+      }
+      .tab:hover { background: var(--dp-surface-hover); }
+      .tab[aria-selected='true'] {
+        background: var(--dp-bg);
+        border-color: var(--dp-border);
+        color: var(--dp-text);
+        font-weight: 600;
+      }
+      .tab-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .tab-panel[hidden] { display: none; }
+      .rule-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .rule-row > .tag {
+        flex: 0 0 84px;
+        color: var(--dp-text-soft);
+        white-space: nowrap;
+      }
+      .rule-row input[type='text'],
+      .rule-row input[type='number'],
+      .rule-row select {
+        font: inherit;
+        padding: 5px 8px;
+        min-width: 0;
+        background: var(--dp-bg);
+        color: var(--dp-text);
+        border: 1px solid var(--dp-border);
+        border-radius: 7px;
+      }
+      .rule-row input[type='number'] { width: 56px; }
+      .rule-row input.grow { flex: 1 1 auto; width: 0; }
+      .rule-row input.sm { width: 88px; }
+      .rule-row input.xs { width: 56px; }
+      .rule-row label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--dp-text-soft);
+        white-space: nowrap;
+      }
+      .hint-line {
+        font-size: 11px;
+        color: var(--dp-text-soft);
+        opacity: 0.85;
+      }
+
+      /* ---------------- 列表 ---------------- */
+      #list-wrap {
+        flex: 1;
+        min-height: 0;
+        margin: 10px 14px 0;
+        border: 1px solid var(--dp-border);
+        border-radius: var(--dp-radius);
+        overflow-y: auto;
+        background: var(--dp-surface);
+      }
+      #list-head {
+        position: sticky;
+        top: 0;
+        display: flex;
+        gap: 8px;
+        padding: 6px 12px;
+        font-size: 11px;
+        color: var(--dp-text-soft);
+        background: var(--dp-surface);
+        border-bottom: 1px solid var(--dp-border-soft);
+        z-index: 1;
+      }
+      .col-name { flex: 1 1 0; min-width: 0; }
+      .col-new { flex: 1 1 0; min-width: 0; }
+      .col-del { flex: 0 0 26px; }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--dp-border-soft);
+        font-size: 12.5px;
+      }
+      .row:last-child { border-bottom: none; }
+      .cell {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cell .dir {
+        display: block;
+        font-size: 10.5px;
+        color: var(--dp-text-soft);
+        opacity: 0.75;
+      }
+      .arrow {
+        flex: 0 0 18px;
+        text-align: center;
+        color: var(--dp-text-soft);
+        opacity: 0.7;
+      }
+      .row .new { color: var(--dp-accent-strong, var(--dp-text)); }
+      .row.unchanged .new { color: var(--dp-text-soft); }
+      .row.unchanged .cell, .row.unchanged .arrow { opacity: 0.55; }
+      .row.bad { background: color-mix(in srgb, var(--dp-danger) 12%, transparent); }
+      .row.bad .new { color: var(--dp-danger); }
+      .row .msg {
+        display: block;
+        font-size: 10.5px;
+        color: var(--dp-danger);
+      }
+      .del {
+        width: 26px;
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        color: var(--dp-text-soft);
+        cursor: pointer;
+      }
+      .del:hover { background: var(--dp-surface-hover); color: var(--dp-danger); }
+
+      /* 拖拽框：没文件时撑满，有文件时收成一条 */
+      #drop {
+        flex: 1;
+        margin: 10px 14px 0;
+        border: 2px dashed var(--dp-border);
+        border-radius: var(--dp-radius);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: var(--dp-text-soft);
+        text-align: center;
+        padding: 0 30px;
+        cursor: pointer;
+        user-select: none;
+      }
+      #drop:hover { border-color: var(--dp-accent-strong); }
+      #drop .big-icon { opacity: 0.55; }
+      #drop .big-icon svg { width: 44px; height: 44px; }
+      #drop .t { font-size: 14px; }
+      #drop .s { font-size: 12px; opacity: 0.8; }
+      body.has-files #drop {
+        flex: 0 0 auto;
+        flex-direction: row;
+        justify-content: center;
+        gap: 10px;
+        padding: 12px;
+      }
+      body.has-files #drop .big-icon svg { width: 20px; height: 20px; }
+      body.has-files #drop .t { font-size: 13px; }
+      body.has-files #drop .s { font-size: 11px; }
+      .del svg { width: 14px; height: 14px; }
+
+      /* ---------------- 底栏 ---------------- */
+      #bottombar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+      }
+      #stats { font-size: 12px; color: var(--dp-text-soft); }
+
+      /* 拖拽高亮 */
+      body.dragging #list-wrap,
+      body.dragging #drop {
+        border-color: var(--dp-accent-strong);
+        background: color-mix(in srgb, var(--dp-accent-strong) 8%, transparent);
+      }
+
+      /* 面板里只留拖拽框：拖进文件后自动脱离成独立窗口 */
+      body.panel-mode #topbar,
+      body.panel-mode #rules,
+      body.panel-mode #list-wrap,
+      body.panel-mode #bottombar { display: none; }
+      body.panel-mode #drop {
+        margin: 10px 14px;
+        border-width: 2px;
+        gap: 14px;
+      }
+      body.panel-mode #drop .big-icon svg { width: 54px; height: 54px; }
+      body.panel-mode #drop .t { font-size: 15px; }
+      body.panel-mode #drop .s { font-size: 12px; }
+
+      :focus-visible {
+        outline: 2px solid var(--dp-accent-strong);
+        outline-offset: 1px;
+      }
+
+      /* 窄版（面板里）：规则行换行堆叠起来 */
+      @media (max-width: 560px) {
+        .rule-row { flex-wrap: wrap; }
+        .rule-row > .tag { flex-basis: 100%; }
+        .col-del { flex-basis: 26px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="topbar">
+        <h1>批量重命名</h1>
+        <span class="spacer"></span>
+        <button type="button" class="dp-button" id="clear">清空</button>
+        <button type="button" class="dp-button" id="undo" disabled>撤销上次</button>
+      </div>
+
+      <div id="rules" aria-label="重命名规则">
+        <div class="tabs" role="tablist" aria-label="命名方式">
+          <button type="button" class="tab" role="tab" id="tabRename" data-mode="rename" aria-selected="false" aria-controls="panelRename">重新命名为</button>
+          <button type="button" class="tab" role="tab" id="tabReplace" data-mode="replace" aria-selected="true" aria-controls="panelReplace">查找 / 替换</button>
+        </div>
+
+        <div class="tab-panel" id="panelRename" role="tabpanel" aria-labelledby="tabRename" hidden>
+          <div class="rule-row">
+            <span class="tag">名称</span>
+            <input type="text" class="grow" id="renameTo" placeholder="如 度假" autocomplete="off" />
+          </div>
+          <p class="hint-line">主文件名整个换成这个名字，留空 = 不改。多个文件要从 01 起编号？勾上下面的「启用编号」。</p>
+        </div>
+
+        <div class="tab-panel" id="panelReplace" role="tabpanel" aria-labelledby="tabReplace">
+          <div class="rule-row">
+            <span class="tag">查找 / 替换</span>
+            <input type="text" class="grow" id="find" placeholder="在主文件名里找…" autocomplete="off" />
+            <span class="hint-line">→</span>
+            <input type="text" class="grow" id="replace" placeholder="替换成…" autocomplete="off" />
+            <label><input type="checkbox" id="regex" /> 正则</label>
+            <label><input type="checkbox" id="ignoreCase" /> 忽略大小写</label>
+          </div>
+
+          <div class="rule-row">
+            <span class="tag">加前缀 / 后缀</span>
+            <input type="text" class="grow" id="prefix" placeholder="前缀（放在开头）" autocomplete="off" />
+            <input type="text" class="grow" id="suffix" placeholder="后缀（放在扩展名之前）" autocomplete="off" />
+          </div>
+
+          <div class="rule-row">
+            <span class="tag">大小写</span>
+            <select id="caseMode">
+              <option value="none">不变</option>
+              <option value="lower">主文件名全部小写</option>
+              <option value="upper">主文件名全部大写</option>
+            </select>
+            <span class="hint-line">只动主文件名，扩展名不动</span>
+          </div>
+        </div>
+
+        <div class="rule-row">
+          <span class="tag">扩展名</span>
+          <input type="text" class="sm" id="extFind" placeholder="原：如 jpeg" autocomplete="off" />
+          <span class="hint-line">→</span>
+          <input type="text" class="sm" id="extReplace" placeholder="新：如 jpg" autocomplete="off" />
+          <span class="hint-line">原留空 = 全部；新留空 = 删除扩展名；两个都空 = 不改</span>
+        </div>
+
+        <div class="rule-row">
+          <span class="tag">编号</span>
+          <label><input type="checkbox" id="numOn" /> 启用</label>
+          <label>起始<input type="number" id="numStart" value="1" /></label>
+          <label>位数<input type="number" id="numWidth" value="2" min="1" max="8" /></label>
+          <select id="numPosition">
+            <option value="prefix">序号在前</option>
+            <option value="suffix">序号在后</option>
+          </select>
+          <label>分隔符<input type="text" class="xs" id="numSep" value="-" autocomplete="off" /></label>
+        </div>
+      </div>
+
+      <div id="drop" role="button" tabindex="0" aria-label="选择要重命名的文件">
+        <span class="big-icon" id="drop-icon"></span>
+        <div class="t">拖拽文件到这里</div>
+        <div class="s">或点这里选择文件</div>
+      </div>
+
+      <div id="list-wrap" hidden aria-label="预览">
+        <div id="list-head"><span class="col-name">原文件名</span><span class="arrow"></span><span class="col-new">新文件名</span><span class="col-del"></span></div>
+        <div id="list"></div>
+      </div>
+
+      <div id="bottombar">
+        <span id="stats"></span>
+        <span class="spacer"></span>
+        <button type="button" class="dp-button primary" id="apply" disabled>应用</button>
+      </div>
+    </div>
+
+    <script type="module" src="batch-rename.js"></script>
+  </body>
+</html>

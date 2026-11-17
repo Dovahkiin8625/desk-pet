@@ -14,11 +14,11 @@ import { join } from 'node:path';
 
 const ROOT = process.cwd();
 const USER_DATA = join(ROOT, '.tmp-e2e-userdata');
-const HARU = join(ROOT, 'assets', 'live2d', 'models', 'haru');
+const HARU = join(ROOT, 'assets', 'models', 'haru');
 
 /** 在 userData 里摆一份「导入好的」模型与用户注册表。 */
 async function seedImportedModel() {
-  const modelDir = join(USER_DATA, 'live2d', 'models', 'testchar');
+  const modelDir = join(USER_DATA, 'models', 'testchar');
   await rm(modelDir, { recursive: true, force: true });
   await mkdir(join(modelDir, 'Haru.2048'), { recursive: true });
   await cp(join(HARU, 'Haru.moc3'), join(modelDir, 'Haru.moc3'));
@@ -47,7 +47,7 @@ async function seedImportedModel() {
   );
   // 一个**加载不了**的导入模型：文件在库里，但 moc3 是坏的。
   // 用户想删掉的往往正是这种形象——它切不过去。
-  const brokenDir = join(USER_DATA, 'live2d', 'models', 'broken');
+  const brokenDir = join(USER_DATA, 'models', 'broken');
   await mkdir(brokenDir, { recursive: true });
   await writeFile(join(brokenDir, 'Broken.moc3'), Buffer.from('not a real moc3 file'));
   await writeFile(
@@ -70,7 +70,7 @@ async function seedImportedModel() {
 
   // 用户注册表。
   await writeFile(
-    join(USER_DATA, 'live2d', 'registry.json'),
+    join(USER_DATA, 'models', 'registry.json'),
     JSON.stringify({
       version: 1,
       models: [
@@ -231,7 +231,7 @@ test.describe('导入的 Live2D 模型', () => {
       const exists = await app.evaluate(async ({ app: electronApp }) => {
         const fs = process.getBuiltinModule('node:fs/promises');
         const path = process.getBuiltinModule('node:path');
-        const dir = path.join(electronApp.getPath('userData'), 'live2d', 'models', 'broken');
+        const dir = path.join(electronApp.getPath('userData'), 'models', 'broken');
         return fs.stat(dir).then(() => true, () => false);
       });
       expect(exists).toBe(false);
@@ -309,7 +309,7 @@ test.describe('导入的 Live2D 模型', () => {
         // process.getBuiltinModule 是 ESM 下拿到内置模块的办法。
         const fs = process.getBuiltinModule('node:fs/promises');
         const path = process.getBuiltinModule('node:path');
-        const dir = path.join(electronApp.getPath('userData'), 'live2d', 'models', 'char');
+        const dir = path.join(electronApp.getPath('userData'), 'models', 'char');
         const files = await fs.readdir(dir).catch(() => []);
         return files;
       });
@@ -331,7 +331,7 @@ test.describe('导入的 Live2D 模型', () => {
       const afterDelete = await app.evaluate(async ({ app: electronApp }) => {
         const fs = process.getBuiltinModule('node:fs/promises');
         const path = process.getBuiltinModule('node:path');
-        const dir = path.join(electronApp.getPath('userData'), 'live2d', 'models', 'char');
+        const dir = path.join(electronApp.getPath('userData'), 'models', 'char');
         const exists = await fs.stat(dir).then(() => true, () => false);
         return exists;
       });

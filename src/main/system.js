@@ -9,6 +9,7 @@ import {
 } from './edgeDock.js';
 import { clampToDisplays, displayForPoint } from './display.js';
 import { HOTKEY_SLOTS, getHotkeySlot } from '../shared/hotkeys.js';
+import { personaText } from '../shared/personaName.js';
 import { visibleRectOnScreen, windowRectForVisible } from '../shared/petRect.js';
 
 /**
@@ -621,7 +622,7 @@ export function createSystemController({
       setHotkeyStatus(slot.key, {
         state: 'error',
         accelerator: current,
-        error: `这个组合已经被「${clash.label}」用了`,
+        error: personaText(`这个组合已经被「${clash.label}」用了`),
       });
       return false;
     }

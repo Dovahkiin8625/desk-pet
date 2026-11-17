@@ -21,7 +21,7 @@ export function disposeTextures(model) {
   const keys = [];
   for (const t of textures) {
     // 缓存键是**加载时用的那个 URL**（相对 app:// 根的路径，如
-    // /assets/live2d/models/haru/Haru.2048/texture_00.png），
+    // /assets/models/haru/Haru.2048/texture_00.png），
     // 不是 baseTexture.resource.url 里的绝对地址——用绝对地址查不到缓存。
     const key = t?.baseTexture?.cacheId || t?.baseTexture?.resource?.url;
     if (key) keys.push(key);

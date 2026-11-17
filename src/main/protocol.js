@@ -30,6 +30,8 @@ const MIME = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
   '.moc3': 'application/octet-stream',

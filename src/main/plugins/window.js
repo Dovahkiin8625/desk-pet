@@ -455,6 +455,17 @@ export function createPluginWindowController({
      */
     destroyAll,
     /**
+     * 给**所有**打开的插件窗口发一条频道消息（人设名之类的系统通道）。
+     *
+     * 没打开的窗口不用补发：页面起来时会主动 invoke 拿当前值。
+     */
+    broadcast: (channel, payload) => {
+      for (const entry of windows.values()) {
+        const w = entry?.win;
+        if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
+      }
+    },
+    /**
      * 桌宠动了：独立窗口跟着动。
      *
      * 小部件不跟：它常驻桌面，用户拖到哪儿就待在哪儿。

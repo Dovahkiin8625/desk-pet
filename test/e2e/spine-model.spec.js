@@ -120,7 +120,7 @@ const ATLAS = [
 ].join('\n');
 
 async function seedSpineModel() {
-  const dir = join(USER_DATA, 'live2d', 'models', 'spinechar');
+  const dir = join(USER_DATA, 'models', 'spinechar');
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'model.json'), JSON.stringify(SKELETON));
@@ -143,7 +143,7 @@ async function seedSpineModel() {
     }),
   );
   await writeFile(
-    join(USER_DATA, 'live2d', 'registry.json'),
+    join(USER_DATA, 'models', 'registry.json'),
     JSON.stringify({
       version: 1,
       models: [

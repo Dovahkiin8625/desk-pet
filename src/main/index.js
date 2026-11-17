@@ -38,6 +38,12 @@ import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credent
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 import { buildTapVoicePayload } from '../shared/tapVoice.js';
 import { sanitizeMotions } from '../shared/motions.js';
+import {
+  personaName as personaNameOf,
+  personaText,
+  currentPersonaName,
+  setCurrentPersonaName,
+} from '../shared/personaName.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -174,8 +180,8 @@ function startCursorTracking() {
 /**
  * 读取形象注册表（内置 + 用户导入），并把条目**规整**成可用形状。
  *
- * 实现在 src/main/live2dModels.js：内置的读 assets/live2d/index.json，
- * 导入的读 userData/live2d/registry.json，两边合成同一个形状
+ * 实现在 src/main/live2dModels.js：内置的读 assets/models/index.json，
+ * 导入的读 <userData>/models/registry.json，两边合成同一个形状
  * （都带 base / source），渲染层于是不必关心某个形象是哪来的。
  */
 async function readModelRegistry() {
@@ -235,6 +241,29 @@ function broadcastSettings(next) {
   for (const w of targets) {
     w.webContents.send('pet:settingsChanged', next);
   }
+}
+
+/**
+ * 人设名变了：广播给**所有**窗口，
+ * 并让主进程里的插件与菜单读到新名字。
+ *
+ * 换名之后页面上的「它」立刻换字，不用重启。
+ */
+function broadcastPersonaName(name) {
+  const payload = { name: String(name || '') };
+  setCurrentPersonaName(payload.name);
+  const targets = [];
+  if (win && !win.isDestroyed()) targets.push(win);
+  if (settingsWin && !settingsWin.isDestroyed()) targets.push(settingsWin);
+  for (const w of targets) {
+    w.webContents.send('pet:personaName', payload);
+  }
+  bubble?.send?.('pet:personaName', payload);
+  panel?.send?.('pet:personaName', payload);
+  pluginWindows?.broadcast?.('pet:personaName', payload);
+  // 托盘图标的 tooltip 与菜单里有指代它的项，一起换
+  if (tray) tray.setToolTip(payload.name);
+  refreshTrayMenu();
 }
 
 /**
@@ -527,7 +556,7 @@ async function confirmDispatchOff(event) {
   const options = {
     type: 'warning',
     title: '切到只聊天',
-    message: '切到「只聊天」后，桌宠不再接新活，正在做的事也会停下来。',
+    message: personaText('切到「只聊天」后，桌宠不再接新活，正在做的事也会停下来。'),
     detail: '已经派出去的事会被停掉。',
     buttons: ['取消', '切到只聊天'],
     defaultId: 0,
@@ -600,18 +629,21 @@ async function importModel(event) {
     return {
       ok: false,
       error:
-        '所选文件夹里没有找到 Live2D 模型设置文件——' +
-        '请选择包含 .model3.json（Cubism 4）或 .model.json（Cubism 2）的文件夹，' +
-        '或者直接选择装着若干个模型的一层父文件夹。',
+        '所选文件夹里没有找到可识别的形象——' +
+        '视频形象需要它根目录下有 avatar.json（type: "video"）与对应的视频文件；' +
+        'Live2D 模型需要 .model3.json（Cubism 4）或 .model.json（Cubism 2）；' +
+        '或者直接选择装着若干个形象的一层父文件夹。',
     };
   }
   if (scan.mode === 'foreign') {
     const f = scan.foreignDirs[0];
+    const isAvatar = f.file === 'avatar.json';
     return {
       ok: false,
-      error:
-        `所选文件夹里的 ${f.file} 不是 Cubism 模型（${f.reason || '非 Cubism 格式'}），` +
-        '桌宠用 Cubism Core 渲染不了它。请换用 Cubism 2 / Cubism 4 格式的模型。',
+      error: isAvatar
+        ? `所选文件夹里的 avatar.json 无法用作视频形象：${f.reason || '格式不正确'}。`
+        : `所选文件夹里的 ${f.file} 不是 Cubism 模型（${f.reason || '非 Cubism 格式'}），` +
+          '桌宠用 Cubism Core 渲染不了它。请换用 Cubism 2 / Cubism 4 格式的模型。',
     };
   }
 
@@ -690,7 +722,7 @@ async function importModelsInBatch(dirs, foreignDirs, onProgress) {
       name: basename(f.dir),
       error:
         `${f.file} 不是 Cubism 模型（${f.reason || '非 Cubism 格式'}），` +
-        '桌宠用 Cubism Core 渲染不了它',
+        personaText('桌宠用 Cubism Core 渲染不了它'),
     });
   }
 
@@ -749,7 +781,7 @@ async function deleteModel(event, modelId) {
     title: isBundled ? '移除预制形象' : '删除模型',
     message: isBundled ? `确定移除「${entry.name}」吗？` : `确定删除「${entry.name}」吗？`,
     detail: isBundled
-      ? '它会从形象列表里消失。模型文件仍保留在程序目录中，清空用户数据目录里的 live2d/removed.json 可让它重新出现。'
+      ? '它会从形象列表里消失。模型文件仍保留在程序目录中，清空用户数据目录里的 models/removed.json 可让它重新出现。'
       : '模型文件会从用户数据目录中移除，无法撤销。',
     buttons: ['取消', isBundled ? '移除' : '删除'],
     defaultId: 0,
@@ -887,12 +919,12 @@ function onModelError(info) {
     dialog
       .showMessageBox({
         type: 'error',
-        title: isModelLoad ? '桌面宠物 · 模型加载失败' : '桌面宠物 · 渲染层异常',
-        message: isModelLoad ? '桌宠模型加载失败' : '桌宠渲染层发生异常',
+        title: personaText(isModelLoad ? '桌面宠物 · 模型加载失败' : '桌面宠物 · 渲染层异常'),
+        message: personaText(isModelLoad ? '桌宠模型加载失败' : '桌宠渲染层发生异常'),
         detail: isModelLoad
           ? `${message}\n\n` +
             '若还没有下载官方样例资源，请先在项目目录执行 npm run setup；' +
-            '若模型文件不完整，删除 assets/live2d/models/ 下的对应目录后重跑 npm run setup。'
+            '若模型文件不完整，删除 assets/models/ 下的对应目录后重跑 npm run setup。'
           : `${message}\n\n` +
             '这是渲染层的问题，与模型文件无关；磁盘上选择的形象不会被改动。' +
             '若持续出现，请重启应用。',
@@ -1011,7 +1043,7 @@ function openSettings() {
     resizable: true,
     minimizable: false,
     maximizable: false,
-    title: '桌面宠物 · 设置',
+    title: `${currentPersonaName()} · 设置`,
     autoHideMenuBar: true,
     icon: appIconPath(ROOT),
     // 先藏着，等页面画好再显示：窗口自己的底色是白的，
@@ -1073,6 +1105,7 @@ function menuActions() {
     isClickThrough: () => settings?.clickThrough === true,
     isDocked: () => system?.getState?.().dock != null,
     retrievePet: () => system?.retrievePet?.(),
+    personaName: () => currentPersonaName(),
     listMotions: () => petMotions,
     playMotion: playMenuMotion,
   };
@@ -1263,6 +1296,11 @@ app.whenReady().then(async () => {
       })),
     saveAssistantPrefs: (patch) => {
       const next = assistant?.update(patch || {});
+      // 人设名变了：广播给所有窗口，页面文字跟着换。
+      if (patch && typeof patch === 'object' && patch?.llm?.persona && patch.llm.persona.name !== undefined) {
+        const newName = personaNameOf(assistant?.getState?.());
+        broadcastPersonaName(newName);
+      }
       // 音效开关要立刻生效：它作用在渲染层的提示音上。
       if (typeof patch?.sound?.enabled === 'boolean' && win && !win.isDestroyed()) {
         win.webContents.send('pet:soundEnabled', { enabled: patch.sound.enabled });
@@ -1317,6 +1355,7 @@ app.whenReady().then(async () => {
     // 这个插件接不接给 agent：它的工具与技能挂不挂进 agent 的表。
     setPluginAgentEnabled: (id, enabled) =>
       plugins?.setAgentEnabled(String(id || ''), Boolean(enabled)),
+    getPersonaName: () => personaNameOf(assistant?.getState?.()),
   });
 
   // 显示器拓扑变化时缓存失效：拖拽夹紧必须按当前屏幕算。
@@ -1480,6 +1519,9 @@ app.whenReady().then(async () => {
     getInputText: () => panel?.getInputText?.() || '',
   });
   await plugins.load();
+  // 插件与主进程文案要跟人设名对齐：先按磁盘上的助理状态定一份
+  // （人设名在设置里改之后，saveAssistantPrefs 会再广播一次）。
+  setCurrentPersonaName(personaNameOf(assistant?.getState?.()));
 
   // 界面路由：面板工作台与独立窗口都是「界面落点」。
   //

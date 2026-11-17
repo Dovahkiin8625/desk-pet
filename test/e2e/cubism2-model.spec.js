@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 const ROOT = process.cwd();
 const USER_DATA = join(ROOT, '.tmp-e2e-cubism2');
-const DSR50 = join(ROOT, 'assets', 'live2d', 'models', 'DSR50');
+const DSR50 = join(ROOT, 'assets', 'models', 'DSR50');
 
 test.describe('Cubism 2 老模型', () => {
   test.beforeAll(async () => {

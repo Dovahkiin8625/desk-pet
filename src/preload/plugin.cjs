@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 /**
  * 插件窗口**专用**的 preload。
@@ -28,6 +28,63 @@ function readParams() {
 }
 
 const { pluginId, mode } = readParams();
+
+/**
+ * 拖进来的文件：转发给插件 iframe。
+ *
+ * 从资源管理器拖文件进来，Chromium 要壳（这一层）收下（dragover 里
+ * preventDefault）——插件页面自己在 iframe 里，接不住；它也没有
+ * webUtils 可用。所以壳把落在 <iframe> 上的文件换成路径，
+ * 再 postMessage 进 iframe，插件自己处理。
+ */
+function forwardDropsToPluginFrame() {
+  const frame = () => document.querySelector('#plugin-frame');
+  /** 鼠标点在插件 iframe 里吗（插件没挂着的时候 iframe 宽度是 0）。 */
+  const overFrame = (e) => {
+    const el = frame();
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const { clientX: x, clientY: y } = e;
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
+
+  let depth = 0;
+  window.addEventListener('dragenter', (e) => {
+    if (!overFrame(e)) return;
+    e.preventDefault();
+    depth += 1;
+    frame()?.contentWindow?.postMessage({ type: 'desk-pet:file-dragenter' }, '*');
+  });
+  window.addEventListener('dragover', (e) => {
+    if (!overFrame(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', () => {
+    if (depth > 0) {
+      depth -= 1;
+      if (depth === 0) frame()?.contentWindow?.postMessage({ type: 'desk-pet:file-dragleave' }, '*');
+    }
+  });
+  window.addEventListener('drop', (e) => {
+    if (!overFrame(e)) return;
+    depth = 0;
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length === 0) return;
+    const paths = files.map((f) => {
+      try {
+        return webUtils.getPathForFile(f);
+      } catch {
+        return '';
+      }
+    }).filter(Boolean);
+    if (paths.length === 0) return;
+    e.preventDefault();
+    frame()?.contentWindow?.postMessage({ type: 'desk-pet:file-drop', paths }, '*');
+  });
+}
+forwardDropsToPluginFrame();
 
 /**
  * 订阅「推来的数据」的回调。
@@ -76,6 +133,11 @@ ipcRenderer.on('plugin:data', (_e, payload) => deliverData(payload));
 ipcRenderer.on('plugin:tick', (_e, payload) => deliverTick(payload));
 
 contextBridge.exposeInMainWorld('plugin', {
+  // 人设名：界面凡是指代「它」的地方都用它。
+  personaName: () => ipcRenderer.invoke('pet:personaName'),
+  onPersonaName: (cb) => {
+    ipcRenderer.on('pet:personaName', (_e, payload) => cb(String(payload?.name ?? payload ?? '')));
+  },
   // 主题变了：渲染层据此给 <html> 标 data-theme 与 data-scheme。
   // 当前的主题：刚打开的窗口靠它知道自己该是浅色还是深色。
   theme: () => ipcRenderer.invoke('pet:theme'),
@@ -118,6 +180,17 @@ contextBridge.exposeInMainWorld('plugin', {
     // 恢复默认尺寸（清单里写的那个大小）。
     resetSize: () => ipcRenderer.invoke('plugin:window:resetSize'),
     close: () => ipcRenderer.invoke('plugin:window:close'),
+  },
+
+  // 文件拖放：Electron 32 起 File.path 已被移除，
+  // 真实的路径要用 webUtils.getPathForFile 从 File 对象里取
+  // （它只能在 preload 里调，所以由 preload 代劳）。
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
   },
 
   // 页面注册好监听器了：主进程在这之前发来的消息会被丢弃，

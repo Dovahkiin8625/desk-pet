@@ -17,10 +17,10 @@ import {
   scanModelDirs,
 } from '../../src/main/live2dModels.js';
 
-/** 摆一个假的内置注册表目录（assets/live2d/index.json 的位置）。 */
+/** 摆一个假的内置注册表目录（assets/models/index.json 的位置）。 */
 async function makeRoot() {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-import-root-'));
-  const dir = join(root, 'assets', 'live2d');
+  const dir = join(root, 'assets', 'models');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'index.json'), JSON.stringify({ models: [] }, null, 2));
   return root;
@@ -146,7 +146,7 @@ test('导入时清掉设置文件里的空纹理引用', async () => {
   const model = await importModelDir({ sourceDir: dir, rootDir: root, userDataDir: userData });
 
   const settings = JSON.parse(
-    await readFile(join(userData, 'live2d', 'models', model.id, 'model0.json'), 'utf8'),
+    await readFile(join(userData, 'models', model.id, 'model0.json'), 'utf8'),
   );
   assert.deepEqual(settings.FileReferences.Textures, ['Textures_0_0.png']);
 

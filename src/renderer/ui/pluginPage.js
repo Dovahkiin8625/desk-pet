@@ -106,6 +106,14 @@ export function bindSurface() {
     /** 在面板的 iframe 里吗（面板窄、窗口宽，高度策略也相反）。 */
     inPanel,
 
+    /** 人设名：界面凡是指代「它」的地方都用它。 */
+    personaName: () => (api?.personaName ? api.personaName() : Promise.resolve('')),
+
+    /** 换名广播（设置里改了人设名之后推过来）。 */
+    onPersonaName(cb) {
+      api?.onPersonaName?.(cb);
+    },
+
     /** 打开时的第一份数据。 */
     data: () => (api ? api.data() : Promise.resolve(null)),
 

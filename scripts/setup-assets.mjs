@@ -5,13 +5,13 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const OUT_ROOT = join(ROOT, 'assets', 'live2d', 'models');
+const OUT_ROOT = join(ROOT, 'assets', 'models');
 const API = 'https://api.github.com/repos/Live2D/CubismWebSamples/git/trees/develop?recursive=1';
 const RAW = 'https://raw.githubusercontent.com/Live2D/CubismWebSamples/develop';
 
 // 要下载的官方样例模型。
 //
-// id 是**本地目录名**（必须与 assets/live2d/index.json 里的注册表 id 一致——
+// id 是**本地目录名**（必须与 assets/models/index.json 里的注册表 id 一致——
 // 加载模型时拼的路径是 `models/<id>/<model3>`），dir 是上游仓库里的目录名。
 // 本地目录用小写：注册表 id 统一小写，用户导入同名模型时才会正确去重。
 const MODELS = [

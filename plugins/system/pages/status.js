@@ -12,6 +12,10 @@ import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { createDrawer } from '/src/renderer/ui/drawer.js';
 import { hydrateIcons, iconSvg } from '/src/renderer/ui/icons.js';
 import { formatNetworkShort } from '/src/shared/network.js';
+import { initPersonaName } from '/src/renderer/ui/persona.js';
+
+// 页面里凡是写死「桌宠」的地方，换成人设名（默认「小桌」）。
+initPersonaName();
 
 const surface = bindSurface();
 

@@ -473,7 +473,7 @@ test.describe('聊天记录插件', () => {
       await expect(frame.locator('.turn-title')).toHaveText('在吗');
 
       // 块里分两段
-      await expect(frame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
+      await expect(frame.locator('.lane-front .lane-title')).toHaveText('小桌这边');
       await expect(frame.locator('.lane-back .lane-title')).toHaveText('后台那边');
 
       // 交底默认折起，展开看得到原文
@@ -564,7 +564,7 @@ test.describe('聊天记录插件', () => {
 
       const winFrame = pluginWin.frameLocator('#plugin-frame');
       await expect(winFrame.locator('.turn-title')).toHaveText('在吗');
-      await expect(winFrame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
+      await expect(winFrame.locator('.lane-front .lane-title')).toHaveText('小桌这边');
       await expect(winFrame.locator('.lane-back .lane-title')).toHaveText('后台那边');
     } finally {
       await app.close();
@@ -588,7 +588,7 @@ test.describe('聊天记录插件', () => {
       });
 
       const frame = panel.frameLocator('#plugin-frame');
-      await expect(frame.locator('.lane-front .lane-title')).toHaveText('桌宠这边');
+      await expect(frame.locator('.lane-front .lane-title')).toHaveText('小桌这边');
       await expect(frame.locator('.lane-back')).toHaveCount(0);
       // 旧记录既没有模型记录，答复上也没带轮数与模型名——不画「问过模型」那一行。
       await expect(frame.locator('#list')).not.toContainText('问模型');
@@ -667,7 +667,7 @@ test.describe('聊天记录插件', () => {
       const frame = panel.frameLocator('#plugin-frame');
       const flags = frame.locator('.turn-flag');
       await expect(flags).toHaveCount(2);
-      await expect(flags).toHaveText(['桌宠自己起的头', '没有对应的那句话']);
+      await expect(flags).toHaveText(['小桌自己起的头', '没有对应的那句话']);
     } finally {
       await app.close();
     }
@@ -745,7 +745,7 @@ test.describe('聊天记录插件', () => {
 
       // 主动搭话那块：它自己的模型原话与工具调用都在里面。
       const petTurn = frame.locator('.turn').first();
-      await expect(petTurn.locator('.turn-flag')).toHaveText('桌宠自己起的头');
+      await expect(petTurn.locator('.turn-flag')).toHaveText('小桌自己起的头');
       await expect(petTurn.locator('.turn-title')).toHaveText('早上好');
       await expect(petTurn.locator('.lane-front')).toContainText('我看下时间');
       await expect(petTurn.locator('.lane-front')).toContainText('问了时间');

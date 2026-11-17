@@ -1,0 +1,30 @@
+{
+  "id": "my-avatar",
+  "name": "我的形象",
+  "type": "video",
+  "idleStrategy": "random",
+  "viewport": { "width": 300, "height": 560 },
+  "fit": { "scale": 1.0, "anchor": [0.5, 1.0], "offset": [0, 0] },
+  "videos": [
+    { "key": "idle", "file": null, "label": "待机（呼吸起伏）", "loop": true, "semantic": "idle" },
+    { "key": "idle-tilt", "file": null, "label": "歪头杀", "loop": true },
+    { "key": "idle-weight-shift", "file": null, "label": "重心换脚", "loop": true },
+    { "key": "sleepy", "file": null, "label": "犯困打瞌睡" },
+    { "key": "stretch", "file": null, "label": "伸懒腰" },
+    { "key": "hair", "file": null, "label": "撩头发" },
+    { "key": "look-around", "file": null, "label": "环顾四周", "loop": true },
+    { "key": "laugh", "file": null, "label": "开怀大笑" },
+    { "key": "greet", "file": null, "label": "挥手打招呼" },
+    { "key": "heart-double", "file": null, "label": "比心（双手）" },
+    { "key": "heart-wink", "file": null, "label": "眨眼比心" },
+    { "key": "thank", "file": null, "label": "点头致谢" },
+    { "key": "please", "file": null, "label": "双手合十" },
+    { "key": "pout", "file": null, "label": "鼓腮假气" },
+    { "key": "angry", "file": null, "label": "双手叉腰" },
+    { "key": "tsun", "file": null, "label": "假生气变笑" },
+    { "key": "dance-sway", "file": null, "label": "原地摇摆" },
+    { "key": "dance-clap", "file": null, "label": "拍手打节拍" },
+    { "key": "sing", "file": null, "label": "哼歌摇头" },
+    { "key": "eye-rub", "file": null, "label": "揉眼睛" }
+  ]
+}

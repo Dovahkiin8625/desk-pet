@@ -6,7 +6,7 @@
 
 // 缩放为 1 时桌宠窗口的尺寸（也是模型适配的基准画布）。
 //
-// 与 assets/live2d/models/*/pet.json 的 viewport 保持一致。
+// 与 assets/models/*/pet.json 的 viewport 保持一致。
 // 清单里的 viewport 不能拿来用：settings 的 sanitizeSettings 会把 viewport 丢掉。
 export const PET_VIEWPORT = Object.freeze({ width: 300, height: 560 });
 

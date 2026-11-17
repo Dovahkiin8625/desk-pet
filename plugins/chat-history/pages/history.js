@@ -1,4 +1,5 @@
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
+import { initPersonaName } from '/src/renderer/ui/persona.js';
 import { buildTurns } from './turns.js';
 import { createEntryStore } from './entries.js';
 import {
@@ -35,6 +36,8 @@ import {
  */
 
 const surface = bindSurface();
+// 页面里凡是写死「桌宠」的地方，换成人设名（默认「小桌」）。
+initPersonaName();
 
 // 面板里与独立窗口里，高度策略是**相反**的（见 pluginPage.js）。
 document.body.classList.toggle('dp-panel', Boolean(surface.inPanel));

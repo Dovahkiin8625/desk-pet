@@ -13,7 +13,7 @@ import { loadSpineRuntime } from './runtime.js';
  */
 export async function loadSpineModel(manifest, stage) {
   const { pixi, spineCore, spinePixi } = await loadSpineRuntime();
-  const dir = `${manifest.base || '/assets/live2d/models'}/${manifest.id}`;
+  const dir = `${manifest.base || '/assets/models'}/${manifest.id}`;
   const spec = manifest.spine || {};
 
   const atlasRes = await fetch(`${dir}/${spec.atlas}`);

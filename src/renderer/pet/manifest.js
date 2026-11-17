@@ -1,5 +1,6 @@
 import { detectCubismVersion } from '../../shared/live2d.js';
 import { SPINE_TYPE, isSpineManifest } from '../../shared/spine.js';
+import { VIDEO_TYPE, isVideoManifest, normalizeVideoList, deriveVideoMotions } from '../../shared/video.js';
 import { motionLabelFromFile } from '../../shared/motions.js';
 
 // 格式判别规则在 src/shared/live2d.js：主进程与渲染层共用同一份，
@@ -158,7 +159,7 @@ export function resolveMotionSpec(manifest, key) {
 }
 
 /** 内置模型的 URL 前缀（相对 app:// 根）。 */
-const BUNDLED_MODELS_BASE = '/assets/live2d/models';
+const BUNDLED_MODELS_BASE = '/assets/models';
 
 /**
  * 读取形象注册表。
@@ -177,7 +178,7 @@ async function fetchRegistry() {
     console.warn('[desk-pet] 形象注册表读取失败（IPC）：', err?.message);
   }
   try {
-    const registryRes = await fetch('/assets/live2d/index.json');
+    const registryRes = await fetch('/assets/models/index.json');
     if (!registryRes.ok) throw new Error(`HTTP ${registryRes.status}`);
     const registry = await registryRes.json();
     const list = Array.isArray(registry.models) ? registry.models : [];
@@ -245,6 +246,38 @@ export async function loadManifest(modelId, registry) {
       availableExpressions: [],
       motions: manifestJson.motions || {},
       motionGroups: manifestJson.motionGroups || {},
+      derived: false,
+      base: urlBase,
+      source: entry.source || 'bundled',
+    };
+  }
+
+  // 视频形象：清单就是 avatar.json 本身。
+  // 注册表条目与 avatar.json 任一说是 video 就走这条路。
+  if (entry.type === VIDEO_TYPE || isVideoManifest(manifestJson)) {
+    if (!manifestJson) throw new Error(`视频形象缺少清单：${entryId}`);
+    // 防御性规整：内置的 avatar.json 由导入流程写好规整版，
+    // 这条路径对的是手写的形象（或用户手改的注册表）。
+    const { videos } = normalizeVideoList(manifestJson.videos);
+    const available = videos.filter((v) => v.file);
+    if (available.length === 0) throw new Error(`视频形象没有任何可用的视频：${entryId}`);
+    const derived = deriveVideoMotions(available);
+    return {
+      ...manifestJson,
+      id: entryId,
+      name: entry.name || manifestJson.name || entryId,
+      type: VIDEO_TYPE,
+      modelFile: '',
+      cubismVersion: 0,
+      viewport: manifestJson.viewport || { width: 300, height: 560 },
+      fit: manifestJson.fit || { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
+      // 视频形象没有表情：语义表情一律留空。
+      expressions: {},
+      availableExpressions: [],
+      videos: available,
+      motions: derived.motions,
+      motionGroups: derived.motionGroups,
+      motionNames: derived.motionNames,
       derived: false,
       base: urlBase,
       source: entry.source || 'bundled',

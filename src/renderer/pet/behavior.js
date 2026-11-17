@@ -8,9 +8,10 @@ export const ZONE_BEHAVIOR = {
 
 export function reactionFor(manifest, zone) {
   const b = ZONE_BEHAVIOR[zone];
-  if (!b) return { expressionName: null, motionSpec: null };
+  if (!b) return { expressionName: null, expressionSemantic: null, motionSpec: null };
   return {
     expressionName: resolveExpressionName(manifest, b.expression),
+    expressionSemantic: b.expression,
     motionSpec: resolveMotionSpec(manifest, b.motion),
   };
 }
@@ -19,6 +20,7 @@ export function reactionFor(manifest, zone) {
 export function idleReaction(manifest) {
   return {
     expressionName: resolveExpressionName(manifest, 'normal'),
+    expressionSemantic: 'normal',
     motionSpec: resolveMotionSpec(manifest, 'idle'),
   };
 }

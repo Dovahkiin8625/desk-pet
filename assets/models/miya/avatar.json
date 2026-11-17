@@ -1,0 +1,85 @@
+{
+  "id": "miya",
+  "name": "Miya",
+  "type": "video",
+  "idleStrategy": "random",
+  "viewport": {
+    "width": 300,
+    "height": 560
+  },
+  "fit": {
+    "scale": 1.0,
+    "anchor": [
+      0.5,
+      1.0
+    ],
+    "offset": [
+      0,
+      0
+    ]
+  },
+  "videos": [
+    {
+      "key": "idle",
+      "file": "videos/idle-1.webm",
+      "label": "待机（呼吸）",
+      "loop": true,
+      "semantic": "idle"
+    },
+    {
+      "key": "idle2",
+      "file": "videos/idle-2.webm",
+      "label": "待机（变体）",
+      "loop": true,
+      "semantic": "idle"
+    },
+    {
+      "key": "laugh",
+      "file": "videos/laugh.webm",
+      "label": "开怀大笑"
+    },
+    {
+      "key": "heart-1",
+      "file": "videos/heart-1.webm",
+      "label": "比心（双手）1",
+      "semantic": "smile"
+    },
+    {
+      "key": "heart-2",
+      "file": "videos/heart-2.webm",
+      "label": "比心（双手）2",
+      "semantic": "tapBody"
+    },
+    {
+      "key": "angry-1",
+      "file": "videos/angry-1.webm",
+      "label": "生气 1",
+      "semantic": "angry"
+    },
+    {
+      "key": "angry-2",
+      "file": "videos/angry-2.webm",
+      "label": "生气 2"
+    },
+    {
+      "key": "dance-1",
+      "file": "videos/dance-1.webm",
+      "label": "跳舞"
+    },
+        {
+      "key": "dance-2",
+      "file": "videos/dance-2.webm",
+      "label": "跳舞2"
+    },
+    {
+      "key": "special-1",
+      "file": "videos/special-1.webm",
+      "label": "特殊动作 1"
+    },
+    {
+      "key": "special-2",
+      "file": "videos/special-2.webm",
+      "label": "特殊动作 2"
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import { renderPage } from '../ui/blocks.js';
 import { createDrawer } from '../ui/drawer.js';
 import { hydrateIcons } from '../ui/icons.js';
 import { applyThemeToFrame, bindTheme } from '../ui/theme.js';
+import { initPersonaName } from '../ui/persona.js';
 
 /**
  * 插件的独立窗口。
@@ -36,6 +37,8 @@ hydrateIcons();
 // 主题：跟着主进程推来的那一套变。
 // 插件页面在 iframe 里（另一个文档），主题得转过去。
 bindTheme(window.plugin, () => applyThemeToFrame(frameEl));
+// 静态文案里的「{name}」与「桌宠」统统换成人设名（默认「小桌」）。
+initPersonaName();
 
 /**
  * 设置抽屉：插件的配置项都在这里，不占正文。

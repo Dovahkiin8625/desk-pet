@@ -123,7 +123,7 @@ test.describe('插件面板', () => {
       await expect(panel.locator('#searchbar > .icon')).toHaveText('');
       const placeholder = await panel.locator('#query').getAttribute('placeholder');
       expect(placeholder).toContain('搜索');
-      expect(placeholder).toContain('跟桌宠说点什么');
+      expect(placeholder).toContain('跟小桌说点什么');
 
       // 打字 → 模糊搜索出插件；搜不到时冒出「和桌宠聊天」那一项。
       await panel.fill('#query', 'daiban');

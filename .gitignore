@@ -29,15 +29,18 @@ minimax-api-key
 # Live2D 官方样例模型资源（每个约 9MB），由 `npm run setup` 下载，不入库。
 # 仅保留各模型的手写清单 pet.json。
 #
-# 注意：不要写成 `assets/live2d/models/*` 或 `assets/live2d/models/*/`，
+# 注意：不要写成 `assets/models/*` 或 `assets/models/*/`，
 # 那样会把**模型目录**整体排除——git 不会进入被排除的目录，
 # 反向规则也就无法重新包含 pet.json。
 # 这里排除的是「模型目录里的东西」（往下两层）：模型文件、纹理目录、
 # 动作目录都在里面，而 pet.json 正好摆在模型目录的第一层，
 # 所以一条反向规则就能把各模型的清单重新包含进来——
 # 以后再加预制模型，不必回来改这个文件。
-assets/live2d/models/*/*
-!assets/live2d/models/*/pet.json
+assets/models/*/*
+!assets/models/*/pet.json
+!assets/models/*/avatar.json
+# 预制视频形象 miya 是自家素材，整体入库（WebM 已抠成透明）。
+!assets/models/miya/videos/
 .VSCodeCounter
 .tmp*
 todo.md

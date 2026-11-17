@@ -40,6 +40,7 @@ export function registerIpc({
   listPlugins,
   setPluginEnabled,
   setPluginAgentEnabled,
+  getPersonaName,
 }) {
   ipcMain.handle('pet:getSettings', () => getSettings());
   // 当前的主题：刚打开的窗口靠它知道自己该用哪一套配色。
@@ -127,6 +128,9 @@ export function registerIpc({
   // 渲染层只负责把用户的意思递过来。
   ipcMain.handle('pet:clearHotkey', (_e, slot) => clearHotkey(slot));
 
+  // 人设名：所有窗口用来显示「它」的名字。
+  // 换名之后主进程会另行广播 pet:personaName（见 index.js 的 broadcastPersonaName）。
+  ipcMain.handle('pet:personaName', () => getPersonaName());
   // —— 插件 ——
   // 设置窗口的「插件」分区用它列出插件、开关插件。
   // 插件的启用状态存在 userData/plugins.json，宿主负责落盘。

@@ -4,6 +4,7 @@ import { renderPage } from '../ui/blocks.js';
 import { createDrawer } from '../ui/drawer.js';
 import { hydrateIcons, iconSvg } from '../ui/icons.js';
 import { applyThemeToFrame, bindTheme } from '../ui/theme.js';
+import { initPersonaName, personaText } from '../ui/persona.js';
 
 /**
  * 插件面板的页面。
@@ -60,6 +61,8 @@ hydrateIcons();
 // 主题：跟着主进程推来的那一套变。
 // 插件页面在 iframe 里（另一个文档），主题得转过去。
 bindTheme(window.panel, () => applyThemeToFrame(pluginFrameEl));
+// 静态文案里的「{name}」与「桌宠」统统换成人设名（默认「小桌」）。
+initPersonaName();
 
 /**
  * 设置抽屉：插件的配置项都在这里，不占正文。
@@ -352,6 +355,16 @@ function fileHits(query, list) {
 }
 
 /** 重新搜索并重画结果列表。 */
+/** 给搜索清单里的文案带上人设名（清单里凡是「桌宠」的地方都换成当前名字）。 */
+function decoratePlugins(list) {
+  return list.map((p) => ({
+    ...p,
+    name: personaText(p.name),
+    description: personaText(p.description),
+    keywords: Array.isArray(p.keywords) ? p.keywords.map((k) => personaText(k)) : p.keywords,
+  }));
+}
+
 function renderResults() {
   const query = queryEl.value;
   const trimmed = query.trim();
@@ -359,7 +372,7 @@ function renderResults() {
   // 几边的分数是同一个尺子（名字命中权重都是 1），混排才公平：
   // 用户打「chrome」，出来的就该是 Chrome 而不是某个叫「图片」的插件。
   const hits = [
-    ...searchPlugins(query, plugins).map((hit) => toRow('plugin', hit)),
+    ...searchPlugins(query, decoratePlugins(plugins)).map((hit) => toRow('plugin', hit)),
     ...searchItems(query, apps).map((hit) => toRow('app', hit)),
     ...searchItems(query, settings).map((hit) => toRow('setting', hit)),
     ...fileHits(query, files),

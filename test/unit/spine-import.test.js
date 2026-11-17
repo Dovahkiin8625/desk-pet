@@ -26,10 +26,10 @@ function spineBinary(version = '4.1.20', size = 4096) {
   return Buffer.concat([head, Buffer.from(version), Buffer.alloc(size)]);
 }
 
-/** 摆一个假的内置注册表目录（assets/live2d/index.json 的位置）。 */
+/** 摆一个假的内置注册表目录（assets/models/index.json 的位置）。 */
 async function makeRoot() {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-spine-root-'));
-  const dir = join(root, 'assets', 'live2d');
+  const dir = join(root, 'assets', 'models');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'index.json'), JSON.stringify({ models: [] }, null, 2));
   return root;
@@ -155,7 +155,7 @@ test('导入 Spine 模型：文件被整理成标准布局', async () => {
   const model = await importModelDir({ sourceDir: dir, rootDir: root, userDataDir: userData });
   assert.equal(model.type, 'spine');
 
-  const modelDir = join(userData, 'live2d', 'models', model.id);
+  const modelDir = join(userData, 'models', model.id);
   const files = await readdir(modelDir);
   assert.deepEqual(files.sort(), ['0.png', '1.png', 'model.atlas', 'model.skel', 'pet.json']);
 
@@ -177,7 +177,7 @@ test('导入 Spine 模型：文件被整理成标准布局', async () => {
 
   // 注册表里有它。
   const registry = JSON.parse(
-    await readFile(join(userData, 'live2d', 'registry.json'), 'utf8'),
+    await readFile(join(userData, 'models', 'registry.json'), 'utf8'),
   );
   assert.equal(registry.models.length, 1);
   assert.equal(registry.models[0].id, model.id);

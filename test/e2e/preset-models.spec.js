@@ -1,6 +1,6 @@
 // 预制（内置）模型的端到端验证。
 //
-// 内置注册表（assets/live2d/index.json）里的每一条都必须真的能加载：
+// 内置注册表（assets/models/index.json）里的每一条都必须真的能加载：
 // 注册表里写错一个 model3 文件名，表现是「那个形象切过去就是空白」，
 // 而清单缺失时应用会**静默降级**（从设置文件探测能力），
 // 用户完全看不出发生了什么——所以这里逐个真的挂载一遍。
@@ -29,9 +29,9 @@ async function launch(userData = USER_DATA) {
   });
 }
 
-/** 内置注册表里登记的 id（读仓库里的 assets/live2d/index.json）。 */
+/** 内置注册表里登记的 id（读仓库里的 assets/models/index.json）。 */
 async function readBundledIds() {
-  const registry = JSON.parse(await readFile(join(ROOT, 'assets', 'live2d', 'index.json'), 'utf8'));
+  const registry = JSON.parse(await readFile(join(ROOT, 'assets', 'models', 'index.json'), 'utf8'));
   return (registry.models || []).map((m) => m.id);
 }
 
@@ -42,45 +42,48 @@ async function mount(pet, modelId) {
     if (!ok) {
       return { ok: false, error: window.__pet.switchError || '未知原因' };
     }
-    // 等两帧：挂载完了不等于画出来了。
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    // 画布上到底有没有画出东西（不透明的像素）。
-    // 「加载成功但渲染炸了」是真实发生过的事：模型能加载、纹理也绑上了，
-    // 却在绘制时抛异常——画布上什么也没有。
-    //
-    // 提取时要关掉面剔除：PIXI 的 extract 用 Y 轴翻转的投影做离屏渲染
-    // （最后再翻回来），三角形绕序随之反转，Live2D 的单面部件会被剔除掉
-    // ——那些部件在屏幕上明明是画着的。应用自己测轮廓时也是这么处理的
-    // （见 src/renderer/pet/silhouette.js）。
+    // 等画出来再量：Live2D/Spine 两帧就够，视频形象要等第一帧解码完
+    // （loadeddata 到纹理上屏之间还有一拍）。按像素轮询，几百毫秒有结论。
     let painted = 0;
-    try {
-      const app = window.__pet.stage?.app;
-      const gl = app.renderer.gl;
-      const origEnable = gl.enable.bind(gl);
-      const origDisable = gl.disable.bind(gl);
-      gl.enable = (cap) => {
-        if (cap !== gl.CULL_FACE) origEnable(cap);
-      };
-      gl.disable = (cap) => {
-        if (cap !== gl.CULL_FACE) origDisable(cap);
-      };
+    const deadline = Date.now() + 4000;
+    for (;;) {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       try {
-        const canvas = app.renderer.plugins.extract.canvas(app.stage);
-        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-        for (let i = 3; i < data.length; i += 4) {
-          if (data[i] > 16) painted++;
+        const app = window.__pet.stage?.app;
+        const gl = app.renderer.gl;
+        const origEnable = gl.enable.bind(gl);
+        const origDisable = gl.disable.bind(gl);
+        // PIXI 的 extract 用 Y 轴翻转的投影做离屏渲染（最后再翻回来），
+        // 三角形绕序随之反转；Live2D 的单面部件会因此被整个剔除掉——
+        // 应用自己测轮廓时也是这么处理的（见 src/renderer/pet/silhouette.js）。
+        gl.enable = (cap) => {
+          if (cap !== gl.CULL_FACE) origEnable(cap);
+        };
+        gl.disable = (cap) => {
+          if (cap !== gl.CULL_FACE) origDisable(cap);
+        };
+        try {
+          const canvas = app.renderer.plugins.extract.canvas(app.stage);
+          const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+          painted = 0;
+          for (let i = 3; i < data.length; i += 4) {
+            if (data[i] > 16) painted++;
+          }
+        } finally {
+          gl.enable = origEnable;
+          gl.disable = origDisable;
         }
-      } finally {
-        gl.enable = origEnable;
-        gl.disable = origDisable;
+      } catch (err) {
+        return { ok: false, error: `读取画布失败：${err?.message || err}` };
       }
-    } catch (err) {
-      return { ok: false, error: `读取画布失败：${err?.message || err}` };
+      if (painted > 0 || Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
     }
     return {
       ok: true,
       modelId: window.__pet.modelId,
       textures: window.__pet.model?.textures?.length ?? 0,
+      type: window.__pet.manifest?.type ?? null,
       painted,
       naturalSize: window.__pet.naturalSize,
       derived: window.__pet.manifest?.derived,
@@ -129,7 +132,11 @@ test.describe('预制模型', () => {
         expect(r.modelId).toBe(id);
         // 纹理真的加载出来了：模型文件与纹理都在子目录里，
         // 相对路径必须按 model3.json 自己的目录解析。
-        expect(r.textures, `${id} 没有纹理`).toBeGreaterThan(0);
+        // （视频形象没有 textures 数组——它的纹理就是视频本身，
+        //   下面的 painted 检查就是它画出东西的证据。）
+        if (r.type !== 'video') {
+          expect(r.textures, `${id} 没有纹理`).toBeGreaterThan(0);
+        }
         expect(r.naturalSize?.w, `${id} 的自然尺寸是 0`).toBeGreaterThan(0);
         expect(r.naturalSize?.h, `${id} 的自然尺寸是 0`).toBeGreaterThan(0);
         // 真的画出来了：画布上得有东西。
@@ -250,9 +257,9 @@ test.describe('预制模型', () => {
     await rm(userData, { recursive: true, force: true });
     // 先把清单写到只剩一个形象（模拟用户移掉了其它全部）。
     const all = await readBundledIds();
-    await mkdir(join(userData, 'live2d'), { recursive: true });
+    await mkdir(join(userData, 'models'), { recursive: true });
     await writeFile(
-      join(userData, 'live2d', 'removed.json'),
+      join(userData, 'models', 'removed.json'),
       JSON.stringify({ version: 1, models: all.slice(1) }),
     );
 

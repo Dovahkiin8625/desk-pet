@@ -17,10 +17,10 @@ import {
  * 那是 e2e 的事（test/e2e/preset-models.spec.js）。
  */
 
-/** 摆一个假的内置注册表（assets/live2d/index.json 的位置）。 */
+/** 摆一个假的内置注册表（assets/models/index.json 的位置）。 */
 async function makeRoot(models) {
   const root = await mkdtemp(join(tmpdir(), 'desk-pet-registry-'));
-  const dir = join(root, 'assets', 'live2d');
+  const dir = join(root, 'assets', 'models');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'index.json'), JSON.stringify({ models }, null, 2));
   return root;
@@ -28,7 +28,7 @@ async function makeRoot(models) {
 
 /** 摆一份用户注册表（导入的模型）。 */
 async function writeUserRegistry(userData, models) {
-  const dir = join(userData, 'live2d');
+  const dir = join(userData, 'models');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'registry.json'), JSON.stringify({ version: 1, models }, null, 2));
 }
@@ -53,7 +53,7 @@ test('合并注册表：内置 + 导入的都在', async () => {
   // 两边合成同一个形状：渲染层不必知道某个形象是哪来的。
   assert.equal(list[0].source, 'bundled');
   assert.equal(list[2].source, 'user');
-  assert.equal(list[0].base, '/assets/live2d/models');
+  assert.equal(list[0].base, '/assets/models');
   assert.equal(list[2].base, '/__models__');
 
   await rm(root, { recursive: true, force: true });
@@ -121,8 +121,8 @@ test('移除清单只影响内置形象，导入的不受影响', async () => {
 test('移除清单坏了也不影响启动：当作「没移除过」', async () => {
   const root = await makeRoot(BUNDLED);
   const userData = await mkdtemp(join(tmpdir(), 'desk-pet-ud-'));
-  await mkdir(join(userData, 'live2d'), { recursive: true });
-  await writeFile(join(userData, 'live2d', 'removed.json'), '{ 这不是 JSON');
+  await mkdir(join(userData, 'models'), { recursive: true });
+  await writeFile(join(userData, 'models', 'removed.json'), '{ 这不是 JSON');
 
   assert.deepEqual([...(await readRemovedBundled(userData))], []);
   assert.deepEqual(

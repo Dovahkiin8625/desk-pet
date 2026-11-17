@@ -61,6 +61,9 @@ export function createPetWindow({ rootDir, settings, displays }) {
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
+      // 桌宠的视频形象不需要任何用户手势就要能播（而且默认静音）——
+      // 这块窗口是内置的透明挂件，不是用户浏览的网页。
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 

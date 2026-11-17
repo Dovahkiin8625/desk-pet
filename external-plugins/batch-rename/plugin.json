@@ -1,0 +1,14 @@
+{
+  "id": "batch-rename",
+  "name": "批量重命名",
+  "icon": "file",
+  "description": "多选或拖进文件，按规则批量改名——查找替换、前后缀、大小写、扩展名、编号，先预览再应用，可一键撤销。",
+  "keywords": ["批量重命名", "重命名", "改名", "piliangchongming", "chongmingming", "rename", "batch"],
+  "window": {
+    "page": "pages/batch-rename.html",
+    "title": "批量重命名",
+    "width": 860,
+    "height": 600,
+    "refreshMs": 0
+  }
+}
