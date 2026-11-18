@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 /** 从 JSON.parse 的报错里扒出「位置」，算出行号与列号。拿不到就给一行清理过的报错。 */
-export function jsonErrorAt(text, error) {
+function jsonErrorAt(text, error) {
   const raw = String(error?.message || error || '不是合法的 JSON');
   const named = raw.match(/line (\d+) column (\d+)/i);
   if (named) {
@@ -129,7 +129,7 @@ function pad2(n) {
 }
 
 /** 本地时间字符串：YYYY-MM-DD HH:mm:ss */
-export function formatLocal(ms) {
+function formatLocal(ms) {
   const d = new Date(ms);
   return (
     `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
@@ -138,7 +138,7 @@ export function formatLocal(ms) {
 }
 
 /** ISO 字符串转 "YYYY-MM-DDTHH:mm:ss.sssZ" 的精简读法：本地可读的 UTC 串。 */
-export function formatUtc(ms) {
+function formatUtc(ms) {
   const d = new Date(ms);
   return (
     `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +
@@ -213,8 +213,6 @@ export function estimateTokens(text) {
 // ---------------------------------------------------------------------------
 // 正则表达式
 // ---------------------------------------------------------------------------
-
-export const REGEX_FLAGS = ['g', 'i', 'm', 's', 'u'];
 
 /**
  * 跑一遍正则，收集匹配。
