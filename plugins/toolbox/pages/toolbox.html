@@ -21,6 +21,9 @@
         <button type="button" class="tab" data-tool="token" role="tab" aria-selected="false">
           <span class="icon" data-icon="sparkles"></span><span class="tab-label">Token</span>
         </button>
+        <button type="button" class="tab" data-tool="color" role="tab" aria-selected="false">
+          <span class="icon" data-icon="droplet"></span><span class="tab-label">颜色</span>
+        </button>
         <button type="button" class="tab" data-tool="regex" role="tab" aria-selected="false">
           <span class="icon" data-icon="search"></span><span class="tab-label">正则</span>
         </button>
@@ -93,6 +96,36 @@
             <div class="stat"><div class="stat-num" id="stLines">0</div><div class="stat-label">行数</div></div>
           </div>
           <p class="hint">中文 ≈ 1.5 token/字、其余 ≈ 4 字符 1 token，随模型不同会有偏差，仅供参考。</p>
+        </section>
+
+        <!-- 颜色选择器 -->
+        <section class="tool" id="tool-color" role="tabpanel" hidden>
+          <div class="color-stage">
+            <div class="color-swatch" id="colorSwatch">
+              <span id="colorSwatchText">#4F8CFF</span>
+            </div>
+            <div class="color-picker">
+              <div class="sv-area" id="svArea" role="slider" aria-label="饱和度与亮度" tabindex="0">
+                <div class="sv-thumb" id="svThumb"></div>
+              </div>
+              <div class="hue-bar" id="hueBar" role="slider" aria-label="色相" tabindex="0" aria-valuemin="0" aria-valuemax="360">
+                <div class="hue-thumb" id="hueThumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="color-row">
+            <span class="color-label">HEX</span>
+            <input id="hexInput" class="dp-input mono grow" spellcheck="false" autocapitalize="off" placeholder="#rrggbb" />
+          </div>
+          <div class="color-row">
+            <span class="color-label">RGB</span>
+            <button type="button" class="color-value mono" id="rgbValue" title="点一下复制"></button>
+          </div>
+          <div class="color-row">
+            <span class="color-label">HSL</span>
+            <button type="button" class="color-value mono" id="hslValue" title="点一下复制"></button>
+          </div>
+          <p class="hint">输 #rrggbb、rgb(…) 或 hsl(…) 都能解析；点 RGB / HSL 那一行复制。</p>
         </section>
 
         <!-- 正则表达式 -->

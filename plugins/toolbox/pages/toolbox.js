@@ -20,6 +20,17 @@ import {
   urlEncode,
   validateJson,
 } from '../lib/tools.js';
+import {
+  formatHsl,
+  formatRgb,
+  hexToRgb,
+  hsvToRgb,
+  isLightColor,
+  parseColor,
+  rgbToHex,
+  rgbToHsl,
+  rgbToHsv,
+} from '../lib/color.js';
 
 const surface = bindSurface();
 
@@ -289,6 +300,138 @@ function renderToken() {
 
 tokenInput.addEventListener('input', debounce(renderToken, 120));
 renderToken();
+
+// ---------------------------------------------------------------------------
+// 颜色选择器
+// ---------------------------------------------------------------------------
+
+const colorSwatch = $('colorSwatch');
+const colorSwatchText = $('colorSwatchText');
+const svArea = $('svArea');
+const svThumb = $('svThumb');
+const hueBar = $('hueBar');
+const hueThumb = $('hueThumb');
+const hexInput = $('hexInput');
+const rgbValue = $('rgbValue');
+const hslValue = $('hslValue');
+
+/** 拾色器的状态：HSV。初始给一个顺眼的蓝。 */
+const colorState = { ...rgbToHsv(hexToRgb('#4f8cff')) };
+
+function renderColor(source) {
+  const rgb = hsvToRgb(colorState);
+  const hex = rgbToHex(rgb);
+  const hsl = rgbToHsl(rgb);
+
+  colorSwatch.style.background = hex;
+  colorSwatchText.textContent = hex;
+  colorSwatchText.style.color = isLightColor(rgb) ? 'rgb(0 0 0 / 72%)' : 'rgb(255 255 255 / 88%)';
+
+  // 用户正在敲 HEX 时，不回写（回写会把输入框打断）。
+  if (source !== 'hex') hexInput.value = hex;
+  else hexInput.classList.remove('invalid');
+
+  rgbValue.textContent = formatRgb(rgb);
+  hslValue.textContent = formatHsl(hsl);
+
+  const pureHue = hsvToRgb({ h: colorState.h, s: 100, v: 100 });
+  svArea.style.background = rgbToHex(pureHue);
+  svThumb.style.left = `${colorState.s}%`;
+  svThumb.style.top = `${100 - colorState.v}%`;
+  hueThumb.style.left = `${(colorState.h / 360) * 100}%`;
+}
+
+/** 从（可能正在编辑的）颜色字符串更新拾色器；灰色保住原来的色相。 */
+function applyRgb(rgb, source) {
+  const hsv = rgbToHsv(rgb);
+  if (hsv.s === 0) hsv.h = colorState.h;
+  if (hsv.v === 0) {
+    hsv.h = colorState.h;
+    hsv.s = colorState.s;
+  }
+  colorState.h = hsv.h;
+  colorState.s = hsv.s;
+  colorState.v = hsv.v;
+  renderColor(source);
+}
+
+hexInput.addEventListener('input', () => {
+  const parsed = parseColor(hexInput.value);
+  if (parsed) {
+    applyRgb(parsed, 'hex');
+  } else {
+    hexInput.classList.add('invalid');
+  }
+});
+
+/** 给一个区域绑定「按住拖动改值」，返回每次移动的比例坐标。 */
+function bindDrag(el, onMove) {
+  el.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    el.setPointerCapture(event.pointerId);
+    const move = (ev) => onMove(ev);
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    onMove(event);
+  });
+}
+
+function pointRatio(el, event) {
+  const rect = el.getBoundingClientRect();
+  const x = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+  const y = Math.min(Math.max((event.clientY - rect.top) / rect.height, 0), 1);
+  return { x, y };
+}
+
+bindDrag(svArea, (event) => {
+  const { x, y } = pointRatio(svArea, event);
+  colorState.s = Math.round(x * 100);
+  colorState.v = Math.round((1 - y) * 100);
+  renderColor('sv');
+});
+
+bindDrag(hueBar, (event) => {
+  const { x } = pointRatio(hueBar, event);
+  colorState.h = Math.round(x * 359.999) % 360;
+  renderColor('hue');
+});
+
+svArea.addEventListener('keydown', (event) => {
+  const step = event.shiftKey ? 10 : 2;
+  let handled = true;
+  if (event.key === 'ArrowLeft') colorState.s = Math.max(0, colorState.s - step);
+  else if (event.key === 'ArrowRight') colorState.s = Math.min(100, colorState.s + step);
+  else if (event.key === 'ArrowUp') colorState.v = Math.min(100, colorState.v + step);
+  else if (event.key === 'ArrowDown') colorState.v = Math.max(0, colorState.v - step);
+  else handled = false;
+  if (handled) {
+    event.preventDefault();
+    renderColor('sv');
+  }
+});
+
+hueBar.addEventListener('keydown', (event) => {
+  const step = event.shiftKey ? 30 : 2;
+  let handled = true;
+  if (event.key === 'ArrowLeft') colorState.h = (colorState.h - step + 360) % 360;
+  else if (event.key === 'ArrowRight') colorState.h = (colorState.h + step) % 360;
+  else handled = false;
+  if (handled) {
+    event.preventDefault();
+    renderColor('hue');
+  }
+});
+
+rgbValue.addEventListener('click', () => void copyText(rgbValue.textContent));
+hslValue.addEventListener('click', () => void copyText(hslValue.textContent));
+
+renderColor('init');
 
 // ---------------------------------------------------------------------------
 // 正则表达式

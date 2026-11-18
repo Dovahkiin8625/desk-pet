@@ -16,7 +16,7 @@ export default function createToolboxPlugin() {
     return ctx.ui.makePage({
       pluginId: 'toolbox',
       title: '工具箱',
-      subtitle: 'JSON、编解码、时间戳、正则、Token 估算',
+      subtitle: 'JSON、编解码、时间戳、颜色、正则、Token 估算',
       blocks: [ctx.ui.textBlock('工具箱')],
     });
   }
@@ -27,7 +27,7 @@ export default function createToolboxPlugin() {
 
   /** 标题那几个字段（自己的页面用）。**要便宜**。 */
   async function meta() {
-    return { title: '工具箱', subtitle: 'JSON、编解码、时间戳、正则、Token 估算' };
+    return { title: '工具箱', subtitle: 'JSON、编解码、时间戳、颜色、正则、Token 估算' };
   }
 
   async function data() {

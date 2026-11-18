@@ -80,7 +80,7 @@ test('搜到工具箱并打开：五个选项卡，JSON 格式化，正则与 To
     await panel.waitForFunction(() => window.__panel?.view === 'plugin', null, { timeout: 10000 });
 
     const frame = () => panel.frameLocator('#plugin-frame');
-    await expect(frame().locator('.tab')).toHaveCount(5);
+    await expect(frame().locator('.tab')).toHaveCount(6);
 
     // JSON：格式化后输入框里是缩进好的文本。
     await frame().locator('#jsonInput').fill('{"b":1,"a":[1,2]}');
@@ -116,6 +116,13 @@ test('搜到工具箱并打开：五个选项卡，JSON 格式化，正则与 To
     await frame().locator('#codecInput').fill('5L2g5aW9');
     await frame().locator('[data-codec="base64Decode"]').click();
     await expect(frame().locator('#codecOutput')).toHaveValue('你好');
+
+    // 颜色：输一个 HEX，RGB 那行跟着换。
+    await frame().locator('.tab[data-tool="color"]').click();
+    await expect(frame().locator('#hexInput')).toHaveValue('#4f8cff');
+    await frame().locator('#hexInput').fill('#ff0000');
+    await expect(frame().locator('#rgbValue')).toContainText('rgb(255, 0, 0)');
+    await expect(frame().locator('#hslValue')).toContainText('hsl(0, 100%, 50%)');
   } finally {
     await app.close();
   }
