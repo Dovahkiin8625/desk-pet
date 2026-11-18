@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>工具箱</title>
+    <link rel="stylesheet" href="/src/renderer/ui/theme.css" />
+    <link rel="stylesheet" href="toolbox.css" />
+  </head>
+  <body class="dp-page">
+    <div class="tb">
+      <nav class="tabs" role="tablist" aria-label="工具">
+        <button type="button" class="tab active" data-tool="json" role="tab" aria-selected="true">
+          <span class="icon" data-icon="file"></span><span class="tab-label">JSON</span>
+        </button>
+        <button type="button" class="tab" data-tool="codec" role="tab" aria-selected="false">
+          <span class="icon" data-icon="refresh"></span><span class="tab-label">编解码</span>
+        </button>
+        <button type="button" class="tab" data-tool="time" role="tab" aria-selected="false">
+          <span class="icon" data-icon="clock"></span><span class="tab-label">时间戳</span>
+        </button>
+        <button type="button" class="tab" data-tool="token" role="tab" aria-selected="false">
+          <span class="icon" data-icon="sparkles"></span><span class="tab-label">Token</span>
+        </button>
+        <button type="button" class="tab" data-tool="regex" role="tab" aria-selected="false">
+          <span class="icon" data-icon="search"></span><span class="tab-label">正则</span>
+        </button>
+      </nav>
+
+      <main class="panel">
+        <!-- JSON -->
+        <section class="tool active" id="tool-json" role="tabpanel">
+          <textarea id="jsonInput" class="dp-input area mono" placeholder="粘贴 JSON…" spellcheck="false"></textarea>
+          <div class="row">
+            <button type="button" class="dp-button primary" id="jsonFormat">格式化</button>
+            <button type="button" class="dp-button" id="jsonMinify">压缩</button>
+            <button type="button" class="dp-button" id="jsonValidate">校验</button>
+            <span class="spacer"></span>
+            <button type="button" class="dp-button" id="jsonCopy">复制</button>
+          </div>
+          <div class="status" id="jsonStatus"></div>
+          <div class="error" id="jsonError" hidden></div>
+        </section>
+
+        <!-- Base64 / URL 编解码 -->
+        <section class="tool" id="tool-codec" role="tabpanel" hidden>
+          <textarea id="codecInput" class="dp-input area mono" placeholder="要编解码的文字…" spellcheck="false"></textarea>
+          <div class="row wrap">
+            <button type="button" class="dp-button" data-codec="base64Encode">Base64 编码</button>
+            <button type="button" class="dp-button" data-codec="base64Decode">Base64 解码</button>
+            <button type="button" class="dp-button" data-codec="urlEncode">URL 编码</button>
+            <button type="button" class="dp-button" data-codec="urlDecode">URL 解码</button>
+          </div>
+          <textarea id="codecOutput" class="dp-input area mono copyable" placeholder="结果在这儿…" spellcheck="false" readonly title="点一下复制"></textarea>
+          <div class="status" id="codecStatus"></div>
+        </section>
+
+        <!-- 时间戳 -->
+        <section class="tool" id="tool-time" role="tabpanel" hidden>
+          <div class="field-row">
+            <input id="tsInput" class="dp-input mono grow" inputmode="numeric" placeholder="时间戳，例如 1730000000" spellcheck="false" />
+            <select id="tsUnit" class="dp-input" aria-label="单位">
+              <option value="auto">自动检测</option>
+              <option value="s">秒</option>
+              <option value="ms">毫秒</option>
+            </select>
+            <button type="button" class="dp-button" id="tsNow">现在</button>
+          </div>
+          <div class="result-rows" id="tsResult" hidden>
+            <div class="result-row"><span class="result-label">本地时间</span><button type="button" class="result-value mono" data-copy="local"></button></div>
+            <div class="result-row"><span class="result-label">UTC</span><button type="button" class="result-value mono" data-copy="utc"></button></div>
+            <div class="result-row"><span class="result-label">ISO 8601</span><button type="button" class="result-value mono" data-copy="iso"></button></div>
+            <div class="result-row"><span class="result-label">星期</span><button type="button" class="result-value" data-copy="weekday"></button></div>
+          </div>
+          <div class="divider"></div>
+          <div class="field-row">
+            <input type="datetime-local" id="dtInput" class="dp-input grow" step="1" aria-label="日期时间" />
+            <button type="button" class="dp-button" id="dtNow">现在</button>
+          </div>
+          <div class="result-rows" id="dtResult" hidden>
+            <div class="result-row"><span class="result-label">秒</span><button type="button" class="result-value mono" data-copy="seconds"></button></div>
+            <div class="result-row"><span class="result-label">毫秒</span><button type="button" class="result-value mono" data-copy="ms"></button></div>
+          </div>
+          <div class="status" id="timeStatus"></div>
+        </section>
+
+        <!-- Token 估算 -->
+        <section class="tool" id="tool-token" role="tabpanel" hidden>
+          <textarea id="tokenInput" class="dp-input area mono" placeholder="粘贴 prompt 或文本…" spellcheck="false"></textarea>
+          <div class="stats">
+            <div class="stat"><div class="stat-num" id="stTokens">0</div><div class="stat-label">估算 Token</div></div>
+            <div class="stat"><div class="stat-num" id="stChars">0</div><div class="stat-label">字符</div></div>
+            <div class="stat"><div class="stat-num" id="stBytes">0</div><div class="stat-label">字节</div></div>
+            <div class="stat"><div class="stat-num" id="stLines">0</div><div class="stat-label">行数</div></div>
+          </div>
+          <p class="hint">中文 ≈ 1.5 token/字、其余 ≈ 4 字符 1 token，随模型不同会有偏差，仅供参考。</p>
+        </section>
+
+        <!-- 正则表达式 -->
+        <section class="tool" id="tool-regex" role="tabpanel" hidden>
+          <div class="field-row">
+            <input id="regexPattern" class="dp-input mono grow" placeholder="正则，例如 \w+" spellcheck="false" autocapitalize="off" />
+            <span class="flags" id="regexFlags">
+              <label title="全局匹配"><input type="checkbox" value="g" checked />g</label>
+              <label title="忽略大小写"><input type="checkbox" value="i" />i</label>
+              <label title="多行模式"><input type="checkbox" value="m" />m</label>
+              <label title=". 匹配换行"><input type="checkbox" value="s" />s</label>
+              <label title="Unicode 模式"><input type="checkbox" value="u" />u</label>
+            </span>
+          </div>
+          <textarea id="regexText" class="dp-input area mono" placeholder="测试文本…" spellcheck="false"></textarea>
+          <div class="status" id="regexStatus"></div>
+          <div class="matches mono" id="regexMatches"></div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="toolbox.js"></script>
+  </body>
+</html>

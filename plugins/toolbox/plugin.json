@@ -1,0 +1,14 @@
+{
+  "id": "toolbox",
+  "name": "工具箱",
+  "icon": "cpu",
+  "description": "开发常用的小工具：JSON 格式化与校验、Base64 / URL 编解码、时间戳转换、正则测试、Token 估算",
+  "keywords": ["toolbox", "gongjuxiang", "工具箱", "工具", "json", "base64", "url", "时间戳", "正则", "regex", "token", "shijianchuo", "zhengze"],
+  "window": {
+    "title": "工具箱",
+    "page": "pages/toolbox.html",
+    "width": 720,
+    "height": 560,
+    "refreshMs": 0
+  }
+}

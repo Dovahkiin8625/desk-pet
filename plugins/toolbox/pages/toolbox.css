@@ -1,0 +1,363 @@
+/* plugins/toolbox/pages/toolbox.css
+   工具箱插件的页面样式。共用 theme.css 的设计系统，这里只管自己的布局。 */
+
+body {
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.tb {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* 独立窗口里：按视口铺满，内容自己滚。 */
+body:not(.dp-panel) .tb {
+  height: 100vh;
+}
+
+/* 面板里：定高（plugin.json 的 window.height），内容在内部滚。 */
+body.dp-panel {
+  overflow: hidden;
+}
+body.dp-panel .tb {
+  height: 100%;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12.5px;
+}
+
+/* 选项卡：窄版（面板 / 手机竖屏）横向一排；宽版竖到左边。 */
+.tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: none;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--dp-radius);
+  background: transparent;
+  color: var(--dp-text-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  background: var(--dp-surface-hover);
+  color: var(--dp-text);
+}
+
+.tab.active {
+  background: var(--dp-surface-active);
+  border-color: var(--dp-border);
+  color: var(--dp-text);
+}
+
+.tab .icon {
+  font-size: 15px;
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.tool[hidden] {
+  display: none;
+}
+
+textarea.area {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+/* 编解码有两格，每格矮一点；Token 那格高一点。 */
+#tool-codec textarea.area {
+  min-height: 96px;
+}
+#tool-token textarea.area {
+  min-height: 160px;
+}
+#tool-json textarea.area {
+  min-height: 240px;
+}
+#tool-regex textarea.area {
+  min-height: 140px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row.wrap {
+  flex-wrap: wrap;
+}
+
+.row .spacer {
+  flex: 1;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-row select {
+  flex: none;
+}
+
+.status {
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--dp-text-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.status.error,
+.error {
+  color: var(--dp-danger, #e5484d);
+}
+
+.error {
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dp-text-faint);
+}
+
+.divider {
+  height: 1px;
+  background: var(--dp-border-soft);
+  margin: 2px 0;
+}
+
+/* 时间戳的换算结果：一行一个，点哪行复制哪个。 */
+.result-rows {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  overflow: hidden;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--dp-surface);
+}
+
+.result-row + .result-row {
+  border-top: 1px solid var(--dp-border-soft);
+}
+
+.result-label {
+  flex: none;
+  width: 56px;
+  font-size: 12px;
+  color: var(--dp-text-soft);
+}
+
+.result-value {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--dp-text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-value:hover {
+  color: var(--dp-accent-strong);
+}
+
+/* Token 估算：四格统计。 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface);
+}
+
+.stat-num {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--dp-text-soft);
+}
+
+/* 正则：标志小勾 + 匹配列表。 */
+.flags {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.flags label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--dp-text-soft);
+  cursor: pointer;
+}
+
+.flags input {
+  accent-color: var(--dp-accent-strong);
+}
+
+.matches {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  overflow: hidden;
+  font-size: 11.5px;
+}
+
+.matches:empty {
+  display: none;
+}
+
+.match-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--dp-surface);
+  border-top: 1px solid var(--dp-border-soft);
+  overflow: hidden;
+}
+
+.match-row:first-child {
+  border-top: none;
+}
+
+.match-index {
+  flex: none;
+  color: var(--dp-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.match-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-groups {
+  flex: none;
+  color: var(--dp-text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+textarea.copyable {
+  cursor: pointer;
+}
+
+/* 浮在底下的提示（「已复制到剪贴板」）。 */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 10;
+  max-width: min(90%, 420px);
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--dp-border);
+  background: var(--dp-surface-2);
+  color: var(--dp-text);
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+}
+
+.toast.error {
+  border-color: var(--dp-danger, #e5484d);
+  color: var(--dp-danger, #e5484d);
+}
+
+/* 宽版（独立窗口）：选项卡竖到左边。 */
+@media (min-width: 560px) {
+  .tb {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .tabs {
+    flex-direction: column;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+  .tab {
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
