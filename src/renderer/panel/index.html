@@ -139,10 +139,20 @@
     #results .icon[hidden] { display: none; }
     #results .icon-img { width: 18px; height: 18px; object-fit: contain; }
     #results .icon-img[hidden] { display: none; }
-    #results .name { font-weight: 600; }
+    #results .name {
+      font-weight: 600;
+      /* 名字太长（比如复制了一大段话）就自动省略，别把一行撑成好几行。
+         min-width: 0 让 flex 项能缩到比内容窄；没有它文字会一直往外顶。 */
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     #results .name mark { background: var(--dp-accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
     #results .desc {
       margin-left: auto;
+      /* 右边的说明不跟着压缩：名字再长，也由名字让位（min-width: 0 + 省略号）。 */
+      flex: none;
       color: var(--dp-text-soft);
       font-size: 12px;
       white-space: nowrap;

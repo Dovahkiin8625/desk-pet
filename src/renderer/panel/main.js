@@ -472,6 +472,8 @@ function renderResults() {
 
     const name = document.createElement('span');
     name.className = 'name';
+    // 省略号截断后还能看全：悬停提示里放完整的名字（换行压成空格，别撑出一屏）。
+    name.title = String(row.name || '').replace(/\s+/g, ' ');
     appendHighlighted(name, row.name, row.positions, row.field);
 
     const desc = document.createElement('span');
