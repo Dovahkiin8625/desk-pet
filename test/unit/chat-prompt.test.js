@@ -71,7 +71,7 @@ test('parseReply：action 读出来，缺省为空串', () => {
 test('buildAgentSystemPrompt：clip 清单带进提示词，点播契约也写进 META 说明', () => {
   const system = buildAgentSystemPrompt({
     clips: [
-      { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion', semantic: 'tired' },
+      { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion' },
       { id: 'dance-1', label: '跳舞', category: 'action' },
     ],
   });

@@ -10,12 +10,12 @@
     { "id": "idle-tilt", "file": null, "label": "歪头杀", "category": "idle", "semantic": "idle" },
     { "id": "idle-weight-shift", "file": null, "label": "重心换脚", "category": "idle", "loop": true, "semantic": "idle" },
 
-    { "id": "sleepy", "file": null, "label": "犯困打瞌睡", "category": "emotion", "semantic": "tired" },
+    { "id": "sleepy", "file": null, "label": "犯困打瞌睡", "category": "emotion" },
     { "id": "laugh", "file": null, "label": "开怀大笑", "category": "emotion" },
-    { "id": "heart-double", "file": null, "label": "比心（双手）", "category": "emotion", "semantic": "smile" },
+    { "id": "heart-double", "file": null, "label": "比心（双手）", "category": "emotion" },
     { "id": "heart-wink", "file": null, "label": "眨眼比心", "category": "emotion" },
     { "id": "pout", "file": null, "label": "鼓腮假气", "category": "emotion" },
-    { "id": "angry", "file": null, "label": "双手叉腰", "category": "emotion", "semantic": "angry" },
+    { "id": "angry", "file": null, "label": "双手叉腰", "category": "emotion" },
     { "id": "tsun", "file": null, "label": "假生气变笑", "category": "emotion" },
     { "id": "eye-rub", "file": null, "label": "揉眼睛", "category": "emotion" },
 

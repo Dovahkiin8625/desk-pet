@@ -18,6 +18,8 @@ let enabled = true;
 let masterGain = null;
 // 总音量：提示音与桌宠说话共用一个值（设置窗口的「音量」滑块）。
 let volume = DEFAULT_VOLUME;
+// 总音量变化的订阅者（视频形象的原声音量接在这里）。
+const masterVolumeListeners = new Set();
 // 语音实际连到了哪个节点（null = 还没播过）。
 let speechTarget = null;
 
@@ -30,6 +32,35 @@ let speaking = 0;
 let speechStarted = 0;
 let speechFinished = 0;
 let speechMaxConcurrent = 0;
+
+// —— clip 原声折半 ——
+// 切 clip 时如果「别的声音」正在响，sound:true 的 clip 原声要折半。
+// 「别的声音」= 音乐插件在放歌 / 桌宠正在说话 / 提示音还在响。
+// 音乐在另一个窗口里放，渲染层看不见，由主进程推过来。
+let musicPlaying = false;
+// 提示音预计还会响到什么时刻（performance.now() 的毫秒数）。
+// 用截止时间而不是计数器：想数错就得多记一次，截止时间只会撞到更晚的时刻。
+let otherSoundUntil = 0;
+
+/**
+ * 主进程推过来的「音乐插件在放歌吗」。
+ *
+ * 返回当前值，方便诊断面直接记。
+ */
+export function setMusicPlaying(value) {
+  musicPlaying = Boolean(value);
+  return musicPlaying;
+}
+
+/**
+ * 此刻除 clip 原声以外，有没有别的声音在响：
+ * 音乐在放、桌宠在说话、或者一声提示音还没收完。
+ *
+ * 切 clip 时靠它决定 sound:true 的原声要不要折半。
+ */
+export function isOtherAudioActive() {
+  return musicPlaying || speaking > 0 || performance.now() < otherSoundUntil;
+}
 
 /**
  * 语音播放的统计。
@@ -83,12 +114,25 @@ export function setMasterVolume(value) {
     : DEFAULT_VOLUME;
   volume = n;
   if (masterGain) masterGain.gain.value = n;
+  for (const cb of masterVolumeListeners) {
+    try {
+      cb(n);
+    } catch {
+      /* 一个订阅者挂了不影响其他 */
+    }
+  }
   return volume;
 }
 
 /** 当前总音量。 */
 export function getMasterVolume() {
   return volume;
+}
+
+/** 订阅总音量变化；返回退订函数。 */
+export function onMasterVolumeChange(cb) {
+  masterVolumeListeners.add(cb);
+  return () => masterVolumeListeners.delete(cb);
 }
 
 /**
@@ -122,6 +166,9 @@ function blip({
   // 浏览器可能因为还没有用户交互而挂起音频上下文：唤醒它，失败就算了。
   if (ac.state === 'suspended') ac.resume?.().catch(() => {});
   const t0 = ac.currentTime + delay;
+  // 记下这一声还会响到什么时刻：切 clip 时按截止时间算「别的声音在不在响」，
+  // 不用为每个短音再起一套计数器（onended 漏一个就会把原声永远折半）。
+  otherSoundUntil = Math.max(otherSoundUntil, performance.now() + (delay + duration + 0.05) * 1000);
   const osc = ac.createOscillator();
   const env = ac.createGain();
   osc.type = type;

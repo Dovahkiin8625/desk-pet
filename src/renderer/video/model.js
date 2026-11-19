@@ -10,11 +10,14 @@
  * Range 响应，而 app:// 的实现没有——先整个 fetch 下来做成 blob URL。
  * 单个视频一两 MB，无所谓。
  */
+import { getMasterVolume, onMasterVolumeChange, isOtherAudioActive } from '../pet/audio.js';
+
 // 切换视频的淡入淡出时长（毫秒）。
 // 视频带 alpha 通道，做法是「新视频在旧视频上方淡入」而不是两个都半透明——
 // 后者在切换瞬间会让桌宠整体变淡（背景透出来）。
 const FADE_MS = 240;
 const easeOutQuad = (t) => 1 - (1 - t) * (1 - t);
+
 export async function loadVideoModel(manifest) {
   const PIXI = window.PIXI;
   if (!PIXI?.Sprite || !PIXI?.Texture) throw new Error('PIXI 运行时没有加载');
@@ -39,6 +42,7 @@ export async function loadVideoModel(manifest) {
       const url = URL.createObjectURL(blob);
       const video = document.createElement('video');
       video.muted = !clip.sound;
+      video.volume = getMasterVolume();
       video.preload = 'auto';
       video.loop = false;
       video.playsInline = true;
@@ -121,10 +125,23 @@ export async function loadVideoModel(manifest) {
   sprite.__idleClip = idleItem;
   // 切换视频时的淡入淡出状态（见 fadeTo / finishFade）；null = 没有进行中的淡入
   sprite.__fade = null;
+  // 原声响度跟随总音量：淡入淡出期间覆盖层与本体共用同一个 <video>，
+  // 改这里就够了，不用分别对两个 Sprite 做处理。
+  // __halved（切 clip 那一刻别的声音在响，原声减半）记在条目上：
+  // 之后总音量变了也照着折半走，不会忽然跳回全响。
+  sprite.__unsubscribeVolume = onMasterVolumeChange((v) => {
+    for (const item of loaded) item.video.volume = v * (item.__halved ? 0.5 : 1);
+  });
 
   const playItem = (item) => {
     const v = item.video;
     v.muted = !item.clip.sound;
+    // 切 clip 的这一刻，如果别的声音正在响（音乐 / 桌宠在说话 / 提示音没收完），
+    // 原声折半——不然两种声音叠在一起，谁也听不清。
+    // 记到条目上：之后总音量变了、或这一段里又响起别的声音，都不再变动，
+    // 这个决定只在「切 clip」这个时刻做。
+    item.__halved = item.clip.sound === true && isOtherAudioActive();
+    v.volume = getMasterVolume() * (item.__halved ? 0.5 : 1);
     // 池化模式：待机条目按一次性片段播放（播完换下一条），loop 失效。
     v.loop = item.clip.loop === true && !(inPoolMode && isIdleClip(item));
     try {
@@ -286,6 +303,7 @@ export function disposeVideoModel(model) {
     }
     model.__fade = null;
   }
+  model.__unsubscribeVolume?.();
   for (const item of model.__videoItems || []) {
     try {
       item.video.pause();

@@ -14,7 +14,6 @@ import { idleReaction } from './pet/behavior.js';
 import { playWeatherEffect } from './pet/weatherEffect.js';
 import {
   EVENT,
-  EMOTION_EXPRESSION,
   applyEvent,
   boredomLevel,
   clampMood,
@@ -35,6 +34,7 @@ import {
   getMasterVolume,
   getSpeechOutput,
   getSpeechStats,
+  setMusicPlaying,
 } from './pet/audio.js';
 import { attachLipSync } from './pet/lipSync.js';
 import { SCALE_RANGE, SCALE_STEP } from '../shared/viewport.js';
@@ -92,6 +92,9 @@ window.__pet = {
   speechStats: { speaking: 0, started: 0, finished: 0, maxConcurrent: 0 },
   // 当前总音量（0..1）。诊断面：测试要能断言「音量真的传到了渲染层」。
   volume: DEFAULT_VOLUME,
+  // 音乐插件在不在放歌（主进程推过来的）。
+  // 诊断面：测试要能断言「宠物窗口真的收到了音乐状态」。
+  musicPlaying: false,
   // 语音输出接到了哪个节点（'masterGain' / 'destination' / null）。
   // 「桌宠说话也受音量控制」只有这一个可断言的出口。
   speechOutput: null,
@@ -285,24 +288,6 @@ function applyEmotion(event) {
 }
 
 /**
- * 视频形象：把「表情语义」当作 clip 的触发器。
- *
- * 视频没有脸，表情系统到它这里就是死路。应用里「原本要套表情的地方」
- * 改为播放绑定了这个表情语义的视频片段（没有绑定就什么也不播——
- * 与 live2d 的降级规则一致）。
- */
-function showVideoEmotionClip(semantic) {
-  if (currentManifest?.type !== 'video' || !currentModel?.motion) return;
-  const spec = semantic ? currentManifest?.motions?.[semantic] : null;
-  if (!spec) return;
-  try {
-    currentModel.motion(spec.group, spec.index)?.catch?.(() => {});
-  } catch {
-    /* 缺失时静默跳过 */
-  }
-}
-
-/**
  * 模型点名的动作 clip（「你能做出的动作」表里的那个编号）。
  *
  * 视频形象：按 id 找到 clip，显式播（播完自动回待机）。
@@ -342,11 +327,9 @@ function showEmotion(emotion) {
   emotionState = { ...emotionState, emotion };
   window.__pet.emotion = emotion;
   const name = expressionNameFor(currentManifest, emotion);
-  if (!name || !currentModel?.expression) {
-    // 视频形象：没有表情，播放绑定这个情绪语义的 clip。
-    showVideoEmotionClip(EMOTION_EXPRESSION[emotion]);
-    return;
-  }
+  // 视频形象没有脸：情绪只调心情值，不播任何 clip——
+  // 想播「笑 / 拍手 / 跳舞」由模型自己按 id=label 点名（playActionClip）。
+  if (!name || !currentModel?.expression) return;
   try {
     currentModel.expression(name)?.catch?.(() => {});
   } catch {
@@ -996,6 +979,11 @@ function registerChannels() {
     window.__pet.volume = setMasterVolume(v);
   });
 
+  // 音乐插件在不在放歌：切 clip 时按它折半原声。
+  window.pet.onMusicPlaying?.((playing) => {
+    window.__pet.musicPlaying = setMusicPlaying(playing);
+  });
+
   // 桌宠天气特效：偶尔随机 / 天气插件里点了「预览效果」。
   window.pet.onWeatherEffect?.((effect) => {
     if (!effect) return;
@@ -1158,10 +1146,8 @@ async function boot() {
         } catch {
           /* ignore */
         }
-      } else if (currentManifest?.type === 'video') {
-        // 视频形象：没有表情，播绑定这个情绪语义的 clip。
-        showVideoEmotionClip(EMOTION_EXPRESSION[emotionState.emotion]);
       }
+      // 视频形象：没有脸，情绪只调心情值——想换动作由模型自己点名。
       // 重新武装：独处一会的桌宠不该只动一次就再也不动了。
       resetIdleTimer();
     }, idleMs);
@@ -1242,19 +1228,9 @@ async function boot() {
       // 透明处别急着把窗口变成「不吃鼠标事件」（见 lastTapAt 的说明）。
       lastTapAt = Date.now();
 
-      // 视频形象：表情语义直接当 clip 的触发器。
-      // 点身体有 smile 绑定时优先于 tapBody 绑定（菜单里都能点到两条）。
-      const videoExprSpec =
-        currentManifest?.type === 'video' && reaction.expressionSemantic
-          ? currentManifest?.motions?.[reaction.expressionSemantic]
-          : null;
-      if (videoExprSpec && currentModel?.motion) {
-        try {
-          currentModel.motion(videoExprSpec.group, videoExprSpec.index)?.catch?.(() => {});
-        } catch {
-          /* 缺失时静默跳过 */
-        }
-      } else if (reaction.expressionName && currentModel?.expression) {
+      // 视频形象没有表情：表情语义这条路不存在，
+      // 点身体/摸头走下面的 motionSpec（tapBody/tapHead 的语义 clip，没绑就静默跳过）。
+      if (reaction.expressionName && currentModel?.expression) {
         try {
           // expression() / motion() 返回 promise，try/catch 抓不到异步拒绝——
           // 被拒绝的 promise 会变成未处理拒绝，违反「渲染进程不得产生未捕获错误」。
@@ -1283,9 +1259,6 @@ async function boot() {
       window.__pet.lastTapDecision = decision;
 
       const playMotion = () => {
-        // 视频形象：上面的「表情语义→clip」已经代表了这次点击，
-        // 不再叠加 tapHead/tapBody 的动作。
-        if (videoExprSpec) return;
         if (!reaction.motionSpec || !currentModel?.motion) return;
         try {
           currentModel.motion(reaction.motionSpec.group, reaction.motionSpec.index)?.catch?.(() => {});

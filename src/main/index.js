@@ -855,6 +855,34 @@ function pushVolume() {
 }
 
 /**
+ * 「音乐插件在放歌吗」的推送。
+ *
+ * 音乐引擎跑在插件藏起来的窗口里，宠物窗口看不见这个状态——
+ * 切 clip 时如果音乐在响，sound:true 的原声要折半，只能由主进程盯着推。
+ *
+ * 推送只认真的变了那次：音乐的播放头每 250ms 出一次状态，
+ * 每次都推的话宠物窗口会被无意义的 IPC 打满。
+ * 渲染层重载时 lastPushed 对得上但它没收到过——
+ * 所以 onRendererReady 会把标记清掉再补推一次。
+ */
+let lastPushedMusicPlaying = null;
+/** 音乐插件当前在不在放歌（插件没装/没启用就当没在放）。 */
+function musicPlayingNow() {
+  try {
+    return Boolean(plugins?.get('music-player')?.instance?.snapshot?.()?.playing);
+  } catch {
+    return false;
+  }
+}
+function pushMusicPlaying(playing = musicPlayingNow(), force = false) {
+  const value = Boolean(playing);
+  if (!force && value === lastPushedMusicPlaying) return;
+  lastPushedMusicPlaying = value;
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send('pet:musicPlaying', { playing: value });
+}
+
+/**
  * 把「点桌宠时的声音」池子的成分推给宠物窗口。
  *
  * 抽签在渲染层做（静音模型声音的决定必须赶在动作启动之前，
@@ -895,6 +923,10 @@ function onRendererReady() {
   // 音量也一样要在这一刻补发一次：渲染层的监听器在那之前还没注册，
   // 发过去的推送会被丢弃（decisions.md #23 记过这个坑）。
   pushVolume();
+  // 音乐状态同理：标记清掉再推一次，别被去重吞掉——
+  // 新渲染层一个字节都没收到过。
+  lastPushedMusicPlaying = null;
+  pushMusicPlaying();
   // 「点桌宠时的声音」池子同理：渲染层要靠它决定这一次出声还是不出声。
   void pushTapVoice();
 }
@@ -1360,7 +1392,16 @@ app.whenReady().then(async () => {
     // 插件宿主是**后**建的（它要扫盘），所以这里取的是实时变量：
     // 调用发生在宿主就绪之后，那时 plugins 已经不是 null 了。
     listPlugins: () => plugins?.listAll() || [],
-    setPluginEnabled: (id, enabled) => plugins?.setEnabled(String(id || ''), Boolean(enabled)),
+    setPluginEnabled: (id, enabled) => {
+      const result = plugins?.setEnabled(String(id || ''), Boolean(enabled));
+      // 关掉音乐插件时引擎被停掉、却不再报任何状态：
+      // 渲染层要是没等到「停了」，clip 原声会永远折半下去。
+      if (String(id || '') === 'music-player') {
+        if (Boolean(enabled)) pushMusicPlaying();
+        else pushMusicPlaying(false, true);
+      }
+      return result;
+    },
     // 这个插件接不接给 agent：它的工具与技能挂不挂进 agent 的表。
     setPluginAgentEnabled: (id, enabled) =>
       plugins?.setAgentEnabled(String(id || ''), Boolean(enabled)),
@@ -1535,6 +1576,9 @@ app.whenReady().then(async () => {
     getInputText: () => panel?.getInputText?.() || '',
   });
   await plugins.load();
+  // 渲染层可能比插件宿主更早 ready（页面加载就报，这边还在扫盘），
+  // 补推一次当前音乐状态：迟到的折半也好过从不恢复。
+  pushMusicPlaying();
   // 插件与主进程文案要跟人设名对齐：先按磁盘上的助理状态定一份
   // （人设名在设置里改之后，saveAssistantPrefs 会再广播一次）。
   setCurrentPersonaName(personaNameOf(assistant?.getState?.()));
@@ -1566,6 +1610,16 @@ app.whenReady().then(async () => {
   // 所以宿主先留了 ctx.push 这个口子，这里把真正的通道接上去。
   plugins.attachBroadcaster((pluginId, kind, payload) => {
     pluginSurfaces?.broadcast(pluginId, kind, payload);
+    // 音乐插件的每份状态快照里都带着 playing：盯住它推给宠物窗口。
+    // 插件每 250ms 出一次播放头，pushMusicPlaying 自己会去重。
+    if (
+      pluginId === 'music-player' &&
+      kind === 'data' &&
+      payload &&
+      typeof payload.playing === 'boolean'
+    ) {
+      pushMusicPlaying(payload.playing);
+    }
   });
 
   // 本机程序索引：面板的搜索框要能搜到本机的程序。

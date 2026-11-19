@@ -7,9 +7,10 @@
  *
  * ## 两种
  *
- * - **语义绑定**：clips[].semantic 绑到应用自动反应用的语义键
- *   （idle/tapHead/tapBody/drag 交互键，happy/smile/… 情绪键），
- *   给摸头、心情漂移、提醒这些不经过模型的反应用。
+ * - **语义绑定（仅交互键）**：clips[].semantic 只接受 `idle` / `tapHead` / `tapBody` / `drag`——
+ *   给待机池与摸头/点身体/拖拽这些不经过模型的反应接线。
+ *   情绪事件**不再自动播 clip**：视频形象没有脸，情绪只调心情值；
+ *   「笑/拍手/跳舞」全由模型按 id=label 在 `<<META>>` 里点播。
  * - **显式点播**：clips[].id 是给模型点名的编号——
  *   提示词里列出全部可用的 id 与 label，模型想做哪个动作就在
  *   <<META>> 里写 "action":"<id>"，由它自主决定，不做任何场景绑定。
@@ -35,23 +36,16 @@ export function isVideoManifest(manifest) {
   return !!manifest && manifest.type === VIDEO_TYPE && Array.isArray(manifest.clips);
 }
 
-// 应用会自动接线的语义键：idle/tapHead/tapBody/drag 是交互语义；
-// happy/smile/shy/surprised/sad/angry/tired/normal 是情绪/表情语义——
-// 视频形象没有脸，这些地方播对应 clip 代替「套表情」。
+// 应用会自动接线的语义键：只有交互类（idle/tapHead/tapBody/drag）——
+// 待机池与摸头/点身体/拖拽不经过模型，必须有确定性接线。
+// 情绪事件不接线：视频形象没有脸，情绪只调心情值，
+// 播不播「笑/拍手」由模型自己按 id=label 点名。
 // 与 live2d / spine 的降级规则一致：语义缺失 → 不播动作，不报错。
 export const VIDEO_SEMANTIC_KEYS = new Set([
   'idle',
   'tapHead',
   'tapBody',
   'drag',
-  'happy',
-  'smile',
-  'shy',
-  'surprised',
-  'sad',
-  'angry',
-  'tired',
-  'normal',
 ]);
 
 /** clip 的四个分类：idle / emotion / action / special。 */
@@ -111,7 +105,7 @@ export function normalizeClipList(input) {
       loop: raw.loop === true,
       sound: raw.sound === true,
     };
-    // semantic 只认应用真正会接线的键。idle 允许多条（待机池）；
+    // semantic 只认交互键（idle/tapHead/tapBody/drag）。idle 允许多条（待机池）；
     // 其余键一个语义只绑第一个，后面的退回「仅菜单/点播」，不覆盖前面那条。
     const semantic = typeof raw.semantic === 'string' ? raw.semantic.trim() : '';
     if (VIDEO_SEMANTIC_KEYS.has(semantic) && (semantic === 'idle' || !seenSemantic.has(semantic))) {

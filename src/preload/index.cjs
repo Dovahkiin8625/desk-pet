@@ -147,6 +147,10 @@ contextBridge.exposeInMainWorld('pet', {
   onVolume: (cb) => {
     ipcRenderer.on('pet:volume', (_e, payload) => cb(payload?.volume));
   },
+  // 音乐插件此刻在不在放歌：切 clip 时靠它决定 sound:true 的原声要不要折半。
+  onMusicPlaying: (cb) => {
+    ipcRenderer.on('pet:musicPlaying', (_e, payload) => cb(payload?.playing === true));
+  },
   // 文件拖放：Electron 32 起 File.path 已被移除，
   // 真实的路径要用 webUtils.getPathForFile 从 File 对象里取
   // （它只能在 preload 里调，所以由 preload 代劳）。

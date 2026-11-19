@@ -61,16 +61,16 @@ test('normalizeClipList：保留合法的、剔除重复 id 的', () => {
   assert.equal(clips[0].file, 'a.webm');
 });
 
-test('normalizeClipList：情绪/表情语义键也被接受', () => {
+test('normalizeClipList：情绪类的 semantic 键（应用不认）被丢弃，条目退回点播可见', () => {
   const { clips } = normalizeClipList([
     { id: 'a', file: 'a.webm', semantic: 'smile' },
     { id: 'b', file: 'b.webm', semantic: 'angry' },
     { id: 'c', file: 'c.webm', semantic: 'happy' },
     { id: 'd', file: 'd.webm', semantic: 'dance' },
   ]);
-  assert.equal(clips[0].semantic, 'smile');
-  assert.equal(clips[1].semantic, 'angry');
-  assert.equal(clips[2].semantic, 'happy');
+  assert.equal(clips[0].semantic, undefined);
+  assert.equal(clips[1].semantic, undefined);
+  assert.equal(clips[2].semantic, undefined);
   assert.equal(clips[3].semantic, undefined);
 });
 
@@ -125,7 +125,7 @@ test('deriveVideoMotions：语义键映射到 group，菜单组名用 id；idle 
 test('buildClipSection：按分类分组列出 id 与 label', () => {
   const section = buildClipSection([
     { id: 'idle-1', label: '待机（呼吸）', category: 'idle', semantic: 'idle' },
-    { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion', semantic: 'tired' },
+    { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion' },
     { id: 'laugh', label: '开怀大笑', category: 'emotion' },
     { id: 'greet', label: '挥手打招呼', category: 'action' },
     { id: 'special-1', label: '特殊动作 1', category: 'special' },
@@ -147,7 +147,7 @@ test('sanitizeReportedClips：去重、限长、分类与语义校验', () => {
   const out = sanitizeReportedClips([
     { id: ' a ', label: ' 待机 ', category: 'idle', semantic: 'idle', loop: true },
     { id: 'a', label: '重复', category: 'action' },
-    { id: 'x', label: 'q', category: 'bogus', semantic: 'dance' },
+    { id: 'x', label: 'q', category: 'bogus', semantic: 'happy' },
     '垃圾',
     { id: '', label: '空 id' },
   ]);
@@ -156,7 +156,7 @@ test('sanitizeReportedClips：去重、限长、分类与语义校验', () => {
   assert.equal(out[0].label, '待机');
   assert.equal(out[0].semantic, 'idle');
   assert.equal(out[0].loop, true);
-  // 非法分类退到 action，应用不认的语义丢弃。
+  // 非法分类退到 action，应用不认的语义（含情绪键）丢弃。
   assert.equal(out[1].category, 'action');
   assert.equal(out[1].semantic, '');
 });
