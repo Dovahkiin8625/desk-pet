@@ -113,12 +113,23 @@ test.describe('设置页分区与记忆', () => {
       expect(await settings.locator('input[name="mode"]').count(), '外观这一节里没有明暗').toBe(3);
       expect(await settings.locator('#themeSelect option').count(), '外观这一节里没有主题清单').toBeGreaterThan(0);
 
-      // 「声音」这一节里管它什么时候出声。
+      // 「声音」这一节里管它什么时候出声。整点报时已经挪进「对话 → 搭话」了。
       await settings.click('#tab-voice');
       await settings.waitForSelector('#panel-voice:not([hidden])', { timeout: 10000 });
-      expect(await settings.isVisible('#chime'), '声音这一节里没有整点报时').toBe(true);
+      expect(await settings.isVisible('#chime'), '整点报时还在声音这一节里').toBe(false);
       expect(await settings.isVisible('#greeting'), '声音这一节里没有启动问候').toBe(true);
       expect(await settings.isVisible('#sound'), '声音这一节里没有提示音').toBe(true);
+
+      // 搭话、自发反应、整点报时是一伙的事：都在「对话 → 搭话」里。
+      await settings.click('#tab-chat');
+      await settings.waitForSelector('#panel-chat:not([hidden])', { timeout: 10000 });
+      await settings.click('#chat-tab-proactive');
+      await settings.waitForSelector('#chat-sub-proactive:not([hidden])', { timeout: 10000 });
+      expect(await settings.isVisible('#llmProactive'), '搭话这一页没有主动搭话').toBe(true);
+      expect(await settings.isVisible('#llmProactiveInterval'), '搭话这一页没有搭话间隔').toBe(true);
+      expect(await settings.isVisible('#llmAmbient'), '搭话这一页没有自发反应').toBe(true);
+      expect(await settings.isVisible('#llmAmbientInterval'), '搭话这一页没有自发反应间隔').toBe(true);
+      expect(await settings.isVisible('#chime'), '搭话这一页没有整点报时').toBe(true);
 
       // 插件的事归插件自己管：设置页里不再重复一份提示。
       const bodyText = await settings.textContent('body');

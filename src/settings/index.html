@@ -662,10 +662,6 @@
             <h2 class="group-title">提示音</h2>
             <div class="switch-grid">
               <div class="toggle">
-                <input type="checkbox" id="chime">
-                <label for="chime"><span class="t-label">整点报时</span></label>
-              </div>
-              <div class="toggle">
                 <input type="checkbox" id="greeting">
                 <label for="greeting"><span class="t-label">启动时问候</span></label>
               </div>
@@ -886,6 +882,35 @@
                 </div>
               </div>
               <p class="hint">深夜（23:00–08:00）不搭话；你刚说过话时也不插嘴。</p>
+            </div>
+
+            <div class="group">
+              <h2 class="group-title">自发反应</h2>
+              <div class="toggle solo">
+                <input type="checkbox" id="llmAmbient">
+                <label for="llmAmbient"><span class="t-label">允许{name}偶尔看一眼四周</span></label>
+              </div>
+              <div class="field">
+                <label for="llmAmbientInterval">最少间隔</label>
+                <div class="control">
+                  <select id="llmAmbientInterval">
+                    <option value="60000">1 分钟</option>
+                    <option value="120000">2 分钟</option>
+                    <option value="240000">4 分钟</option>
+                    <option value="600000">10 分钟</option>
+                    <option value="1800000">半小时</option>
+                  </select>
+                </div>
+              </div>
+              <p class="hint">它偷偷瞟一眼「此刻正在发生的事」，没什么值得说就一句都不说；深夜（23:00–08:00）不开口；你刚说过话时也不插嘴。需要先开启对话。</p>
+            </div>
+
+            <div class="group">
+              <h2 class="group-title">整点报时</h2>
+              <div class="toggle solo">
+                <input type="checkbox" id="chime">
+                <label for="chime"><span class="t-label">整点到的时候说一句</span></label>
+              </div>
             </div>
 
             <div class="group">

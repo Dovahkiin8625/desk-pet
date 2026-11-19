@@ -11,6 +11,7 @@ import {
   LAYER,
   APPROVAL_DECISION,
   chatKindOf,
+  DEFAULT_AMBIENT_INTERVAL_MS,
 } from '../../shared/assistant.js';
 import { loadAssistant, saveAssistant, mergeAssistantPatch, sanitizeAssistant } from './state.js';
 import { loadApiKey, loadLlmApiKey } from '../credentials.js';
@@ -53,7 +54,6 @@ import {
   stepRecord,
   taskRecord,
 } from './agent/record.js';
-import { sanitizeSpeech } from './layer/speech.js';
 import { runForeground, FALLBACK_NOTICE } from './layer/foreground.js';
 import { buildSystemPrompt, buildChatMessages } from './chat/prompt.js';
 import { mergeFacts, pickMemories } from './chat/memory.js';
@@ -88,9 +88,6 @@ const MAX_PENDING_MESSAGES = 5;
 
 /** 主动搭话：用户至少这么久没说话，才插嘴。 */
 const PROACTIVE_IDLE_MS = 5 * 60 * 1000;
-
-/** 自发反应：两次之间至少隔这么久。 */
-const AMBIENT_INTERVAL_MS = 4 * 60 * 1000;
 
 /** 自发反应：用户刚说过话这么久之内不插手（不抢对话）。 */
 const AMBIENT_IDLE_MS = 90 * 1000;
@@ -443,12 +440,10 @@ export function createAssistant({  userDataDir,
       }),
     appendRecord: appendChatRecord,
     notify: ({ title = '', ok = true, summary = '', reason = '', taskId = '', emotion = '', mood = 0, memories = [], action = '' }) => {
-      // **送达走模板**：结果先变成一句话（结论或失败原因），
-      // 再过一遍过滤器——这句用户看得见，模型下一轮也会读到自己说过的话。
+      // **送达走模板**：结果先变成一句话（结论或失败原因）——
+      // 这句用户看得见，模型下一轮也会读到自己说过的话。
       const result = buildResult({ ok, title, summary, reason, taskId });
-      const safe = sanitizeSpeech(resultLine(result), {
-        toolNames: toolRegistry.list().map((t) => t.name),
-      });
+      const safe = resultLine(result);
       //
       // **带上任务号**：页面要靠它把结果归回发起它的那一块——
       // 没有它，完成的答复就成了没来由的一句话。
@@ -1756,13 +1751,14 @@ export function createAssistant({  userDataDir,
    * 快照是空的时候，这一轮只会白花一个请求。
    */
   function maybeAmbient(now) {
-    if (!state.llm.enabled) return;
+    const a = state.llm.ambient;
+    if (!state.llm.enabled || !a?.enabled) return;
     if (chatBusy || ambientInFlight) return;
     if (isPetVisible && !isPetVisible()) return;
     const hour = new Date(now).getHours();
     if (hour >= QUIET_HOURS[0] || hour < QUIET_HOURS[1]) return;
     if (lastUserMessageAt && now - lastUserMessageAt < AMBIENT_IDLE_MS) return;
-    if (now - lastAmbientAt < AMBIENT_INTERVAL_MS) return;
+    if (now - lastAmbientAt < (a?.minIntervalMs ?? DEFAULT_AMBIENT_INTERVAL_MS)) return;
     // 此刻看得见的事为空：没什么可反应的，别白叫醒模型。
     if (snapshotLines(now).length === 0) return;
 
@@ -1936,7 +1932,7 @@ export function createAssistant({  userDataDir,
       // agent.approval 要**深一层**合并：
       // 只带 policy 的补丁会把「永久放行的工具名单」整个换掉。
       const next = mergeAssistantPatch(state, patch);
-      // `llm` 里的 persona / proactive 要**深一层**合并：
+      // `llm` 里的 persona / proactive / ambient 要**深一层**合并：
       // 设置窗口只会送来用户能改的那几个字段，
       // 浅合并会把「上次搭话时间」「连续失败次数」这些内部状态抹掉。
       if (patch?.llm && typeof patch.llm === 'object') {
@@ -1945,6 +1941,7 @@ export function createAssistant({  userDataDir,
           ...patch.llm,
           persona: { ...state.llm.persona, ...(patch.llm.persona || {}) },
           proactive: { ...state.llm.proactive, ...(patch.llm.proactive || {}) },
+          ambient: { ...state.llm.ambient, ...(patch.llm.ambient || {}) },
         };
       }
       state = sanitizeAssistant(next);

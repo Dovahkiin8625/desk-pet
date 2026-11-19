@@ -125,7 +125,6 @@ src/main/assistant/
   chat/caller.js       请求体怎么拼（只有这一份）
   layer/foreground.js  前台这一轮：什么时候退回普通对话
   layer/promise.js     认「我要去做某件事」那句话
-  layer/speech.js      答复出站前的最后一道过滤器
   agent/loop.js        多步循环 + safeConvo
   agent/prompt.js      agent 的系统提示词 + 上下文压缩
   agent/result.js      结果结构化 + 送达模板
@@ -140,7 +139,7 @@ src/main/assistant/
 ## 7. 改代码前要知道的几件事
 
 - **提示词只有一份**（`agent/prompt.js`）。分叉了，同一件事在两个地方就是两种做法。
-- **答复不许出现工具名与内部黑话**：提示词是第一道防线，`sanitizeSpeech()` 是第二道。
+- **答复不许出现工具名与内部黑话**：靠提示词约束（`agent/prompt.js` 的回答规则），没有第二道过滤。
 - **每个 `tool_call` 都要有一条 `role:'tool'` 的消息**——少一条，接口就 400。
 - **工具出错不终止任务**：错误要喂回模型，模型才能换条路。
 - **上下文压缩的单位是「轮」**（assistant 带 tool_calls + 后面连续的 tool 消息）：

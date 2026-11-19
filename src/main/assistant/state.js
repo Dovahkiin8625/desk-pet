@@ -171,6 +171,7 @@ export function sanitizeAssistant(raw) {
   if (isPlainObject(raw.llm)) {
     const persona = isPlainObject(raw.llm.persona) ? raw.llm.persona : {};
     const proactive = isPlainObject(raw.llm.proactive) ? raw.llm.proactive : {};
+    const ambient = isPlainObject(raw.llm.ambient) ? raw.llm.ambient : {};
     out.llm = {
       enabled: Boolean(raw.llm.enabled),
       baseUrl: str(raw.llm.baseUrl, DEFAULT_LLM.baseUrl).slice(0, 300),
@@ -220,6 +221,22 @@ export function sanitizeAssistant(raw) {
         consecutiveFailures: Number.isFinite(proactive.consecutiveFailures)
           ? Math.max(0, Math.round(proactive.consecutiveFailures))
           : 0,
+      },
+      ambient: {
+        // 默认**开**（老版本里它就是无条件开的）：字段缺了要沿用默认值，
+        // 不能拿 Boolean(undefined) 把它关掉。
+        enabled:
+          ambient.enabled === undefined
+            ? out.llm.ambient.enabled
+            : Boolean(ambient.enabled),
+        minIntervalMs: Math.round(
+          clampNumber(
+            ambient.minIntervalMs,
+            1 * 60 * 1000,
+            24 * 3600 * 1000,
+            DEFAULT_LLM.ambient.minIntervalMs
+          )
+        ),
       },
     };
   }

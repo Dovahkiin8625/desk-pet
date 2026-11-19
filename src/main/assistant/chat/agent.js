@@ -4,7 +4,6 @@ import { buildAgentSystemPrompt } from '../agent/prompt.js';
 import { AGENT_OUTCOME, createAgentLoop, safeConvo } from '../agent/loop.js';
 import { DEFAULT_AGENT } from '../../../shared/assistant.js';
 import { createModelCaller } from './caller.js';
-import { createSpeechFilter, sanitizeSpeech } from '../layer/speech.js';
 import { promisesAction } from '../layer/promise.js';
 
 /**
@@ -218,14 +217,6 @@ export function createAgentBackend({
         minMaxTokens: AGENT_MIN_MAX_TOKENS,
       });
 
-      // **要藏起来的名字**：这一轮能调的工具，加上注册表里全部工具。
-      // 模型偶尔会自己蹦出一个工具名，用户不该看见。
-      const toolNames = [
-        ...(tools || []).map((t) => t?.name),
-        ...registryTools.map((t) => t?.name),
-      ].filter(Boolean);
-      const speech = createSpeechFilter({ toolNames });
-
       const loop = createAgentLoop({
         callModel: (params) => callModel(params, config),
         resolveTool: (name) => toolMap.get(name) || registry?.get?.(name) || null,
@@ -253,9 +244,7 @@ export function createAgentBackend({
           taskId,
           onDelta: (delta) => {
             const out = splitter.push(delta);
-            if (!out) return;
-            const safe = speech.push(out);
-            if (safe) onDelta?.(safe);
+            if (out) onDelta?.(out);
           },
         });
       }
@@ -288,12 +277,7 @@ export function createAgentBackend({
 
       // 流结束了：把尾巴也吐出来。
       const tail = splitter.finish();
-      if (tail) {
-        const safe = speech.push(tail);
-        if (safe) onDelta?.(safe);
-      }
-      const tailSafe = speech.finish();
-      if (tailSafe) onDelta?.(tailSafe);
+      if (tail) onDelta?.(tail);
 
       // **前台预算用尽 → 交给后台继续做**。
       //
@@ -351,8 +335,8 @@ export function createAgentBackend({
       const text = parsed.text || (intentionallySilent ? '' : fallbackText(run));
 
       return {
-        // **答复也过一遍过滤器**：提示词是第一道防线，这里是第二道。
-        text: sanitizeSpeech(text, { toolNames }),
+        // 内部术语只靠提示词约束（人设规矩），这里不再过滤。
+        text,
         emotion: parsed.emotion,
         mood: parsed.mood,
         action: parsed.action || '',

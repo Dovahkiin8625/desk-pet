@@ -185,6 +185,13 @@ export const MAX_ACK_DELAY_MS = 5000;
 export const DEFAULT_ACK_DELAY_MS = 1000;
 
 /**
+ * 自发反应的默认最小间隔（毫秒）。
+ *
+ * 4 分钟：它只是「偶尔瞟一眼四周」——短了就是夺命连环Call，长了等于不存在。
+ */
+export const DEFAULT_AMBIENT_INTERVAL_MS = 4 * 60 * 1000;
+
+/**
  * 「先应一声」的等待时长选项（毫秒）。
  *
  * 设置页的下拉框从这儿填，不在 HTML 里写死一份：
@@ -283,6 +290,14 @@ export const DEFAULT_LLM = Object.freeze({
     lastAt: 0,
     nextAttemptAt: 0,
     consecutiveFailures: 0,
+  },
+  /**
+   * 自发反应：默认开——它只是偶尔瞟一眼四周，值得说才说一句。
+   * 间隔太短会夺命连环Call，默认 4 分钟。
+   */
+  ambient: {
+    enabled: true,
+    minIntervalMs: DEFAULT_AMBIENT_INTERVAL_MS,
   },
 });
 

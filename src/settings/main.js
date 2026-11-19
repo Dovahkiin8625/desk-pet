@@ -100,6 +100,8 @@ const llmPersonaStyleInput = document.getElementById('llmPersonaStyle');
 const llmPersonaBackstoryInput = document.getElementById('llmPersonaBackstory');
 const llmProactiveBox = document.getElementById('llmProactive');
 const llmProactiveIntervalSelect = document.getElementById('llmProactiveInterval');
+const llmAmbientBox = document.getElementById('llmAmbient');
+const llmAmbientIntervalSelect = document.getElementById('llmAmbientInterval');
 const llmAckDelaySelect = document.getElementById('llmAckDelay');
 const llmFactsList = document.getElementById('llmFacts');
 const clearFactsBtn = document.getElementById('clearFacts');
@@ -1196,6 +1198,9 @@ function applyAssistantState(state) {
   llmPersonaBackstoryInput.value = llm.persona?.backstory || '';
   llmProactiveBox.checked = Boolean(llm.proactive?.enabled);
   llmProactiveIntervalSelect.value = String(llm.proactive?.minIntervalMs ?? 1800000);
+  // 「自发反应」默认是开的：字段缺了（老版本写的文件）就当开着。
+  llmAmbientBox.checked = llm.ambient?.enabled !== false;
+  llmAmbientIntervalSelect.value = String(llm.ambient?.minIntervalMs ?? 240000);
   // 「先应一声」：下拉框的值 = 关掉还是等多久。
   const ackValue = ackValueFromPrefs(llm.ackEnabled, llm.ackDelayMs);
   ensureAckOption(ackValue);
@@ -1277,6 +1282,10 @@ function assistantPatchFromControls() {
       proactive: {
         enabled: llmProactiveBox.checked,
         minIntervalMs: Number(llmProactiveIntervalSelect.value),
+      },
+      ambient: {
+        enabled: llmAmbientBox.checked,
+        minIntervalMs: Number(llmAmbientIntervalSelect.value),
       },
       // 「先应一声」：下拉框一个控件管两件事——关不关、等多久。
       ...ackPrefsFromValue(llmAckDelaySelect.value),
@@ -1369,7 +1378,7 @@ speedInput.addEventListener('input', () => {
 });
 
 // —— 对话 ——
-for (const box of [llmEnabledBox, llmProactiveBox]) {
+for (const box of [llmEnabledBox, llmProactiveBox, llmAmbientBox]) {
   box.addEventListener('change', () => {
     persistAssistantPrefs();
   });
@@ -1401,7 +1410,7 @@ for (const input of [
     persistAssistantPrefs();
   });
 }
-for (const select of [llmMaxTokensSelect, llmTokensFieldSelect, llmProactiveIntervalSelect, llmThinkLevelSelect]) {
+for (const select of [llmMaxTokensSelect, llmTokensFieldSelect, llmProactiveIntervalSelect, llmAmbientIntervalSelect, llmThinkLevelSelect]) {
   select.addEventListener('change', () => {
     persistAssistantPrefs();
   });
