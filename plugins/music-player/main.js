@@ -90,7 +90,13 @@ export default function createMusicPlayerPlugin(ctx) {
     };
   }
 
-  /** 声明式界面（页面文件不在时宿主退回的那一套）。 */
+  /**
+   * 声明式界面（页面文件不在时宿主退回的那一套）。
+   *
+   * 底部那行状态字（`status`）故意不填：音乐播放器不想在
+   * 宿主底部刷「在放《…》」「暂停了」之类的提示——
+   * 播放状态本来就画在控制条上，再来一行只是重复。
+   */
   function page(ctx2) {
     const s = player.snapshot(true);
     const blocks = [];
@@ -148,7 +154,6 @@ export default function createMusicPlayerPlugin(ctx) {
       pluginId: 'music-player',
       title: '音乐播放器',
       subtitle: s.sourceLabel,
-      status: s.status,
       blocks,
     });
   }
@@ -165,6 +170,18 @@ export default function createMusicPlayerPlugin(ctx) {
             ? `${s.sourceLabel} ${s.trackCount} 首`
             : '还没有歌',
       };
+    },
+
+    /**
+     * 此刻在放什么（助理的「此刻正在发生的事」用）。
+     *
+     * 只读心里那份状态——不调 ensureStarted()：快照这条路不该把播放器拉起来。
+     */
+    status() {
+      const s = player.snapshot();
+      if (!s.current) return null;
+      const song = `《${s.current.title}》${s.current.artist ? ` — ${s.current.artist}` : ''}`;
+      return s.playing ? `在听：${song}` : `暂停中：${song}`;
     },
 
     page,
@@ -198,8 +215,9 @@ export default function createMusicPlayerPlugin(ctx) {
       } else if (actionId === 'playlist-add-folder' || actionId === 'playlist-add-files') {
         payload.id = player.snapshot().activePlaylistId;
       }
-      const r = await runAction(actionId, payload);
-      return { ...page(ctx2), status: r.message };
+      await runAction(actionId, payload);
+      // 底部那行状态字故意不带（见 page() 里的说明）。
+      return page(ctx2);
     },
 
     /**

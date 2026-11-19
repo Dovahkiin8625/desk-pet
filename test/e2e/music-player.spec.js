@@ -336,9 +336,9 @@ test.describe('音乐播放器插件', () => {
       await expect(frame.locator('#np-title')).toHaveText('测试歌曲', { timeout: 20000 });
 
       // 歌词窗是插件自己开的窗（宿主那套容不下它）。
-      // 桌面歌词的开关在右边的抽屉里。
-      await frame.locator('#gear').click();
-      await frame.locator('#setLyrics').check();
+      // 桌面歌词的开关就在播放控制区里。
+      await frame.locator('#lyrics').click();
+      await expect(frame.locator('#lyrics')).toHaveAttribute('aria-pressed', 'true');
       const lyrics = await findWindow(app, 'pages/lyrics.html');
       expect(lyrics, '桌面歌词窗没有出现').toBeTruthy();
       await lyrics.waitForLoadState('domcontentloaded');
@@ -365,8 +365,7 @@ test.describe('音乐播放器插件', () => {
       await expect(frame.locator('#pos')).not.toHaveText('00:00', { timeout: 20000 });
 
       // 起始音量是 0（测试配置里写的）。
-      // 音量滑块在右边的抽屉里。
-      await frame.locator('#gear').click();
+      // 音量滑块就在播放控制区里。
       await expect(frame.locator('#setVolume')).toHaveValue('0');
 
       // 用户把滑块拖到 42。拖的过程中主进程还在每 500ms 推一次状态。

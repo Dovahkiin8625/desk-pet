@@ -51,7 +51,7 @@ const MAX_STEP_ARG_CHARS = 60;
  * @param {Function} [options.ask] 问用户：({taskId, tool, args, risk}) → Promise<'allow'|'deny'|'always'|'cancel'>
  * @param {Function} [options.getMessages] 后台任务的对话上下文
  * @param {Function} [options.appendRecord] 写一条分类记录
- * @param {Function} [options.notify] 通知用户：({ title, text, ok, taskId })
+ * @param {Function} [options.notify] 通知用户：({ title, ok, summary, emotion, mood, memories, action, taskId })
  * @param {Function} [options.onEvent] 事件转发（给插件）
  * @param {Function} [options.getMaxConcurrent] 同时跑几个任务
  * @param {Function} [options.getPolicy] 审批策略
@@ -310,6 +310,7 @@ export function createAgentTasks({
             emotion: String(result?.emotion || ''),
             mood: Number(result?.mood) || 0,
             memories: Array.isArray(result?.memories) ? result.memories : [],
+            action: String(result?.action || ''),
           });
         },
         (err) => {

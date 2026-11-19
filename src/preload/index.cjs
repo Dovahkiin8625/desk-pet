@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld('pet', {
   // 报告当前形象有哪些动作：主进程据此填右键菜单的「动作」子菜单。
   // 形状见 src/shared/motions.js（group + motions[{index,label}]）。
   reportMotions: (motions) => ipcRenderer.send('pet:motions', motions),
+  // 报告形象有哪些 clip：主进程据此把可用动作列进提示词，
+  // 模型想做哪个动作就点名 id（视频/Spine/Live2D 都按自己的 group 回报）。
+  reportClips: (clips) => ipcRenderer.send('pet:clips', clips),
   // 右键菜单点了「动作」里的某一项：主进程推过来，渲染层播放。
   onPlayMotion: (cb) => {
     ipcRenderer.on('pet:playMotion', (_e, payload) => cb(payload?.group, payload?.index));
@@ -94,10 +97,15 @@ contextBridge.exposeInMainWorld('pet', {
   },
   // —— 桌面助理 ——
   // 情绪事件：主进程那边发生了「提醒到了」「任务完成」之类的事，
-  // 渲染层据此换表情。第二个参数是心情值的增量（没有就是 0）。
+  // 渲染层据此换表情。第二个参数是心情值的增量（没有就是 0），
+  // 第三个参数是模型点名的 clip id（没有就是空串）。
   onEmotion: (cb) => {
     ipcRenderer.on('pet:emotion', (_e, payload) =>
-      cb(payload?.emotion, typeof payload?.mood === 'number' ? payload.mood : 0)
+      cb(
+        payload?.emotion,
+        typeof payload?.mood === 'number' ? payload.mood : 0,
+        typeof payload?.action === 'string' ? payload.action : ''
+      )
     );
   },
   // 桌宠天气特效：主进程偶尔推过来（或用户在天气插件里点了「预览效果」）。

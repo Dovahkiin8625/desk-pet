@@ -13,9 +13,12 @@
 /**
  * 「动作」子菜单：按模型的动作组分组，组内逐个动作的菜单项。
  *
- * 只有一个动作的组直接铺成一项（如 Spine 的每个动画都自成一组），
- * 其余的组展开成二级子菜单。标签用模型里的原名（Idle / Hiyori_m01），
- * 不猜语义。清单由渲染层上报（pet:motions），主进程负责校验。
+ * 只有一个动作的组直接铺成一项（如 Spine 的每个动画都自成一组，
+ * 以及视频形象：每个动作自成一组），其余的组展开成二级子菜单。
+ *
+ * 单动作组的标签用动作自己的 label（视频形象的中文显示名），
+ * 不是 group（那是动作的 key，英文的 "heart-1" 之类）。
+ * 多动作组的上级仍用 group（Live2D 的动作组名 Idle / TapBody）。
  */
 function buildMotionItem(actions) {
   const list = actions.listMotions?.() || [];
@@ -29,7 +32,7 @@ function buildMotionItem(actions) {
     if (motions.length === 1) {
       const only = motions[0];
       submenu.push({
-        label: g.group,
+        label: typeof only.label === 'string' && only.label ? only.label : g.group,
         click: () => actions.playMotion?.(g.group, only.index),
       });
     } else {

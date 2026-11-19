@@ -1,13 +1,13 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { AVATAR_JSON, VIDEO_TYPE, normalizeVideoList } from '../shared/video.js';
+import { AVATAR_JSON, VIDEO_TYPE, normalizeClipList } from '../shared/video.js';
 
 // 视频形象：**看**与**算**归这里，复制、写注册表由 live2dModels.js 负责
 // （那边才有用户模型目录与注册表的读写）。
 //
 // 一个视频形象目录的样子：
-//   avatar.json        清单（type: 'video'，videos 列表）
-//   videos/xxx.webm    视频（透明 WebM，带 alpha）
+//   avatar.json        清单（type: 'video'，clips 列表）
+//   webm/xxx.webm      视频（透明 WebM，带 alpha；目录名由清单里的 file 决定）
 
 /** 导入体积上限（整个目录所有文件之和）。 */
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
@@ -70,7 +70,7 @@ export async function isVideoAvatarDir(modelRoot) {
  * 校验并规整一个视频形象目录（复制前的源目录与复制后的目录共用）。
  *
  * 校验的是**真正可用的视频清单**：
- * 缺失（file: null 或文件不存在）的条目从 videos 里剔除并记进 warnings——
+ * 缺失（file: null 或文件不存在）的条目从 clips 里剔除并记进 warnings——
  * 缺一个待机视频不该让整个人物导不进来，但用户必须看得见缺了什么。
  *
  * @returns {Promise<{
@@ -78,7 +78,7 @@ export async function isVideoAvatarDir(modelRoot) {
  *   errors: string[],
  *   warnings: string[],
  *   avatar: object|null,
- *   videos: Array,
+ *   clips: Array,
  *   bytes: number,
  * }>}
  */
@@ -87,35 +87,35 @@ export async function inspectVideoDir(modelRoot) {
   const warnings = [];
   const { avatar, problem } = await readAvatarJson(modelRoot);
   if (problem) {
-    return { ok: false, errors: [problem], warnings, avatar: null, videos: [], bytes: 0 };
+    return { ok: false, errors: [problem], warnings, avatar: null, clips: [], bytes: 0 };
   }
   if (!avatar) {
     // avatar.json 根本不存在：不是视频形象（可能是 Live2D 目录混进来的）。
-    return { ok: false, errors: [`缺少 ${AVATAR_JSON}`], warnings, avatar: null, videos: [], bytes: 0 };
+    return { ok: false, errors: [`缺少 ${AVATAR_JSON}`], warnings, avatar: null, clips: [], bytes: 0 };
   }
-  const { videos, dropped, invalid } = normalizeVideoList(avatar.videos);
-  if (invalid || videos.length === 0) {
-    errors.push(`${AVATAR_JSON} 里没有任何有效的 videos 条目`);
+  const { clips, dropped, invalid } = normalizeClipList(avatar.clips);
+  if (invalid || clips.length === 0) {
+    errors.push(`${AVATAR_JSON} 里没有任何有效的 clips 条目`);
   }
   if (dropped > 0) {
-    warnings.push(`${dropped} 条 videos 条目因缺少 key 或 key 重复被忽略`);
+    warnings.push(`${dropped} 条 clips 条目因缺少 id 或 id 重复被忽略`);
   }
 
   const present = [];
   let bytes = 0;
-  for (const v of videos) {
+  for (const v of clips) {
     if (!v.file) {
-      warnings.push(`「${v.label}」（${v.key}）未提供视频文件，已跳过`);
+      warnings.push(`「${v.label}」（${v.id}）未提供视频文件，已跳过`);
       continue;
     }
     const abs = resolveInside(modelRoot, v.file);
     if (!abs) {
-      warnings.push(`「${v.label}」（${v.key}）的路径越出模型目录，已跳过：${v.file}`);
+      warnings.push(`「${v.label}」（${v.id}）的路径越出模型目录，已跳过：${v.file}`);
       continue;
     }
     const st = await fileStat(abs);
     if (!st) {
-      warnings.push(`「${v.label}」（${v.key}）的文件不存在，已跳过：${v.file}`);
+      warnings.push(`「${v.label}」（${v.id}）的文件不存在，已跳过：${v.file}`);
       continue;
     }
     bytes += st.size;
@@ -151,9 +151,9 @@ export async function inspectVideoDir(modelRoot) {
     type: VIDEO_TYPE,
     viewport,
     fit,
-    videos: present,
+    clips: present,
   };
-  return { ok: errors.length === 0, errors, warnings, avatar: normalized, videos: present, bytes };
+  return { ok: errors.length === 0, errors, warnings, avatar: normalized, clips: present, bytes };
 }
 
 /**
@@ -168,7 +168,7 @@ export async function planVideoImport(modelRoot, { id, name }) {
     throw new Error(`视频形象校验失败：\n${check.errors.map((e) => `· ${e}`).join('\n')}`);
   }
   const files = [];
-  for (const v of check.videos) {
+  for (const v of check.clips) {
     files.push({ from: resolveInside(modelRoot, v.file), to: v.file.replace(/\\/g, '/') });
   }
   const pet = {
@@ -176,8 +176,8 @@ export async function planVideoImport(modelRoot, { id, name }) {
     id,
     name: check.avatar.name || name,
     type: VIDEO_TYPE,
-    // videos 里的 file 保持相对路径原样（复制目标与源一致）。
-    videos: check.videos.map(({ bytes: _bytes, ...v }) => v),
+    // clips 里的 file 保持相对路径原样（复制目标与源一致）。
+    clips: check.clips.map(({ bytes: _bytes, ...v }) => v),
   };
   return { files, pet, warnings: check.warnings, bytes: check.bytes };
 }

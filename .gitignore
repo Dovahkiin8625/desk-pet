@@ -40,7 +40,8 @@ assets/models/*/*
 !assets/models/*/pet.json
 !assets/models/*/avatar.json
 # 预制视频形象 miya 是自家素材，整体入库（WebM 已抠成透明）。
-!assets/models/miya/videos/
+!assets/models/miya/webm/
 .VSCodeCounter
 .tmp*
 todo.md
+.video-avatar

@@ -8,7 +8,7 @@
     "height": 560
   },
   "fit": {
-    "scale": 1.0,
+    "scale": 1,
     "anchor": [
       0.5,
       1.0
@@ -18,68 +18,36 @@
       0
     ]
   },
-  "videos": [
-    {
-      "key": "idle",
-      "file": "videos/idle-1.webm",
-      "label": "待机（呼吸）",
-      "loop": true,
-      "semantic": "idle"
-    },
-    {
-      "key": "idle2",
-      "file": "videos/idle-2.webm",
-      "label": "待机（变体）",
-      "loop": true,
-      "semantic": "idle"
-    },
-    {
-      "key": "laugh",
-      "file": "videos/laugh.webm",
-      "label": "开怀大笑"
-    },
-    {
-      "key": "heart-1",
-      "file": "videos/heart-1.webm",
-      "label": "比心（双手）1",
-      "semantic": "smile"
-    },
-    {
-      "key": "heart-2",
-      "file": "videos/heart-2.webm",
-      "label": "比心（双手）2",
-      "semantic": "tapBody"
-    },
-    {
-      "key": "angry-1",
-      "file": "videos/angry-1.webm",
-      "label": "生气 1",
-      "semantic": "angry"
-    },
-    {
-      "key": "angry-2",
-      "file": "videos/angry-2.webm",
-      "label": "生气 2"
-    },
-    {
-      "key": "dance-1",
-      "file": "videos/dance-1.webm",
-      "label": "跳舞"
-    },
-        {
-      "key": "dance-2",
-      "file": "videos/dance-2.webm",
-      "label": "跳舞2"
-    },
-    {
-      "key": "special-1",
-      "file": "videos/special-1.webm",
-      "label": "特殊动作 1"
-    },
-    {
-      "key": "special-2",
-      "file": "videos/special-2.webm",
-      "label": "特殊动作 2"
-    }
+  "clips": [
+    { "id": "idle-1", "file": "webm/idle-1.webm", "label": "待机（呼吸）", "category": "idle", "loop": true, "semantic": "idle" },
+    { "id": "idle-2", "file": "webm/idle-2.webm", "label": "待机（变体）", "category": "idle", "loop": true, "semantic": "idle" },
+    { "id": "idle-3", "file": "webm/idle-3.webm", "label": "待机（呼吸·变体）", "category": "idle", "loop": true, "semantic": "idle" },
+    { "id": "idle-weight-shift", "file": "webm/idle-weight-shift.webm", "label": "重心换脚", "category": "idle", "semantic": "idle" },
+    { "id": "look-around", "file": "webm/look-around.webm", "label": "环顾四周", "category": "idle", "semantic": "idle" },
+    { "id": "idle-tilt", "file": "webm/idle-tilt.webm", "label": "歪头杀", "category": "idle", "semantic": "idle" },
+
+    { "id": "sleepy", "file": "webm/sleepy.webm", "label": "犯困打瞌睡", "category": "emotion", "semantic": "tired" },
+    { "id": "eye-rub", "file": "webm/eye-rub.webm", "label": "揉眼睛犯困", "category": "emotion" },
+    { "id": "laugh", "file": "webm/laugh.webm", "label": "开怀大笑", "category": "emotion", "semantic": "happy" },
+    { "id": "heart-1", "file": "webm/heart.webm", "label": "比心（双手）", "category": "emotion", "semantic": "smile" },
+    { "id": "heart-wink", "file": "webm/heart-wink.webm", "label": "眨眼比心", "category": "emotion" },
+    { "id": "hands-on-hips", "file": "webm/hands-on-hips.webm", "label": "双手叉腰", "category": "emotion" },
+    { "id": "tsun", "file": "webm/tsun.webm", "label": "假生气变笑", "category": "emotion"  },
+    { "id": "pout", "file": "webm/pout.webm", "label": "鼓腮假气", "category": "emotion" , "semantic": "angry" },
+
+    { "id": "stretch", "file": "webm/stretch.webm", "label": "伸懒腰", "category": "action" },
+    { "id": "hair", "file": "webm/hair.webm", "label": "撩头发", "category": "action", "semantic": "tabBody" },
+    { "id": "greet", "file": "webm/greet.webm", "label": "挥手打招呼", "category": "action" },
+    { "id": "thank", "file": "webm/thank.webm", "label": "点头致谢", "category": "action" },
+    { "id": "please", "file": "webm/please.webm", "label": "双手合十", "category": "action" },
+    { "id": "sing", "file": "webm/sing.webm", "label": "哼歌摇头", "category": "action" },
+    { "id": "dance-sway", "file": "webm/dance-sway.webm", "label": "原地摇摆", "category": "action" },
+    { "id": "dance-clap", "file": "webm/dance-clap.webm", "label": "拍手打节拍", "category": "action" },
+    { "id": "dance-glitch", "file": "webm/dance-glitch.webm", "label": "卡顿手势舞", "category": "action" },
+    { "id": "dance-wave", "file": "webm/dance-wave.webm", "label": "手臂波浪", "category": "action" },
+    { "id": "dance-spin", "file": "webm/dance-spin.webm", "label": "原地旋转", "category": "action" },
+    { "id": "dance-latin", "file": "webm/dance-latin.webm", "label": "拉丁式扭胯", "category": "action" },
+    { "id": "dance-bounce", "file": "webm/dance-bounce.webm", "label": "弹跳律动", "category": "action" }
+
   ]
 }

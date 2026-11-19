@@ -89,6 +89,12 @@ const MAX_PENDING_MESSAGES = 5;
 /** 主动搭话：用户至少这么久没说话，才插嘴。 */
 const PROACTIVE_IDLE_MS = 5 * 60 * 1000;
 
+/** 自发反应：两次之间至少隔这么久。 */
+const AMBIENT_INTERVAL_MS = 4 * 60 * 1000;
+
+/** 自发反应：用户刚说过话这么久之内不插手（不抢对话）。 */
+const AMBIENT_IDLE_MS = 90 * 1000;
+
 /** 主动搭话：启动后多久之内不搭话（刚开机就搭话很怪）。 */
 const PROACTIVE_STARTUP_DELAY_MS = 10 * 60 * 1000;
 
@@ -160,6 +166,18 @@ export function createAssistant({  userDataDir,
    * 没开 / 拿不到时当成没开这个功能。
    */
   getWeatherEffectConfig = null,
+  /**
+   * 形象有哪些 clip（id + label + 分类）：提示词「你能做出的动作」按它列。
+   *
+   * **注入的是取值函数**：渲染层上报上来，助理建好之后才有——
+   * 传函数就不用管创建顺序。
+   */
+  getClips = null,
+  /**
+   * 插件上报的状态行（「音乐播放器：在听：《…》」这种），
+   * 合并进「此刻正在发生的事」。同样是取值函数。
+   */
+  getPluginStatus = null,
 }) {
   let state = null;
   // 桌宠被隐藏时排队的消息（最多 5 条）。
@@ -186,6 +204,9 @@ export function createAssistant({  userDataDir,
   const appStartedAt = Date.now();
   // 用户最后一次说话的时刻：刚说完话就别插嘴。
   let lastUserMessageAt = 0;
+  // 自发反应：上一次看四周的时刻，以及有没有正在进行的一次。
+  let lastAmbientAt = 0;
+  let ambientInFlight = false;
   // 正在进行的对话轮次序号：只有最后一次允许写进历史。
   let chatSeq = 0;
   // 有对话正在进行吗：主动搭话要避开。
@@ -329,6 +350,8 @@ export function createAssistant({  userDataDir,
     getSnapshot: () => snapshotLines(),
     // **手头在做的事**：用户问「那个怎么样了」时，模型看一眼就能答。
     getTaskStates: () => agentTasks.list(),
+    // **形象有哪些 clip**：模型想做哪个动作，就在 <<META>> 里点名编号。
+    getClips: () => getClips?.() || [],
     // 工具出错时留一行主进程日志（不进气泡）。
     logger: console,
   });
@@ -419,7 +442,7 @@ export function createAssistant({  userDataDir,
         layer: LAYER.EXECUTION,
       }),
     appendRecord: appendChatRecord,
-    notify: ({ title = '', ok = true, summary = '', reason = '', taskId = '', emotion = '', mood = 0, memories = [] }) => {
+    notify: ({ title = '', ok = true, summary = '', reason = '', taskId = '', emotion = '', mood = 0, memories = [], action = '' }) => {
       // **送达走模板**：结果先变成一句话（结论或失败原因），
       // 再过一遍过滤器——这句用户看得见，模型下一轮也会读到自己说过的话。
       const result = buildResult({ ok, title, summary, reason, taskId });
@@ -446,6 +469,7 @@ export function createAssistant({  userDataDir,
       const options = {
         emotion: String(emotion || '') || (ok ? 'happy' : 'sad'),
         mood: Number(mood) || 0,
+        action: String(action || ''),
         sound: ok ? 'success' : '',
       };
       // **不值得打扰的结果不弹气泡**：做完了但没什么可说的，
@@ -571,6 +595,8 @@ export function createAssistant({  userDataDir,
       mood = 0,
       showBubble = true,
       interrupt = false,
+      // 模型点名的 clip id（「你能做出的动作」表里的那个）：空 = 不做动作。
+      action = '',
       // 气泡优先摆哪边（'top' / 'bottom' / 'left' / 'right'）。
       // 点桌宠时用它把气泡摆在脚下——面板在头顶，两者不重叠。
       side = '',
@@ -599,6 +625,7 @@ export function createAssistant({  userDataDir,
         side,
         sticky,
         cacheDir,
+        action,
       });
       while (pendingMessages.length > MAX_PENDING_MESSAGES) pendingMessages.shift();
       return;
@@ -614,8 +641,8 @@ export function createAssistant({  userDataDir,
         sticky,
       });
     }
-    // 情绪与心情增量一起发过去：任务完成让桌宠也开心一点。
-    if (emotion) onEmotion?.(emotion, mood);
+    // 情绪与心情增量、模型点名的动作一起发过去。
+    if (emotion || action) onEmotion?.(emotion, mood, action);
     if (sound) onSound?.(sound);
     if (speak && state?.tts?.enabled) {
       void speakNow(content, { cacheDir });
@@ -1187,11 +1214,15 @@ export function createAssistant({  userDataDir,
    * 当成现状（用户早就手动停掉的音乐，被说成「还在播放」）。
    */
   function snapshotLines(now = Date.now()) {
+    const tasks = (agentTasks?.list?.() || []).filter((t) => t && t.status === TASK_STATUS.RUNNING);
+    const pluginLines = typeof getPluginStatus === 'function' ? getPluginStatus() : [];
     return buildSnapshotLines({
       state: state || {},
       now,
       onBattery: safeOnBattery(),
       thermal: safeThermalState(),
+      pluginLines,
+      runningTasks: tasks.map((t) => String(t.title || '')).filter(Boolean),
     });
   }
 
@@ -1521,12 +1552,18 @@ export function createAssistant({  userDataDir,
       return { ok: false, message: '这一轮被新的对话取代了' };
     }
 
+    // 自发反应整轮没说一句（模型决定沉默）：不开气泡、不进历史、不记记忆——
+    // 只把情绪/动作施加出去。历史里不该有空答复。
+    const spoke = Boolean(result.text);
+
     // 答案好了：应答要么还没轮到（那就不必应了），要么正在念（那就等它念完）。
     ack.release();
     await ack.whenReady();
     if (token !== chatSeq) return { ok: false, message: '这一轮被新的对话取代了' };
-    reply?.open();
-    reply?.finish({ text: result.text, emotion: result.emotion });
+    if (spoke) {
+      reply?.open();
+      reply?.finish({ text: result.text, emotion: result.emotion });
+    }
 
     // 这一轮说完了：**这时才把攒着的完成通知交出去**。
     // （答复气泡开着，气泡自己会把通知排上队——用户先读答复，再看结果。）
@@ -1535,22 +1572,24 @@ export function createAssistant({  userDataDir,
     flushPendingNotices();
 
     // 记下这一轮。
-    appendChatRecord({
-      role: 'assistant',
-      text: result.text,
-      at: Date.now(),
-      proactive: trigger === 'proactive',
-      // **轮数与模型名**：页面上那行「问模型 X · N 轮」读的是它。
-      // 轮数取后端返回的步数——数 model 记录条数会把「退回普通对话」那种轮算漏。
-      meta: {
-        rounds: Number(result.steps) || 0,
-        model: String(config.model || ''),
-      },
-    });
-    // 只记「重要的事」：临时的一律不记，用户明确要求记住的必须记上。
-    const memories = pickMemories(result.memories, { userText: content });
-    if (memories.length) {
-      state.chat.facts = mergeFacts(state.chat.facts, memories);
+    if (spoke) {
+      appendChatRecord({
+        role: 'assistant',
+        text: result.text,
+        at: Date.now(),
+        proactive: trigger !== 'user',
+        // **轮数与模型名**：页面上那行「问模型 X · N 轮」读的是它。
+        // 轮数取后端返回的步数——数 model 记录条数会把「退回普通对话」那种轮算漏。
+        meta: {
+          rounds: Number(result.steps) || 0,
+          model: String(config.model || ''),
+        },
+      });
+      // 只记「重要的事」：临时的一律不记，用户明确要求记住的必须记上。
+      const memories = pickMemories(result.memories, { userText: content });
+      if (memories.length) {
+        state.chat.facts = mergeFacts(state.chat.facts, memories);
+      }
     }
     // 探测出来的可用地址记下来：下次先用它（照 tts.host 的做法）。
     if (result.baseUrl && result.baseUrl !== state.llm.lastWorkingBaseUrl) {
@@ -1558,11 +1597,11 @@ export function createAssistant({  userDataDir,
     }
     scheduleSave();
 
-    // 情绪**立刻**生效（哪怕桌宠藏着——回复是刚刚发生的）。
-    onEmotion?.(result.emotion, result.mood);
+    // 情绪与模型点名的动作**立刻**生效（哪怕桌宠藏着——回复是刚刚发生的）。
+    onEmotion?.(result.emotion, result.mood, result.action);
     // 念出来，但**不要**再弹一个气泡（回复已经流式显示在气泡里了），
     // 也不重复施加情绪（say() 会再施加一次，那会把心情加两遍）。
-    say(result.text, { speak: true, showBubble: false });
+    if (spoke) say(result.text, { speak: true, showBubble: false });
 
     return { ok: true, message: result.text };
   }
@@ -1706,6 +1745,43 @@ export function createAssistant({  userDataDir,
     }
   }
 
+  /**
+   * 自发反应（ambient）：桌宠「看了看四周」的一眼。
+   *
+   * 与主动搭话的区别：搭话一定开口、要等用户很久没说话；
+   * 自发反应**大部分时候沉默**——它让模型看一眼「此刻正在发生的事」，
+   * 值得说/值得做就说一句或做个动作，不值得就什么都不做。
+   *
+   * **此刻没有任何值得看的内容时压根不叫醒模型**：
+   * 快照是空的时候，这一轮只会白花一个请求。
+   */
+  function maybeAmbient(now) {
+    if (!state.llm.enabled) return;
+    if (chatBusy || ambientInFlight) return;
+    if (isPetVisible && !isPetVisible()) return;
+    const hour = new Date(now).getHours();
+    if (hour >= QUIET_HOURS[0] || hour < QUIET_HOURS[1]) return;
+    if (lastUserMessageAt && now - lastUserMessageAt < AMBIENT_IDLE_MS) return;
+    if (now - lastAmbientAt < AMBIENT_INTERVAL_MS) return;
+    // 此刻看得见的事为空：没什么可反应的，别白叫醒模型。
+    if (snapshotLines(now).length === 0) return;
+
+    lastAmbientAt = now;
+    ambientInFlight = true;
+    void ambientChat().finally(() => {
+      ambientInFlight = false;
+    });
+  }
+
+  /** 真的看一眼。失败只写日志，不打扰用户。 */
+  async function ambientChat() {
+    try {
+      await runChat({ trigger: 'ambient' });
+    } catch (err) {
+      console.warn('[desk-pet] 自发反应失败：', err?.message || err);
+    }
+  }
+
   // ------------------------------------------------------------------
   // 主循环
   // ------------------------------------------------------------------
@@ -1775,6 +1851,8 @@ export function createAssistant({  userDataDir,
     // 主动搭话：条件最多、优先级最低——它只是「锦上添花」，
     // 绝不能挤掉提醒和报时。
     maybeProactive(now);
+    // 自发反应：比搭话更轻——大部分时候什么都不发生。
+    maybeAmbient(now);
   }
 
   // ------------------------------------------------------------------

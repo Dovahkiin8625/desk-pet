@@ -38,6 +38,7 @@ import { apiKeyStatus, saveApiKey, llmKeyStatus, saveLlmApiKey } from './credent
 import { SUGGESTED_VOICES } from './assistant/tts/voices.js';
 import { buildTapVoicePayload } from '../shared/tapVoice.js';
 import { sanitizeMotions } from '../shared/motions.js';
+import { sanitizeReportedClips } from '../shared/video.js';
 import {
   personaName as personaNameOf,
   personaText,
@@ -417,6 +418,10 @@ let rendererReady = false;
 // 渲染层上报的当前形象的动作清单（右键菜单「动作」子菜单按它建）。
 // 载荷已经由 sanitizeMotions 校验过。
 let petMotions = [];
+
+// 渲染层上报的当前形象的 clip 清单（提示词「你能做出的动作」按它列）。
+// 载荷已经由 sanitizeReportedClips 校验过。
+let petClips = [];
 
 // 切换请求序号：回执必须能对回具体的那一次请求（并发切换不能串台）。
 let switchCounter = 0;
@@ -1270,6 +1275,10 @@ app.whenReady().then(async () => {
       // 必须重建，否则托盘菜单里播的还是上一个形象的动作。
       refreshTrayMenu();
     },
+    // 渲染层上报形象有哪些 clip：提示词里「你能做出的动作」按它列。
+    onClipsReported: (list) => {
+      petClips = sanitizeReportedClips(list);
+    },
     // —— 桌面助理 ——
     // 助理状态：设置窗口用它显示与修改偏好。
     getAssistantState: () => assistant?.getState() || null,
@@ -1460,8 +1469,10 @@ app.whenReady().then(async () => {
     bubble,
     // 情绪事件发给渲染层，由它换表情/播动作。
     // 第二个参数是心情值的增量（渲染层拿它调整心情）。
-    onEmotion: (emotion, mood = 0) => {
-      if (win && !win.isDestroyed()) win.webContents.send('pet:emotion', { emotion, mood });
+    onEmotion: (emotion, mood = 0, action = '') => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('pet:emotion', { emotion, mood, action: String(action || '') });
+      }
     },
     // 合成好的语音交给渲染层播放（口型同步也在那边）。
     // 带上 id：渲染层播完要回报同一个 id，主进程才知道「这一声念完了」。
@@ -1492,6 +1503,11 @@ app.whenReady().then(async () => {
     // 用 listAll：它带着「这个插件接不接给后台任务」这个标记，
     // 助理那边再按「开着的」过滤。
     getPlugins: () => plugins?.listAll() || [],
+    // 形象有哪些 clip（渲染层上报的）：提示词「你能做出的动作」按它列。
+    getClips: () => petClips,
+    // 插件上报的状态行（例如「正在播放《…》」）：并进「此刻正在发生的事」，
+    // 模型据此自发反应，而不是去猜用户在干什么。
+    getPluginStatus: () => plugins?.statusLines?.() || [],
   });
   await assistant.start();
 

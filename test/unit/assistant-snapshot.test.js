@@ -111,6 +111,21 @@ test('快照：电池与温度只在值得说的时候写', () => {
   assert.deepEqual(plugged, []);
 });
 
+test('快照：插件上报的状态行带进来，后台在做的事最多三条', () => {
+  const lines = buildSnapshotLines({
+    state: {},
+    pluginLines: ['音乐播放器：在听：《七里香》 — 周杰伦', ''],
+    runningTasks: ['整理磁盘', '转码视频', '分析日志', '第四件'],
+    now: NOW,
+  });
+  assert.deepEqual(lines, [
+    '后台在做：整理磁盘',
+    '后台在做：转码视频',
+    '后台在做：分析日志',
+    '音乐播放器：在听：《七里香》 — 周杰伦',
+  ]);
+});
+
 test('快照那一段：空的时候要说「看不到」，不能写成「什么都没发生」', () => {
   const section = snapshotSection([]);
   assert.match(section, /此刻正在发生的事/);

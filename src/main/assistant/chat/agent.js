@@ -1,5 +1,5 @@
 import { LlmError, LLM_ERRORS } from '../llm/openai.js';
-import { createStreamSplitter, parseReply } from './prompt.js';
+import { createStreamSplitter, parseReply, META_MARKER } from './prompt.js';
 import { buildAgentSystemPrompt } from '../agent/prompt.js';
 import { AGENT_OUTCOME, createAgentLoop, safeConvo } from '../agent/loop.js';
 import { DEFAULT_AGENT } from '../../../shared/assistant.js';
@@ -61,6 +61,7 @@ const NUDGE = '\n（上一轮你只是说要做，却没有真的动手。现在
  * @param {Function} [options.getFacts]
  * @param {Function} [options.getSnapshot] 此刻正在发生的事
  * @param {Function} [options.getTaskStates] 手头在做的事
+ * @param {Function} [options.getClips] 形象有哪些 clip（id + label + 分类）
  * @param {Function} [options.getNow]
  * @param {object} [options.logger]
  */
@@ -89,6 +90,7 @@ export function createAgentBackend({
   getFacts = () => [],
   getSnapshot = () => [],
   getTaskStates = () => [],
+  getClips = () => [],
   getNow = () => new Date(),
   /** 日志器（工具出错时留一行）。 */
   logger = null,
@@ -107,6 +109,8 @@ export function createAgentBackend({
         signal,
         steer,
         taskId = '',
+        /** 这一轮是谁发起的（'user' | 'proactive' | 'ambient' | 'task'…）：自发反应整轮可以不说话。 */
+        trigger = '',
         /**
          * 这一轮**多带**的工具（前台的任务工具）。
          *
@@ -199,6 +203,7 @@ export function createAgentBackend({
         approval: { policy: getPolicy(), allowAlways: getAllowAlways() },
         snapshot: getSnapshot(),
         taskStates: getTaskStates(),
+        clips: getClips(),
         criteria,
         canEscalate,
         now: getNow(),
@@ -315,6 +320,7 @@ export function createAgentBackend({
             text: String(handed.answer || '').trim() || '这个要多花点时间，我接着做，做完告诉你。',
             emotion: 'neutral',
             mood: 0,
+            action: '',
             memories: [],
             baseUrl: run.baseUrl,
             steps: run.steps,
@@ -326,13 +332,30 @@ export function createAgentBackend({
       }
 
       const parsed = parseReply(run.text || '');
-      const text = parsed.text || fallbackText(run);
+      // 调试开关：`DESK_PET_DEBUG_META=1 npm start` 时，每一轮都把模型原始
+      // 输出的 <<META>> 段和解析结果打到终端——排查「agent 决定了还是没决定」用。
+      if (process.env.DESK_PET_DEBUG_META) {
+        const markerAt = String(run.text || '').indexOf(META_MARKER);
+        console.log(
+          '[desk-pet] META 原文：',
+          markerAt >= 0 ? String(run.text).slice(markerAt) : '（这一轮没输出 <<META>>）'
+        );
+        console.log(
+          '[desk-pet] META 解析：',
+          JSON.stringify({ emotion: parsed.emotion, mood: parsed.mood, action: parsed.action, memories: parsed.memories.length })
+        );
+      }
+      // 自发反应整轮没说一句话：模型是**故意**留空的（提示词里允许），
+      // 不是失败——回退文案（「我没能完成这件事。」）在这条路上会乱说话。
+      const intentionallySilent = trigger === 'ambient' && run.outcome === AGENT_OUTCOME.DONE;
+      const text = parsed.text || (intentionallySilent ? '' : fallbackText(run));
 
       return {
         // **答复也过一遍过滤器**：提示词是第一道防线，这里是第二道。
         text: sanitizeSpeech(text, { toolNames }),
         emotion: parsed.emotion,
         mood: parsed.mood,
+        action: parsed.action || '',
         memories: parsed.memories,
         baseUrl: run.baseUrl,
         steps: run.steps,

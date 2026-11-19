@@ -303,6 +303,34 @@ function showVideoEmotionClip(semantic) {
 }
 
 /**
+ * 模型点名的动作 clip（「你能做出的动作」表里的那个编号）。
+ *
+ * 视频形象：按 id 找到 clip，显式播（播完自动回待机）。
+ * 其它类型：按组名试播一次，认不出来就算了——绝不报错。
+ */
+function playActionClip(actionId) {
+  const id = typeof actionId === 'string' ? actionId.trim() : '';
+  if (!id) return;
+  if (currentManifest?.type === 'video') {
+    const clip = Array.isArray(currentManifest?.clips)
+      ? currentManifest.clips.find((c) => c.id === id)
+      : null;
+    if (!clip) return;
+    try {
+      currentModel?.motion(clip.id, 0)?.catch?.(() => {});
+    } catch {
+      /* 播不出来就算了 */
+    }
+    return;
+  }
+  try {
+    currentModel?.motion?.(id, 0)?.catch?.(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * 直接换上某个语义情绪的表情。
  *
  * 与 applyEmotion 分开：助理那边来的事件已经带着**语义情绪**
@@ -748,6 +776,19 @@ async function doMountModel(modelId, token) {
   window.__pet.manifest = manifest;
   // 把这个形象有哪些动作报给主进程：右键菜单的「动作」子菜单按它填
   window.pet?.reportMotions?.(motionListForMenu(manifest));
+  // 把这个形象有哪些 clip 报给主进程：提示词「你能做出的动作」按它列——
+  // 模型点名的编号只认这张表，报空 = 这份提示词里不列任何动作。
+  window.pet?.reportClips?.(
+    manifest.type === 'video' && Array.isArray(manifest.clips)
+      ? manifest.clips.map((c) => ({
+          id: c.id,
+          label: c.label,
+          category: c.category || 'action',
+          semantic: c.semantic || '',
+          loop: c.loop === true,
+        }))
+      : []
+  );
   return model;
 }
 
@@ -881,14 +922,15 @@ function registerChannels() {
 
   // —— 桌面助理的事件 ——
   // 情绪：主进程那边发生了「提醒到了」「太热了」之类的事。
-  window.pet.onEmotion?.((emotion, moodDelta) => {
-    if (!emotion) return;
+  window.pet.onEmotion?.((emotion, moodDelta, action) => {
     // 心情值可以跟着动一点（比如任务完成让桌宠也开心）。
     if (typeof moodDelta === 'number' && moodDelta !== 0) {
       emotionState = { ...emotionState, mood: clampMood(emotionState.mood + moodDelta) };
       window.__pet.mood = emotionState.mood;
     }
-    showEmotion(emotion);
+    if (emotion) showEmotion(emotion);
+    // 模型点名的动作放在最后播：它盖过情绪 clip，正是「模型自主决定」该有的优先级。
+    if (action) playActionClip(action);
   });
 
   // 右键菜单点了「动作」里的某一项：播放它。
@@ -1300,6 +1342,11 @@ async function boot() {
       lastPointer = { x, y };
       // 光标在形象的透明处时，让窗口不吃鼠标事件（桌面照常点得到）。
       updateClickThrough(x, y);
+      // 悬停在可点击区域（形象本体）上时，光标改成手，提示「可以点」。
+      // 量不出轮廓（null）时不冒充可点：退回默认光标。
+      const sil = currentSilhouette();
+      const onFigure = sil?.isReady?.() ? sil.contains(x, y) : null;
+      canvas.style.cursor = onFigure === true ? 'pointer' : '';
       if (currentModel?.focus) {
         try {
           currentModel.focus(x, y);

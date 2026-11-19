@@ -14,7 +14,12 @@ import {
   importModelDir,
   readMergedRegistry,
 } from '../../src/main/live2dModels.js';
-import { normalizeVideoList, deriveVideoMotions } from '../../src/shared/video.js';
+import {
+  normalizeClipList,
+  deriveVideoMotions,
+  buildClipSection,
+  sanitizeReportedClips,
+} from '../../src/shared/video.js';
 
 /** 摆一个够用的内置注册表目录（根目录里要有 assets/models/index.json）。 */
 async function makeRoot() {
@@ -40,69 +45,120 @@ const BASE_AVATAR = {
   type: 'video',
   viewport: { width: 300, height: 560 },
   fit: { scale: 1.0, anchor: [0.5, 1.0], offset: [0, 0] },
-  videos: [
-    { key: 'idle', file: 'videos/idle.webm', label: '待机', loop: true, semantic: 'idle' },
+  clips: [
+    { id: 'idle', file: 'videos/idle.webm', label: '待机', category: 'idle', loop: true, semantic: 'idle' },
   ],
 };
 
-test('normalizeVideoList：保留合法的、剔除重复 key 的', () => {
-  const { videos } = normalizeVideoList([
-    { key: 'idle', file: 'a.webm', semantic: 'idle' },
-    { key: 'idle', file: 'b.webm' },
-    { key: '', file: 'c.webm' },
+test('normalizeClipList：保留合法的、剔除重复 id 的', () => {
+  const { clips } = normalizeClipList([
+    { id: 'idle', file: 'a.webm', semantic: 'idle' },
+    { id: 'idle', file: 'b.webm' },
+    { id: '', file: 'c.webm' },
     '垃圾条目',
   ]);
-  assert.equal(videos.length, 1);
-  assert.equal(videos[0].file, 'a.webm');
+  assert.equal(clips.length, 1);
+  assert.equal(clips[0].file, 'a.webm');
 });
 
-test('normalizeVideoList：情绪/表情语义键也被接受', () => {
-  const { videos } = normalizeVideoList([
-    { key: 'a', file: 'a.webm', semantic: 'smile' },
-    { key: 'b', file: 'b.webm', semantic: 'angry' },
-    { key: 'c', file: 'c.webm', semantic: 'happy' },
-    { key: 'd', file: 'd.webm', semantic: 'dance' },
+test('normalizeClipList：情绪/表情语义键也被接受', () => {
+  const { clips } = normalizeClipList([
+    { id: 'a', file: 'a.webm', semantic: 'smile' },
+    { id: 'b', file: 'b.webm', semantic: 'angry' },
+    { id: 'c', file: 'c.webm', semantic: 'happy' },
+    { id: 'd', file: 'd.webm', semantic: 'dance' },
   ]);
-  assert.equal(videos[0].semantic, 'smile');
-  assert.equal(videos[1].semantic, 'angry');
-  assert.equal(videos[2].semantic, 'happy');
-  assert.equal(videos[3].semantic, undefined);
+  assert.equal(clips[0].semantic, 'smile');
+  assert.equal(clips[1].semantic, 'angry');
+  assert.equal(clips[2].semantic, 'happy');
+  assert.equal(clips[3].semantic, undefined);
 });
 
-test('normalizeVideoList：idle 允许多条（待机池），其余语义键只绑第一个', () => {
-  const { videos } = normalizeVideoList([
-    { key: 'idle-1', file: 'a.webm', semantic: 'idle' },
-    { key: 'idle-2', file: 'b.webm', semantic: 'idle' },
-    { key: 'idle-3', file: 'c.webm', semantic: 'idle' },
-    { key: 'other-1', file: 'd.webm', semantic: 'tapHead' },
-    { key: 'other-2', file: 'e.webm', semantic: 'tapHead' },
+test('normalizeClipList：idle 允许多条（待机池），其余语义键只绑第一个', () => {
+  const { clips } = normalizeClipList([
+    { id: 'idle-1', file: 'a.webm', semantic: 'idle' },
+    { id: 'idle-2', file: 'b.webm', semantic: 'idle' },
+    { id: 'idle-3', file: 'c.webm', semantic: 'idle' },
+    { id: 'other-1', file: 'd.webm', semantic: 'tapHead' },
+    { id: 'other-2', file: 'e.webm', semantic: 'tapHead' },
   ]);
-  assert.deepEqual(videos.filter((v) => v.semantic === 'idle').map((v) => v.key), ['idle-1', 'idle-2', 'idle-3']);
-  assert.equal(videos[3].semantic, 'tapHead');
-  assert.equal(videos[4].semantic, undefined);
+  assert.deepEqual(clips.filter((c) => c.semantic === 'idle').map((c) => c.id), ['idle-1', 'idle-2', 'idle-3']);
+  assert.equal(clips[3].semantic, 'tapHead');
+  assert.equal(clips[4].semantic, undefined);
 });
 
-test('normalizeVideoList：同一语义只绑第一个，其余退回菜单', () => {
-  const { videos } = normalizeVideoList([
-    { key: 'a', file: 'a.webm', semantic: 'tapHead' },
-    { key: 'b', file: 'b.webm', semantic: 'tapHead' },
-    { key: 'c', file: 'c.webm', semantic: 'swing' },
+test('normalizeClipList：同一语义只绑第一个，其余退回待机池外可见', () => {
+  const { clips } = normalizeClipList([
+    { id: 'a', file: 'a.webm', semantic: 'tapHead' },
+    { id: 'b', file: 'b.webm', semantic: 'tapHead' },
+    { id: 'c', file: 'c.webm', semantic: 'swing' },
   ]);
-  assert.equal(videos[0].semantic, 'tapHead');
-  assert.equal(videos[1].semantic, undefined);
+  assert.equal(clips[0].semantic, 'tapHead');
+  assert.equal(clips[1].semantic, undefined);
   // 应用不认的语义键直接丢弃（菜单仍可见）。
-  assert.equal(videos[2].semantic, undefined);
+  assert.equal(clips[2].semantic, undefined);
 });
 
-test('deriveVideoMotions：语义键映射到 group，菜单组名用 key；idle 多条时第一个赢', () => {
+test('normalizeClipList：分类只认 idle/emotion/action/special，缺省或非法退到 action', () => {
+  const { clips } = normalizeClipList([
+    { id: 'a', file: 'a.webm', category: 'idle' },
+    { id: 'b', file: 'b.webm', category: 'emotion' },
+    { id: 'c', file: 'c.webm', category: 'action' },
+    { id: 'd', file: 'd.webm', category: 'special' },
+    { id: 'e', file: 'e.webm', category: 'bogus' },
+    { id: 'f', file: 'f.webm' },
+  ]);
+  assert.deepEqual(clips.map((c) => c.category), ['idle', 'emotion', 'action', 'special', 'action', 'action']);
+});
+
+test('deriveVideoMotions：语义键映射到 group，菜单组名用 id；idle 多条时第一个赢', () => {
   const { motions, motionGroups, motionNames } = deriveVideoMotions([
-    { key: 'idle-1', file: 'a.webm', label: '待机', semantic: 'idle' },
-    { key: 'idle-2', file: 'b.webm', label: '待机2', semantic: 'idle' },
-    { key: 'laugh', file: 'c.webm', label: '大笑' },
+    { id: 'idle-1', file: 'a.webm', label: '待机', semantic: 'idle' },
+    { id: 'idle-2', file: 'b.webm', label: '待机2', semantic: 'idle' },
+    { id: 'laugh', file: 'c.webm', label: '大笑' },
   ]);
   assert.deepEqual(motions, { idle: { group: 'idle-1', index: 0 } });
   assert.deepEqual(motionGroups, { 'idle-1': 1, 'idle-2': 1, laugh: 1 });
   assert.deepEqual(motionNames.laugh, ['大笑']);
+});
+
+test('buildClipSection：按分类分组列出 id 与 label', () => {
+  const section = buildClipSection([
+    { id: 'idle-1', label: '待机（呼吸）', category: 'idle', semantic: 'idle' },
+    { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion', semantic: 'tired' },
+    { id: 'laugh', label: '开怀大笑', category: 'emotion' },
+    { id: 'greet', label: '挥手打招呼', category: 'action' },
+    { id: 'special-1', label: '特殊动作 1', category: 'special' },
+  ]);
+  assert.match(section, /你能做出的动作/);
+  assert.match(section, /<id>/);
+  assert.match(section, /待机：idle-1=待机（呼吸）/);
+  assert.match(section, /情绪表情：sleepy=犯困打瞌睡；laugh=开怀大笑/);
+  assert.match(section, /动作手势：greet=挥手打招呼/);
+  assert.match(section, /特殊：special-1=特殊动作 1/);
+});
+
+test('buildClipSection：空清单返回空串', () => {
+  assert.equal(buildClipSection([]), '');
+  assert.equal(buildClipSection(null), '');
+});
+
+test('sanitizeReportedClips：去重、限长、分类与语义校验', () => {
+  const out = sanitizeReportedClips([
+    { id: ' a ', label: ' 待机 ', category: 'idle', semantic: 'idle', loop: true },
+    { id: 'a', label: '重复', category: 'action' },
+    { id: 'x', label: 'q', category: 'bogus', semantic: 'dance' },
+    '垃圾',
+    { id: '', label: '空 id' },
+  ]);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, 'a');
+  assert.equal(out[0].label, '待机');
+  assert.equal(out[0].semantic, 'idle');
+  assert.equal(out[0].loop, true);
+  // 非法分类退到 action，应用不认的语义丢弃。
+  assert.equal(out[1].category, 'action');
+  assert.equal(out[1].semantic, '');
 });
 
 test('视频目录被识别为视频形象', async () => {
@@ -124,10 +180,10 @@ test('导入：缺失的视频被跳过并报警告，其余照常导入', async
   const dir = await makeVideoAvatarDir(
     {
       ...BASE_AVATAR,
-      videos: [
-        { key: 'idle', file: 'videos/idle.webm', label: '待机', loop: true, semantic: 'idle' },
-        { key: 'laugh', file: 'videos/laugh.webm', label: '大笑' },
-        { key: 'todo', file: null, label: '还没做' },
+      clips: [
+        { id: 'idle', file: 'videos/idle.webm', label: '待机', category: 'idle', loop: true, semantic: 'idle' },
+        { id: 'laugh', file: 'videos/laugh.webm', label: '大笑', category: 'emotion' },
+        { id: 'todo', file: null, label: '还没做', category: 'action' },
       ],
     },
     ['videos/idle.webm'],
@@ -147,7 +203,7 @@ test('导入：缺失的视频被跳过并报警告，其余照常导入', async
   const pet = JSON.parse(await readFile(join(modelDir, 'avatar.json'), 'utf8'));
   assert.equal(pet.type, 'video');
   assert.deepEqual(
-    pet.videos.map((v) => v.key),
+    pet.clips.map((c) => c.id),
     ['idle'],
   );
   // 被跳过的视频没有拷进来。
@@ -165,7 +221,7 @@ test('导入：一条可用视频都没有 → 失败且不写注册表', async 
   const dir = await makeVideoAvatarDir(
     {
       ...BASE_AVATAR,
-      videos: [{ key: 'todo', file: null, label: '还没做' }],
+      clips: [{ id: 'todo', file: null, label: '还没做', category: 'action' }],
     },
     [],
   );
@@ -188,7 +244,7 @@ test('导入：越出目录的路径被拒绝（不外泄文件）', async () =>
   const dir = await makeVideoAvatarDir(
     {
       ...BASE_AVATAR,
-      videos: [{ key: 'evil', file: '../outside.webm', label: '越界' }],
+      clips: [{ id: 'evil', file: '../outside.webm', label: '越界', category: 'action' }],
     },
     [],
   );

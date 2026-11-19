@@ -17,7 +17,7 @@ import * as weather from './weather.js';
  *
  * 快照里只有**真的在发生**的事，没有就空着。
  *
- * 但**空着不等于否定**：宿主只知道自己手里那几样（计时、待办、提醒、天气、电源），
+ * 但**空着不等于否定**：宿主只知道自己手里那几样（计时、待办、提醒、天气、电源、插件状态、后台任务），
  * 没写进去的事只是「我不知道」，不是「它没在发生」。
  * 所以那一段的措辞是「我能看到的就这些」——不然模型会转头又说出
  * 「你没在听歌」这类反方向的假话。
@@ -37,6 +37,8 @@ const TODO_TEXT_MAX = 30;
  * @param {number} [options.now]
  * @param {boolean|null} [options.onBattery] 在用电池吗
  * @param {string} [options.thermal] 热状态（powerMonitor 的取值）
+ * @param {string[]} [options.pluginLines] 插件上报的状态行（已带插件名）
+ * @param {string[]} [options.runningTasks] 正在后台做的事情（标题）
  * @returns {string[]} 一行一条
  */
 export function buildSnapshotLines({
@@ -44,6 +46,8 @@ export function buildSnapshotLines({
   now = Date.now(),
   onBattery = null,
   thermal = 'unknown',
+  pluginLines = [],
+  runningTasks = [],
 } = {}) {
   const lines = [];
 
@@ -92,6 +96,25 @@ export function buildSnapshotLines({
   // 电源与温度：只有值得说的时候才写。
   if (onBattery === true) lines.push('在用电池，没插电');
   if (thermal === 'serious' || thermal === 'critical') lines.push('电脑很热，注意降温');
+
+  // 后台在做的事：正在跑的，最多三条。
+  const taskLines = (Array.isArray(runningTasks) ? runningTasks : [])
+    .map((t) => String(t || '').trim().slice(0, TODO_TEXT_MAX))
+    .filter(Boolean)
+    .slice(0, 3);
+  for (const title of taskLines) {
+    lines.push(`后台在做：${title}`);
+  }
+
+  // 插件上报的状态（音乐在放、下载在跑……）：由插件自己说，
+  // 这里只负责带进来，不猜。
+  const contributed = (Array.isArray(pluginLines) ? pluginLines : [])
+    .map((l) => String(l || '').trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  for (const line of contributed) {
+    lines.push(line);
+  }
 
   return lines;
 }

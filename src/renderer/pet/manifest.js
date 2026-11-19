@@ -1,6 +1,6 @@
 import { detectCubismVersion } from '../../shared/live2d.js';
 import { SPINE_TYPE, isSpineManifest } from '../../shared/spine.js';
-import { VIDEO_TYPE, isVideoManifest, normalizeVideoList, deriveVideoMotions } from '../../shared/video.js';
+import { VIDEO_TYPE, isVideoManifest, normalizeClipList, deriveVideoMotions } from '../../shared/video.js';
 import { motionLabelFromFile } from '../../shared/motions.js';
 
 // 格式判别规则在 src/shared/live2d.js：主进程与渲染层共用同一份，
@@ -258,8 +258,8 @@ export async function loadManifest(modelId, registry) {
     if (!manifestJson) throw new Error(`视频形象缺少清单：${entryId}`);
     // 防御性规整：内置的 avatar.json 由导入流程写好规整版，
     // 这条路径对的是手写的形象（或用户手改的注册表）。
-    const { videos } = normalizeVideoList(manifestJson.videos);
-    const available = videos.filter((v) => v.file);
+    const { clips } = normalizeClipList(manifestJson.clips);
+    const available = clips.filter((c) => c.file);
     if (available.length === 0) throw new Error(`视频形象没有任何可用的视频：${entryId}`);
     const derived = deriveVideoMotions(available);
     return {
@@ -274,7 +274,7 @@ export async function loadManifest(modelId, registry) {
       // 视频形象没有表情：语义表情一律留空。
       expressions: {},
       availableExpressions: [],
-      videos: available,
+      clips: available,
       motions: derived.motions,
       motionGroups: derived.motionGroups,
       motionNames: derived.motionNames,

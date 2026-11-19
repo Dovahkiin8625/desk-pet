@@ -48,6 +48,22 @@ import { createPluginOpenTool } from './tools.js';
  * 这样插件既可以被面板调用，也可以被自己的窗口调用，两条路共用一份实现。
  */
 
+/** 「此刻正在发生的事」最多带多少条插件状态。 */
+const MAX_STATUS_LINES = 5;
+
+/** 单条插件状态的最大长度。 */
+const STATUS_LINE_MAX = 80;
+
+/** 把插件报的状态收成一行安全文本；拿不到就返回空串。 */
+function sanitizeStatusText(raw) {
+  const text = String(raw?.text ?? raw ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, STATUS_LINE_MAX);
+  return text;
+}
+
 /** 插件的启用状态存在哪。 */
 const PREFS_FILE = 'plugins.json';
 
@@ -525,6 +541,37 @@ export async function createPluginHost({
   /** 面板搜索用的清单：**只含启用的**插件。 */
   function list() {
     return [...records.values()].filter((r) => isEnabled(r.manifest.id)).map(toMeta);
+  }
+
+  /**
+   * 「此刻正在发生的事」用的插件状态行。
+   *
+   * 通用钩子：插件实例可以实现 `status()`——
+   * 返回一行文本（例如「正在播放《七里香》」）或 `{ text }`；
+   * 此刻没什么可说就返回 null/空串。状态必须是**同步**的：
+   * 这里不能等 I/O，插件要自己上心里缓存一份。
+   *
+   * 宿主补上插件名（「音乐播放器：…」）、限制条数与长度，
+   * 并吞掉插件自己抛的错——一个插件炸了不该让整份快照没了。
+   */
+  function statusLines() {
+    const lines = [];
+    for (const record of records.values()) {
+      if (lines.length >= MAX_STATUS_LINES) break;
+      if (!isEnabled(record.manifest.id)) continue;
+      const fn = record.instance?.status;
+      if (typeof fn !== 'function') continue;
+      let text = '';
+      try {
+        text = sanitizeStatusText(fn());
+      } catch (err) {
+        console.warn(`[desk-pet] 插件「${record.manifest.id}」的 status() 出错：`, err?.message);
+        continue;
+      }
+      if (!text) continue;
+      lines.push(`${record.manifest.name}：${text}`);
+    }
+    return lines;
   }
 
   /** 全部插件与启用状态（设置窗口的「插件」分区用）。 */
@@ -1021,6 +1068,8 @@ export async function createPluginHost({
     load,
     list,
     listAll,
+    /** 「此刻正在发生的事」用的插件状态行。 */
+    statusLines,
     /** 某个插件的配置值（默认值 + 用户改过的）。 */
     getConfig,
     /** 改某个插件的配置值并落盘。 */

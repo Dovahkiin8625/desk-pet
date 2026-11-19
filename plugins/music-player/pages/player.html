@@ -104,27 +104,6 @@
         outline: 2px solid var(--dp-accent);
         outline-offset: 1px;
       }
-      /* 齿轮：设置都在右边的抽屉里。 */
-      #gear {
-        flex: none;
-        width: 26px;
-        height: 26px;
-        padding: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 15px;
-        line-height: 1;
-        color: var(--dp-text-soft);
-        background: transparent;
-        border: none;
-        border-radius: 7px;
-        cursor: pointer;
-      }
-      #gear:hover {
-        background: var(--dp-surface-hover);
-        color: var(--dp-text);
-      }
       /* ---------------- 歌单 + 歌曲 ---------------- */
       #body {
         display: flex;
@@ -630,6 +609,38 @@
       #controls button:hover {
         background: var(--dp-surface-hover);
       }
+      /* 桌面歌词开关：按下是一种状态，给个和播放键一样的实心底。 */
+      #lyrics {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      #lyrics[aria-pressed='true'] {
+        background: var(--dp-accent);
+        border: 1px solid var(--dp-accent-strong);
+        color: var(--dp-accent-ink);
+      }
+      #lyrics[aria-pressed='true']:hover {
+        background: var(--dp-accent-strong);
+      }
+      /* 音量：图标 + 小滑块，跟播放键排在一起。 */
+      #vol {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 4px;
+        padding-left: 10px;
+        border-left: 1px solid var(--dp-border-soft);
+        color: var(--dp-text-soft);
+      }
+      #vol .dp-icon {
+        width: 17px;
+        height: 17px;
+      }
+      #vol input[type='range'] {
+        width: 84px;
+        accent-color: var(--dp-accent-strong);
+        cursor: pointer;
+      }
       #play {
         width: 38px;
         height: 38px;
@@ -882,7 +893,6 @@
           <span class="ico icon" data-icon="search"></span>
           <input id="filter" type="text" placeholder="搜歌名或歌手" autocomplete="off" />
         </div>
-        <button id="gear" type="button" title="设置" aria-label="设置"><span class="icon" data-icon="settings"></span></button>
       </header>
 
       <div id="body">
@@ -942,6 +952,9 @@
           <button id="prev" type="button" title="上一首"><span class="icon" data-icon="prev"></span></button>
           <button id="play" type="button" title="播放 / 暂停"><span class="icon" data-icon="play"></span></button>
           <button id="next" type="button" title="下一首"><span class="icon" data-icon="next"></span></button>
+          <button id="mode" type="button" title="播放顺序：顺序播放" aria-label="播放顺序"><span class="icon" data-icon="list"></span></button>
+          <button id="lyrics" type="button" title="桌面歌词" aria-label="桌面歌词" aria-pressed="false">词</button>
+          <span id="vol"><span class="icon" data-icon="volume" aria-hidden="true"></span><input id="setVolume" type="range" min="0" max="100" value="80" aria-label="音量" /></span>
         </div>
       </footer>
     </div>

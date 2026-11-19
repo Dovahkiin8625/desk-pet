@@ -2,6 +2,7 @@ import { metaContractLines, META_MARKER, nowLine } from '../chat/prompt.js';
 import { snapshotSection } from '../snapshot.js';
 import { TASK_STATUS } from '../../../shared/assistant.js';
 import { TASK_STATUS_TEXT } from './record.js';
+import { buildClipSection } from '../../../shared/video.js';
 
 /**
  * agent 的系统提示词与上下文管理。
@@ -69,6 +70,7 @@ const POLICY_TEXT = {
  * @param {object} [options.approval] {policy, allowAlways}
  * @param {string[]} [options.snapshot] 此刻正在发生的事
  * @param {object[]} [options.taskStates] 手头在做的事
+ * @param {string[]} [options.clips] 形象有哪些 clip（id + label + 分类）
  * @param {string} [options.criteria] 做完的标准（开工前定下的）
  * @param {boolean} [options.canEscalate] 能不能把这件事交给后台继续做
  * @param {Date} [options.now]
@@ -83,6 +85,7 @@ export function buildAgentSystemPrompt({
   approval = {},
   snapshot = [],
   taskStates = [],
+  clips = [],
   criteria = '',
   canEscalate = false,
   now = new Date(),
@@ -195,6 +198,7 @@ export function buildAgentSystemPrompt({
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     nowLine(when),
     snapshotSection(snapshot),
+    buildClipSection(clips),
     taskStatesSection(taskStates),
   );
 

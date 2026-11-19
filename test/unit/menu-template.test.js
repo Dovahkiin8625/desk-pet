@@ -39,6 +39,23 @@ test('没有上报动作清单时，「动作」子菜单只有一项禁用项',
   assert.equal(motion.submenu[0].enabled, false);
 });
 
+test('单动作组铺成一项时，用动作自己的 label（视频形象的中文名），不是 group 的 key', () => {
+  const items = menuTemplate(
+    baseActions({
+      listMotions: () => [
+        { group: 'heart-1', motions: [{ index: 0, label: '比心（双手）1' }] },
+        { group: 'dance-1', motions: [{ index: 0, label: '跳舞' }] },
+      ],
+      playMotion() {},
+    }),
+  );
+  const motion = motionItem(items);
+  assert.deepEqual(
+    motion.submenu.map((i) => i.label),
+    ['比心（双手）1', '跳舞'],
+  );
+});
+
 test('动作组里只有一个动作：该组直接铺成一项', () => {
   const items = menuTemplate(
     baseActions({
@@ -75,7 +92,8 @@ test('动作组里有多个动作：该组展开为二级子菜单', () => {
   const motion = motionItem(items);
   assert.deepEqual(
     motion.submenu.map((i) => i.label),
-    ['Idle', 'TapBody'],
+    // 单动作组直接用动作的 label（与多动作组二级菜单里的项一致）。
+    ['Idle', 'haru_g_m06'],
   );
   assert.deepEqual(
     motion.submenu[0].submenu.map((i) => i.label),

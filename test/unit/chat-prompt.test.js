@@ -8,6 +8,7 @@ import {
   nowLine,
   parseReply,
   stripLeadingTimePrefix,
+  buildChatMessages,
 } from '../../src/main/assistant/chat/prompt.js';
 import { buildAgentSystemPrompt } from '../../src/main/assistant/agent/prompt.js';
 import { dayPeriod } from '../../src/main/assistant/clock.js';
@@ -55,6 +56,42 @@ test('parseReply：开头的时间标记不进正文', () => {
   const parsed = parseReply('[31 分钟前] 夜深啦，早点睡喵\n\n<<META>>{"emotion":"tired","mood":0,"memories":[]}');
   assert.equal(parsed.text, '夜深啦，早点睡喵');
   assert.equal(parsed.emotion, 'tired');
+});
+
+test('parseReply：action 读出来，缺省为空串', () => {
+  const withAction = parseReply('笑一个<<META>>{"emotion":"happy","mood":5,"action":"laugh","memories":[]}');
+  assert.equal(withAction.action, 'laugh');
+  const without = parseReply('笑一个<<META>>{"emotion":"happy","mood":5,"memories":[]}');
+  assert.equal(without.action, '');
+  // 非法形态：不是字符串就丢掉。
+  const bogus = parseReply('笑一个<<META>>{"emotion":"happy","mood":5,"action":42,"memories":[]}');
+  assert.equal(bogus.action, '');
+});
+
+test('buildAgentSystemPrompt：clip 清单带进提示词，点播契约也写进 META 说明', () => {
+  const system = buildAgentSystemPrompt({
+    clips: [
+      { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion', semantic: 'tired' },
+      { id: 'dance-1', label: '跳舞', category: 'action' },
+    ],
+  });
+  assert.match(system, /你能做出的动作/);
+  assert.match(system, /sleepy=犯困打瞌睡/);
+  assert.match(system, /dance-1=跳舞/);
+  assert.match(system, /"action"/);
+});
+
+test('buildSystemPrompt：clip 清单带进提示词', () => {
+  const system = buildSystemPrompt({
+    clips: [{ id: 'greet', label: '挥手打招呼', category: 'action' }],
+  });
+  assert.match(system, /greet=挥手打招呼/);
+});
+
+test('buildChatMessages：ambient 触发用自发反应的话术', () => {
+  const messages = buildChatMessages({ history: [], trigger: 'ambient', now: AFTERNOON });
+  assert.match(messages.at(-1).content, /自发反应/);
+  assert.match(messages.at(-1).content, /正文留空/);
 });
 
 test('createStreamSplitter：标记跨 chunk 也能认出来', () => {

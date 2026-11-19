@@ -853,3 +853,96 @@ test('宿主：recordUse 通知监听者（清单的顺序可以重算了）', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('宿主：插件实现 status() 就能被列进「此刻」，带插件名前缀', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = join(root, 'userdata');
+  await mkdir(userData, { recursive: true });
+  await makePlugin(
+    root,
+    'musicx',
+    { id: 'musicx', name: '音乐播放器' },
+    "export default () => ({ status: () => '在听：《七里香》 — 周杰伦' });"
+  );
+  await makePlugin(
+    root,
+    'quiet',
+    { id: 'quiet', name: '没状态的插件' },
+    'export default () => ({});'
+  );
+  const host = await createPluginHost({
+    rootDir: root,
+    userDataDir: userData,
+    assistant: fakeAssistant(),
+    openSettings: () => {},
+  });
+  await host.load();
+  try {
+    assert.deepEqual(host.statusLines(), ['音乐播放器：在听：《七里香》 — 周杰伦']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：status() 返回 null 或空串就不列；抛错也不影响其他条目', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = join(root, 'userdata');
+  await mkdir(userData, { recursive: true });
+  await makePlugin(
+    root,
+    'broken',
+    { id: 'broken', name: '会炸的插件' },
+    "export default () => ({ status: () => { throw new Error('boom'); } });"
+  );
+  await makePlugin(
+    root,
+    'idle',
+    { id: 'idle', name: '没在听的播放器' },
+    'export default () => ({ status: () => null });'
+  );
+  await makePlugin(
+    root,
+    'fine',
+    { id: 'fine', name: '正常插件' },
+    "export default () => ({ status: () => ({ text: '下载中：80%' }) });"
+  );
+  const host = await createPluginHost({
+    rootDir: root,
+    userDataDir: userData,
+    assistant: fakeAssistant(),
+    openSettings: () => {},
+  });
+  await host.load();
+  try {
+    const lines = host.statusLines();
+    assert.deepEqual(lines, ['正常插件：下载中：80%']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('宿主：插件被关掉了，status() 也不列进「此刻」', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desk-pet-plugins-'));
+  const userData = join(root, 'userdata');
+  await mkdir(userData, { recursive: true });
+  await makePlugin(
+    root,
+    'musicx',
+    { id: 'musicx', name: '音乐播放器' },
+    "export default () => ({ status: () => '在听：《七里香》' });"
+  );
+  const host = await createPluginHost({
+    rootDir: root,
+    userDataDir: userData,
+    assistant: fakeAssistant(),
+    openSettings: () => {},
+  });
+  await host.load();
+  try {
+    assert.equal(host.statusLines().length, 1);
+    await host.setEnabled('musicx', false);
+    assert.deepEqual(host.statusLines(), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

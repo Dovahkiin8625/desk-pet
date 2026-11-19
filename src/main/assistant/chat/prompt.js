@@ -10,6 +10,7 @@ import {
 import { normalizeMemory } from './memory.js';
 import { snapshotSection } from '../snapshot.js';
 import { dayPeriod, weekdayText } from '../clock.js';
+import { buildClipSection } from '../../../shared/video.js';
 
 /**
  * 人设、系统提示词与回复解析。
@@ -21,7 +22,7 @@ import { dayPeriod, weekdayText } from '../clock.js';
  * ```
  * <回复正文，最多 3 句，中文口语>
  *
- * <<META>>{"emotion":"happy","mood":5,"memories":["用户喜欢喝美式"]}
+ * <<META>>{"emotion":"happy","mood":5,"action":"laugh","memories":[{"text":"用户喜欢喝美式","kind":"preference"}]}
  * ```
  *
  * 正文在前、元数据在后。若让模型只回一个 JSON 对象，
@@ -66,6 +67,19 @@ export const PROACTIVE_TRIGGER =
   '（主动搭话：用户此刻没有说话。说一句现在能说的话。' +
   '历史里出现过、但「此刻正在发生的事」里没写的事，就当它已经过去了——别提它现在还在怎样。）';
 
+/**
+ * 自发反应（ambient）时替用户发的那句话。
+ *
+ * **允许整轮没有正文**：这一轮是给桌宠「看了看四周」的机会——
+ * 没什么值得说的就只输出 <<META>> 一行，正文留空；
+ * 有值得说的才像主动搭话一样说一句。
+ */
+export const AMBULATORY_TRIGGER =
+  '（自发反应：用户此刻没有说话，也没有等你做事。看看「此刻正在发生的事」和「你能做出的动作」：' +
+  '如果有什么值得说或值得做的，就说一句或做一个动作；' +
+  '如果没什么值得做的，就一句话都不要说——只输出 <<META>> 那一行，正文留空。' +
+  '历史里出现过、但「此刻正在发生的事」里没写的事，就当它已经过去了——别提它现在还在怎样。）';
+
 /** 心情增量的上下限。 */
 const MAX_MOOD = 10;
 
@@ -78,9 +92,11 @@ const MAX_MOOD = 10;
 export function metaContractLines() {
   return [
     '- 回答写完后，另起一行输出 ' + META_MARKER + '，紧跟一个 JSON 对象（不要代码块围栏）：',
-    `  {"emotion":"<情绪>","mood":<整数>,"memories":[{"text":"<一句话事实>","kind":"<类型>"}]}`,
+    `  {"emotion":"<情绪>","mood":<整数>,"action":"<动作编号，可选>","memories":[{"text":"<一句话事实>","kind":"<类型>"}]}`,
     `- emotion 只能是 ${EMOTIONS.join(' / ')} 之一。`,
     `- mood 是 -${MAX_MOOD} 到 ${MAX_MOOD} 的整数：正数表示这轮让你更开心，负数表示更闷。`,
+    '- action 是「你能做出的动作」那张表里的编号：想做这个动作就写上，不想做就省略。',
+    '- 编号只认那张表：表上没有的 id 等于没做。动作播完自动回待机，不用管。',
     `- memories 只记「重要、而且长期有效」的事，最多 ${MAX_NEW_MEMORIES} 条；没有就写 []。`,
     `- kind 只能是 ${MEMORY_KINDS.join(' / ')} 之一：`,
     '  explicit=用户明确让你记住的；preference=用户的偏好习惯；fact=用户的稳定事实；plan=长期约定或承诺。',
@@ -92,7 +108,7 @@ export function metaContractLines() {
 /**
  * 组装系统提示词：人设 + 记忆 + 输出契约。
  */
-export function buildSystemPrompt({ persona = {}, facts = [], now = new Date(), snapshot = [] } = {}) {
+export function buildSystemPrompt({ persona = {}, facts = [], now = new Date(), snapshot = [], clips = [] } = {}) {
   const name = String(persona.name || '小桌').trim() || '小桌';
   const style = String(persona.style || '').trim();
   const backstory = String(persona.backstory || '').trim();
@@ -112,6 +128,7 @@ export function buildSystemPrompt({ persona = {}, facts = [], now = new Date(), 
     list.length ? `\n你记住的事：\n${list.map((f) => `- ${f}`).join('\n')}` : '',
     nowLine(when),
     snapshotSection(snapshot),
+    buildClipSection(clips),
   ]
     .filter(Boolean)
     .join('\n');
@@ -182,7 +199,12 @@ export function buildChatMessages({
   const messages = buildHistoryMessages({ history, layer, now });
   messages.push({
     role: 'user',
-    content: trigger === 'proactive' ? PROACTIVE_TRIGGER : String(userText ?? ''),
+    content:
+      trigger === 'proactive'
+        ? PROACTIVE_TRIGGER
+        : trigger === 'ambient'
+          ? AMBULATORY_TRIGGER
+          : String(userText ?? ''),
   });
   return messages;
 }
@@ -214,7 +236,7 @@ export function parseReply(raw) {
     const reply = firstString(parsed, ['reply', 'text', 'content', 'message']);
     if (reply !== null) return { text: reply, ...readMeta(parsed) };
   }
-  return { text: trimmed, emotion: 'neutral', mood: 0, memories: [] };
+  return { text: trimmed, emotion: 'neutral', mood: 0, memories: [], action: '' };
 }
 
 /** 去掉 ```json … ``` 的围栏。 */
@@ -245,13 +267,16 @@ function firstString(obj, keys) {
   return null;
 }
 
-/** 从元数据里读情绪、心情与记忆（全部容错）。 */
+/** 从元数据里读情绪、心情、动作点播与记忆（全部容错）。 */
 function readMeta(meta) {
   const emotion = EMOTIONS.includes(meta?.emotion) ? meta.emotion : 'neutral';
   const rawMood = Number(meta?.mood);
   const mood = Number.isFinite(rawMood)
     ? Math.max(-MAX_MOOD, Math.min(MAX_MOOD, Math.round(rawMood)))
     : 0;
+  const rawAction = typeof meta?.action === 'string' ? meta.action.trim() : '';
+  // action 只认短编号：表里的 id 都是 [A-Za-z0-9_-] 之类的，超长基本是模型乱写。
+  const action = rawAction.slice(0, 64);
   const rawMemories = Array.isArray(meta?.memories) ? meta.memories : [];
   const memories = [];
   for (const item of rawMemories) {
@@ -259,7 +284,7 @@ function readMeta(meta) {
     if (entry) memories.push(entry);
     if (memories.length >= MAX_NEW_MEMORIES) break;
   }
-  return { emotion, mood, memories };
+  return { emotion, mood, action, memories };
 }
 
 /**

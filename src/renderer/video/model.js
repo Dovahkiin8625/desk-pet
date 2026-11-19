@@ -20,7 +20,7 @@ export async function loadVideoModel(manifest) {
   if (!PIXI?.Sprite || !PIXI?.Texture) throw new Error('PIXI 运行时没有加载');
   const base = manifest?.base || '/assets/models';
   const dir = `${base}/${manifest.id}`;
-  const clips = Array.isArray(manifest?.videos) ? manifest.videos.filter((v) => v.file) : [];
+  const clips = Array.isArray(manifest?.clips) ? manifest.clips.filter((v) => v.file) : [];
   if (clips.length === 0) throw new Error('视频形象没有任何可用的视频');
 
   // 逐个把视频读成 blob URL，并建出 <video> 与对应 Texture。
@@ -230,7 +230,7 @@ export async function loadVideoModel(manifest) {
   }
 
   /**
-   * 语义 → 视频动作。group 就是 videos[].key；每个视频恒为 1 个动作。
+   * 语义 → 视频动作。group 就是 clips[].id；每个视频恒为 1 个动作。
    *
    * index 的存在与否区分两种调用：右键菜单点播 index=0（显式请求），
    * 空闲计时器只传 group（背景重播）。待机池轮换时，背景重播是 no-op——
@@ -241,7 +241,7 @@ export async function loadVideoModel(manifest) {
    */
   sprite.motion = (group, index) => {
     const explicit = typeof index === 'number';
-    const item = loaded.find((i) => i.clip.key === group);
+    const item = loaded.find((i) => i.clip.id === group);
     if (!item) return Promise.resolve(false);
     if (inPoolMode && isIdleClip(item) && !explicit) {
       const cur = sprite.__currentClip;

@@ -10,7 +10,6 @@
  */
 import { bindSurface } from '/src/renderer/ui/pluginPage.js';
 import { hydrateIcons, iconSvg, setIcon } from '/src/renderer/ui/icons.js';
-import { createDrawer } from '/src/renderer/ui/drawer.js';
 import { formatTime } from '../lib/format.js';
 
 const surface = bindSurface();
@@ -55,7 +54,9 @@ const el = {
   prev: $('prev'),
   play: $('play'),
   next: $('next'),
-  gear: $('gear'),
+  mode: $('mode'),
+  lyrics: $('lyrics'),
+  vol: $('setVolume'),
   menu: $('menu'),
   menuCover: $('menu-cover'),
   menuCoverReset: $('menu-cover-reset'),
@@ -69,63 +70,12 @@ const el = {
   songLyrics: $('song-lyrics'),
 };
 
-/** 播放模式：图标上写什么字。 */
+/** 播放模式：图标与轮换顺序（顺序播放 → 单曲循环 → 随机播放）。 */
 const MODES = [
-  { label: '顺序播放' },
-  { label: '单曲循环' },
-  { label: '随机播放' },
+  { label: '顺序播放', icon: 'list' },
+  { label: '单曲循环', icon: 'repeat-1' },
+  { label: '随机播放', icon: 'shuffle' },
 ];
-
-// ---------------------------------------------------------------------------
-// 设置抽屉
-//
-// 播放器的设置（音量、播放模式、桌面歌词）都在这里：
-// 与剪贴板插件、宿主的面板共用同一份抽屉（src/renderer/ui/drawer.js）。
-// ---------------------------------------------------------------------------
-
-const drawer = createDrawer({ button: el.gear });
-
-/** 抽屉里的一行：左边是名字，右边是控件。 */
-function settingRow(name, control) {
-  const row = document.createElement('label');
-  row.className = 'dp-field';
-  const label = document.createElement('span');
-  label.textContent = name;
-  row.append(label, control);
-  return row;
-}
-
-const volInput = document.createElement('input');
-volInput.id = 'setVolume';
-volInput.className = 'dp-range';
-volInput.type = 'range';
-volInput.min = '0';
-volInput.max = '100';
-
-const modeSelect = document.createElement('select');
-modeSelect.id = 'setMode';
-modeSelect.className = 'dp-input';
-for (const mode of MODES) {
-  const option = document.createElement('option');
-  option.value = mode.label;
-  option.textContent = mode.label;
-  modeSelect.append(option);
-}
-
-const lyricsInput = document.createElement('input');
-lyricsInput.id = 'setLyrics';
-lyricsInput.type = 'checkbox';
-
-drawer.body.append(
-  settingRow('音量', volInput),
-  settingRow('播放模式', modeSelect),
-  settingRow('桌面歌词', lyricsInput)
-);
-
-// 抽屉里的三个控件（它们不在底部的控制条里）。
-el.vol = volInput;
-el.mode = modeSelect;
-el.lyrics = lyricsInput;
 
 /** 主进程给的状态。 */
 let state = {
@@ -176,9 +126,8 @@ async function act(actionId, payload) {
   try {
     const res = await surface.act(actionId, payload);
     if (res?.state) applyState(res.state);
-    if (res?.message) surface.setStatus(res.message);
   } catch (err) {
-    surface.setStatus(`做不了：${err?.message || err}`);
+    console.warn('[desk-pet] 音乐播放器：', err?.message || err);
   }
 }
 
@@ -212,7 +161,7 @@ function renderNow() {
   renderNowCover();
 }
 
-/** 抽屉里的设置项：跟着状态走。 */
+/** 控制条上的设置项：跟着状态走。 */
 function renderSettings() {
   // 音量：主进程给的数没变就别动滑块（见 volShown）。
   const vol = Math.round((state.volume ?? 0.8) * 100);
@@ -221,8 +170,15 @@ function renderSettings() {
     el.vol.value = String(vol);
   }
   const mode = MODES.find((m) => m.label === state.modeLabel) || MODES[0];
-  if (el.mode.value !== mode.label) el.mode.value = mode.label;
-  if (el.lyrics.checked !== Boolean(state.lyricsOpen)) el.lyrics.checked = Boolean(state.lyricsOpen);
+  if (el.mode.dataset.label !== mode.label) {
+    el.mode.dataset.label = mode.label;
+    setIcon(el.mode, mode.icon);
+    const title = `播放顺序：${mode.label}（点一下换成下一种）`;
+    el.mode.title = title;
+    el.mode.setAttribute('aria-label', title);
+  }
+  const on = String(Boolean(state.lyricsOpen));
+  if (el.lyrics.getAttribute('aria-pressed') !== on) el.lyrics.setAttribute('aria-pressed', on);
 }
 
 /** 底部那块的小封面：这一首自己的图。 */
@@ -412,15 +368,17 @@ el.play.addEventListener('click', () => act('toggle'));
 el.next.addEventListener('click', () => act('next'));
 el.playAll.addEventListener('click', () => act('select', { index: 0 }));
 
-// —— 抽屉里的设置 ——
+// —— 控制条上的设置（音量、播放顺序、桌面歌词）——
 el.vol.addEventListener('change', () => act('volume', { value: Number(el.vol.value) / 100 }));
 
-el.mode.addEventListener('change', () => {
-  act('mode', { value: el.mode.value });
+el.mode.addEventListener('click', () => {
+  const current = MODES.findIndex((m) => m.label === state.modeLabel);
+  const next = MODES[(current + 1 + MODES.length) % MODES.length];
+  act('mode', { value: next.label });
 });
 
-el.lyrics.addEventListener('change', () => {
-  act('lyrics', { enabled: el.lyrics.checked });
+el.lyrics.addEventListener('click', () => {
+  act('lyrics', { enabled: !state.lyricsOpen });
 });
 
 el.filter.addEventListener('input', () => {
@@ -563,8 +521,6 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  // 抽屉开着的时候，Esc 归抽屉管（它先处理，标记了 defaultPrevented）。
-  if (event.defaultPrevented) return;
   if (!el.menu.hidden) closeMenu();
   if (songPageOpen) closeSongPage();
 });
