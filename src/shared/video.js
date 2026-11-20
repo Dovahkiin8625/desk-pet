@@ -17,12 +17,9 @@
  *
  * ## 分类（category）
  *
- * 素材按用途分成四类，纯属组织手段：
- *   idle    待机循环（待机池）
- *   emotion 情绪/表情类（一次性，给模型的 emotion/action 用）
- *   action  动作/手势类（一次性）
- *   special 特殊/稀有类（一次性）
- * 分类不影响播放方式，只影响提示词里的分组呈现与清单的可读性。
+ * 素材按**文件夹分类**组织（与素材目录一致），纯属组织手段：
+ * 分类不影响播放方式，只影响提示词/菜单里的分组呈现与清单的可读性。
+ * 预制 miya 使用 13 个文件夹分类（待机与呼吸、困倦与放松……生活小动作）。
  */
 
 /** 清单里的模型类型：视频。 */
@@ -48,18 +45,47 @@ export const VIDEO_SEMANTIC_KEYS = new Set([
   'drag',
 ]);
 
-/** clip 的四个分类：idle / emotion / action / special。 */
-export const VIDEO_CLIP_CATEGORIES = Object.freeze(['idle', 'emotion', 'action', 'special']);
+/**
+ * 视频形象的文件夹分类（按素材目录顺序）。
+ * 用于提示词/菜单的分组顺序与显示；category 字段可为任意非空字符串，
+ * 但推荐与文件夹分类一致。
+ */
+export const VIDEO_FOLDER_CATEGORIES = Object.freeze([
+  '待机与呼吸',
+  '困倦与放松',
+  '开心与喜悦',
+  '害羞与心动',
+  '闹别扭与生气',
+  '低落与委屈',
+  '惊讶与疑惑',
+  '卖萌与搞怪',
+  '问候与礼仪',
+  '撒娇与祈求',
+  '舞蹈与律动',
+  '音乐自娱',
+  '生活小动作',
+]);
 
-const CATEGORY_SET = new Set(VIDEO_CLIP_CATEGORIES);
+// 兼容旧导出名：历史上为固定四类；现在等同于文件夹分类顺序。
+export const VIDEO_CLIP_CATEGORIES = VIDEO_FOLDER_CATEGORIES;
 
-/** 分类的中文名（提示词与清单校验共用）。 */
-export const CLIP_CATEGORY_LABELS = Object.freeze({
-  idle: '待机',
-  emotion: '情绪表情',
-  action: '动作手势',
-  special: '特殊',
-});
+const KNOWN_CATEGORY_ORDER = new Map(VIDEO_FOLDER_CATEGORIES.map((c, i) => [c, i]));
+
+/** 分类的显示名（提示词与菜单共用）。文件夹分类即其显示名。 */
+export const CLIP_CATEGORY_LABELS = Object.freeze(
+  Object.fromEntries(VIDEO_FOLDER_CATEGORIES.map((c) => [c, c])),
+);
+
+/** 分类排序：已知文件夹分类按目录顺序，其余按首次出现顺序追加。 */
+export function orderClipCategories(categories) {
+  const list = Array.from(new Set((categories || []).filter(Boolean)));
+  return list.sort((a, b) => {
+    const ia = KNOWN_CATEGORY_ORDER.has(a) ? KNOWN_CATEGORY_ORDER.get(a) : Number.MAX_SAFE_INTEGER;
+    const ib = KNOWN_CATEGORY_ORDER.has(b) ? KNOWN_CATEGORY_ORDER.get(b) : Number.MAX_SAFE_INTEGER;
+    if (ia !== ib) return ia - ib;
+    return 0;
+  });
+}
 
 /**
  * 规整 avatar.json 里的 clips 列表。
@@ -69,7 +95,7 @@ export const CLIP_CATEGORY_LABELS = Object.freeze({
  *            还是模型点播时写给程序看的编号
  *   file     相对模型目录的路径（webm/xxx.webm）；null = 缺失（本条目标记为未提供）
  *   label    菜单与提示词显示名
- *   category 分类（见 VIDEO_CLIP_CATEGORIES）；缺省/非法 → action
+ *   category 分类/分组名（推荐为文件夹分类，如“待机与呼吸”）；缺省 → 空串
  *   loop     true = 循环播放（待机类）；false/缺省 = 一次性
  *   sound    true = 播放原声（默认静音）
  *   semantic 语义绑定（见 VIDEO_SEMANTIC_KEYS）。idle 可以绑**多条**
@@ -96,12 +122,12 @@ export function normalizeClipList(input) {
     seen.add(id);
     const file = typeof raw.file === 'string' && raw.file.trim() !== '' ? raw.file.trim() : null;
     const label = typeof raw.label === 'string' && raw.label.trim() !== '' ? raw.label.trim() : id;
-    const category = typeof raw.category === 'string' ? raw.category.trim() : '';
+    const category = typeof raw.category === 'string' ? raw.category.trim().slice(0, 64) : '';
     const entry = {
       id,
       file,
       label,
-      category: CATEGORY_SET.has(category) ? category : 'action',
+      category,
       loop: raw.loop === true,
       sound: raw.sound === true,
     };
@@ -143,21 +169,21 @@ export function sanitizeReportedClips(input) {
   const out = [];
   const seen = new Set();
   if (!Array.isArray(input)) return out;
-  for (const raw of input.slice(0, 256)) {
+  for (const raw of input.slice(0, 512)) {
     const id = typeof raw?.id === 'string' ? raw.id.trim().slice(0, 64) : '';
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const label = typeof raw?.label === 'string' && raw.label.trim() ? raw.label.trim().slice(0, 64) : id;
-    const category = typeof raw?.category === 'string' ? raw.category.trim() : '';
+    const category = typeof raw?.category === 'string' ? raw.category.trim().slice(0, 64) : '';
     const semantic = typeof raw?.semantic === 'string' ? raw.semantic.trim() : '';
     out.push({
       id,
       label,
-      category: CATEGORY_SET.has(category) ? category : 'action',
+      category: category || 'action',
       semantic: VIDEO_SEMANTIC_KEYS.has(semantic) ? semantic : '',
       loop: raw?.loop === true,
     });
-    if (out.length >= 64) break;
+    if (out.length >= 256) break;
   }
   return out;
 }
@@ -172,20 +198,28 @@ export function buildClipSection(clips) {
   const list = (Array.isArray(clips) ? clips : []).filter((c) => c && c.id);
   if (list.length === 0) return '';
   const byCategory = new Map();
-  for (const clip of list.slice(0, 64)) {
-    const category = CATEGORY_SET.has(clip.category) ? clip.category : 'action';
-    if (!byCategory.has(category)) byCategory.set(category, []);
+  const order = [];
+  for (const clip of list.slice(0, 256)) {
+    const category = typeof clip.category === 'string' && clip.category.trim() ? clip.category.trim() : '其他';
+    if (!byCategory.has(category)) {
+      byCategory.set(category, []);
+      order.push(category);
+    }
     byCategory.get(category).push(clip);
   }
+  // 已知文件夹分类按目录顺序优先，其余保持首次出现顺序
+  const sorted = [
+    ...order.filter((c) => KNOWN_CATEGORY_ORDER.has(c)).sort((a, b) => KNOWN_CATEGORY_ORDER.get(a) - KNOWN_CATEGORY_ORDER.get(b)),
+    ...order.filter((c) => !KNOWN_CATEGORY_ORDER.has(c)),
+  ];
   const lines = [
     '你能做出的动作（想做某个动作时，在 <<META>> 里加 "action":"<id>"，id 只认下面这张表，认不出来就等于没做；动作播完自动回待机）：',
   ];
-  for (const category of VIDEO_CLIP_CATEGORIES) {
+  for (const category of sorted) {
     const group = byCategory.get(category) || [];
     if (group.length === 0) continue;
-    lines.push(
-      `- ${CLIP_CATEGORY_LABELS[category]}：${group.map((c) => `${c.id}=${c.label}`).join('；')}`
-    );
+    const label = CLIP_CATEGORY_LABELS[category] || category;
+    lines.push(`- ${label}：${group.map((c) => `${c.id}=${c.label}`).join('；')}`);
   }
   return lines.join('\n');
 }

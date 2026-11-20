@@ -151,3 +151,27 @@ test('扁平化后覆盖所有项：包括禁用的占位项', () => {
   assert.ok(labels.includes('a'));
   assert.ok(labels.includes('b'));
 });
+
+test('带 category 的动作按分类分组到子菜单', () => {
+  const played = [];
+  const items = menuTemplate(
+    baseActions({
+      listMotions: () => [
+        { group: 'idle-nod', category: '待机与呼吸', motions: [{ index: 0, label: '微微点头' }] },
+        { group: 'idle-tilt', category: '待机与呼吸', motions: [{ index: 0, label: '歪头' }] },
+        { group: 'laugh', category: '开心与喜悦', motions: [{ index: 0, label: '开怀大笑' }] },
+      ],
+      playMotion: (group, index) => played.push({ group, index }),
+    }),
+  );
+  const motion = motionItem(items);
+  assert.deepEqual(motion.submenu.map((i) => i.label), ['待机与呼吸', '开心与喜悦']);
+  assert.deepEqual(motion.submenu[0].submenu.map((i) => i.label), ['微微点头', '歪头']);
+  assert.deepEqual(motion.submenu[1].submenu.map((i) => i.label), ['开怀大笑']);
+  motion.submenu[0].submenu[1].click();
+  motion.submenu[1].submenu[0].click();
+  assert.deepEqual(played, [
+    { group: 'idle-tilt', index: 0 },
+    { group: 'laugh', index: 0 },
+  ]);
+});

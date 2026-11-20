@@ -19,6 +19,8 @@
  * 单动作组的标签用动作自己的 label（视频形象的中文显示名），
  * 不是 group（那是动作的 key，英文的 "heart-1" 之类）。
  * 多动作组的上级仍用 group（Live2D 的动作组名 Idle / TapBody）。
+ *
+ * 视频形象会上报 category：此时按分类再分一层子菜单（分类 → 动作）。
  */
 function buildMotionItem(actions) {
   const list = actions.listMotions?.() || [];
@@ -26,23 +28,60 @@ function buildMotionItem(actions) {
     ? list.filter((g) => g && typeof g.group === 'string' && Array.isArray(g.motions))
     : [];
   const submenu = [];
-  for (const g of groups) {
-    const motions = g.motions.filter((m) => m && Number.isInteger(m.index));
-    if (motions.length === 0) continue;
-    if (motions.length === 1) {
-      const only = motions[0];
-      submenu.push({
-        label: typeof only.label === 'string' && only.label ? only.label : g.group,
-        click: () => actions.playMotion?.(g.group, only.index),
-      });
-    } else {
-      submenu.push({
-        label: g.group,
-        submenu: motions.map((m) => ({
-          label: typeof m.label === 'string' && m.label ? m.label : `动作 ${m.index + 1}`,
-          click: () => actions.playMotion?.(g.group, m.index),
-        })),
-      });
+  const hasCategory = groups.some((g) => typeof g.category === 'string' && g.category.trim());
+  if (hasCategory) {
+    const byCat = new Map();
+    const catOrder = [];
+    for (const g of groups) {
+      const cat = typeof g.category === 'string' && g.category.trim() ? g.category.trim() : '其他';
+      if (!byCat.has(cat)) {
+        byCat.set(cat, []);
+        catOrder.push(cat);
+      }
+      byCat.get(cat).push(g);
+    }
+    for (const cat of catOrder) {
+      const items = [];
+      for (const g of byCat.get(cat) || []) {
+        const motions = g.motions.filter((m) => m && Number.isInteger(m.index));
+        if (motions.length === 0) continue;
+        if (motions.length === 1) {
+          const only = motions[0];
+          items.push({
+            label: typeof only.label === 'string' && only.label ? only.label : g.group,
+            click: () => actions.playMotion?.(g.group, only.index),
+          });
+        } else {
+          items.push({
+            label: g.group,
+            submenu: motions.map((m) => ({
+              label: typeof m.label === 'string' && m.label ? m.label : `动作 ${m.index + 1}`,
+              click: () => actions.playMotion?.(g.group, m.index),
+            })),
+          });
+        }
+      }
+      if (items.length > 0) submenu.push({ label: cat, submenu: items });
+    }
+  } else {
+    for (const g of groups) {
+      const motions = g.motions.filter((m) => m && Number.isInteger(m.index));
+      if (motions.length === 0) continue;
+      if (motions.length === 1) {
+        const only = motions[0];
+        submenu.push({
+          label: typeof only.label === 'string' && only.label ? only.label : g.group,
+          click: () => actions.playMotion?.(g.group, only.index),
+        });
+      } else {
+        submenu.push({
+          label: g.group,
+          submenu: motions.map((m) => ({
+            label: typeof m.label === 'string' && m.label ? m.label : `动作 ${m.index + 1}`,
+            click: () => actions.playMotion?.(g.group, m.index),
+          })),
+        });
+      }
     }
   }
   if (submenu.length === 0) {

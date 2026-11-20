@@ -11,7 +11,7 @@
     "scale": 1,
     "anchor": [
       0.5,
-      1.0
+      1
     ],
     "offset": [
       0,
@@ -19,35 +19,647 @@
     ]
   },
   "clips": [
-    { "id": "idle-1", "file": "webm/idle-1.webm", "label": "待机（呼吸）", "category": "idle", "loop": true, "semantic": "idle" },
-    { "id": "idle-2", "file": "webm/idle-2.webm", "label": "待机（变体）", "category": "idle", "loop": true, "semantic": "idle" },
-    { "id": "idle-3", "file": "webm/idle-3.webm", "label": "待机（呼吸·变体）", "category": "idle", "loop": true, "semantic": "idle" },
-    { "id": "idle-weight-shift", "file": "webm/idle-weight-shift.webm", "label": "重心换脚", "category": "idle", "semantic": "idle" },
-    { "id": "look-around", "file": "webm/look-around.webm", "label": "环顾四周", "category": "idle", "semantic": "idle" },
-    { "id": "idle-tilt", "file": "webm/idle-tilt.webm", "label": "歪头杀", "category": "idle", "semantic": "idle" },
-
-    { "id": "sleepy", "file": "webm/sleepy.webm", "label": "犯困打瞌睡", "category": "emotion" },
-    { "id": "eye-rub", "file": "webm/eye-rub.webm", "label": "揉眼睛犯困", "category": "emotion" },
-    { "id": "laugh", "file": "webm/laugh.webm", "label": "开怀大笑", "category": "emotion", "sound": true },
-    { "id": "heart-1", "file": "webm/heart.webm", "label": "比心（双手）", "category": "emotion" },
-    { "id": "heart-wink", "file": "webm/heart-wink.webm", "label": "眨眼比心", "category": "emotion" },
-    { "id": "hands-on-hips", "file": "webm/hands-on-hips.webm", "label": "双手叉腰", "category": "emotion" },
-    { "id": "tsun", "file": "webm/tsun.webm", "label": "假生气变笑", "category": "emotion"  },
-    { "id": "pout", "file": "webm/pout.webm", "label": "鼓腮假气", "category": "emotion" },
-
-    { "id": "stretch", "file": "webm/stretch.webm", "label": "伸懒腰", "category": "action" },
-    { "id": "hair", "file": "webm/hair.webm", "label": "撩头发", "category": "action", "semantic": "tapBody" },
-    { "id": "greet", "file": "webm/greet.webm", "label": "挥手打招呼", "category": "action", "semantic": "tapHead" },
-    { "id": "thank", "file": "webm/thank.webm", "label": "点头致谢", "category": "action" },
-    { "id": "please", "file": "webm/please.webm", "label": "双手合十", "category": "action" },
-    { "id": "sing", "file": "webm/sing.webm", "label": "哼歌摇头", "category": "action", "sound": true },
-    { "id": "dance-sway", "file": "webm/dance-sway.webm", "label": "原地摇摆", "category": "action", "sound": true },
-    { "id": "dance-clap", "file": "webm/dance-clap.webm", "label": "拍手打节拍", "category": "action", "sound": true },
-    { "id": "dance-glitch", "file": "webm/dance-glitch.webm", "label": "卡顿手势舞", "category": "action", "sound": true },
-    { "id": "dance-wave", "file": "webm/dance-wave.webm", "label": "手臂波浪", "category": "action", "sound": true },
-    { "id": "dance-spin", "file": "webm/dance-spin.webm", "label": "原地旋转", "category": "action", "sound": true },
-    { "id": "dance-latin", "file": "webm/dance-latin.webm", "label": "拉丁式扭胯", "category": "action", "sound": true },
-    { "id": "dance-bounce", "file": "webm/dance-bounce.webm", "label": "弹跳律动", "category": "action", "sound": true }
-
+    {
+      "id": "idle-1",
+      "file": "webm/1. 待机与呼吸/01_呼吸起伏.webm",
+      "label": "待机（呼吸）",
+      "category": "待机与呼吸",
+      "loop": true,
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-2",
+      "file": "webm/1. 待机与呼吸/01_呼吸起伏_2.webm",
+      "label": "待机（变体）",
+      "category": "待机与呼吸",
+      "loop": true,
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-3",
+      "file": "webm/1. 待机与呼吸/01_呼吸起伏_3.webm",
+      "label": "待机（呼吸·变体）",
+      "category": "待机与呼吸",
+      "loop": true,
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-tilt",
+      "file": "webm/1. 待机与呼吸/02_歪头.webm",
+      "label": "歪头杀",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-weight-shift",
+      "file": "webm/1. 待机与呼吸/03_重心换脚.webm",
+      "label": "重心换脚",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-nod",
+      "file": "webm/1. 待机与呼吸/04_微微点头.webm",
+      "label": "微微点头",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-think",
+      "file": "webm/1. 待机与呼吸/05_托腮沉思.webm",
+      "label": "托腮沉思",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-toe-tap",
+      "file": "webm/1. 待机与呼吸/06_脚尖点地.webm",
+      "label": "脚尖点地",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-listen",
+      "file": "webm/1. 待机与呼吸/07_侧头听声.webm",
+      "label": "侧头听声",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-facepalm",
+      "file": "webm/1. 待机与呼吸/08_扶额.webm",
+      "label": "扶额",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "idle-collar",
+      "file": "webm/1. 待机与呼吸/09_整理衣领.webm",
+      "label": "整理衣领",
+      "category": "待机与呼吸",
+      "semantic": "idle"
+    },
+    {
+      "id": "sleepy",
+      "file": "webm/2. 困倦与放松/01_犯困打瞌睡.webm",
+      "label": "犯困打瞌睡",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "stretch",
+      "file": "webm/2. 困倦与放松/02_伸懒腰.webm",
+      "label": "伸懒腰",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "eye-rub",
+      "file": "webm/2. 困倦与放松/03_揉眼睛.webm",
+      "label": "揉眼睛犯困",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "sleepy-yawn",
+      "file": "webm/2. 困倦与放松/04_哈欠连天.webm",
+      "label": "哈欠连天",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "sleepy-rest",
+      "file": "webm/2. 困倦与放松/05_闭目养神.webm",
+      "label": "闭目养神",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "sleepy-temple",
+      "file": "webm/2. 困倦与放松/06_揉太阳穴.webm",
+      "label": "揉太阳穴",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "sleepy-blank",
+      "file": "webm/2. 困倦与放松/07_眼神放空.webm",
+      "label": "眼神放空",
+      "category": "困倦与放松"
+    },
+    {
+      "id": "laugh",
+      "file": "webm/3. 开心与喜悦/01_开怀大笑.webm",
+      "label": "开怀大笑",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "laugh-stifled",
+      "file": "webm/3. 开心与喜悦/02_抿嘴偷笑.webm",
+      "label": "抿嘴偷笑",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "laugh-tears",
+      "file": "webm/3. 开心与喜悦/03_笑出眼泪.webm",
+      "label": "笑出眼泪",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "happy-clap-hop",
+      "file": "webm/3. 开心与喜悦/04_开心拍手小跳.webm",
+      "label": "开心拍手小跳",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "happy-fist-pump",
+      "file": "webm/3. 开心与喜悦/05_握拳高举.webm",
+      "label": "握拳高举",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "happy-stomp",
+      "file": "webm/3. 开心与喜悦/06_雀跃跺脚.webm",
+      "label": "雀跃跺脚",
+      "category": "开心与喜悦",
+      "sound": true
+    },
+    {
+      "id": "happy-beam",
+      "file": "webm/3. 开心与喜悦/07_眉开眼笑.webm",
+      "label": "眉开眼笑",
+      "category": "开心与喜悦"
+    },
+    {
+      "id": "hair",
+      "file": "webm/4. 害羞与心动/01_撩头发.webm",
+      "label": "撩头发",
+      "category": "害羞与心动",
+      "semantic": "tapBody"
+    },
+    {
+      "id": "heart-1",
+      "file": "webm/4. 害羞与心动/02_比心双手.webm",
+      "label": "比心（双手）",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "heart-wink",
+      "file": "webm/4. 害羞与心动/03_眨眼比心.webm",
+      "label": "眨眼比心",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "shy-cover-face",
+      "file": "webm/4. 害羞与心动/04_捂脸害羞笑.webm",
+      "label": "捂脸害羞笑",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "shy-glance",
+      "file": "webm/4. 害羞与心动/05_偷瞄又移开.webm",
+      "label": "偷瞄又移开",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "shy-fingers",
+      "file": "webm/4. 害羞与心动/06_绞手指.webm",
+      "label": "绞手指",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "shy-sideways",
+      "file": "webm/4. 害羞与心动/07_羞赧侧头.webm",
+      "label": "羞赧侧头",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "shy-turn-away",
+      "file": "webm/4. 害羞与心动/08_害羞背过身.webm",
+      "label": "害羞背过身",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "love-heartbeat",
+      "file": "webm/4. 害羞与心动/09_怦怦心动.webm",
+      "label": "怦怦心动",
+      "category": "害羞与心动"
+    },
+    {
+      "id": "pout",
+      "file": "webm/5. 闹别扭与生气/01_鼓腮假气.webm",
+      "label": "鼓腮假气",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "hands-on-hips",
+      "file": "webm/5. 闹别扭与生气/02_双手叉腰.webm",
+      "label": "双手叉腰",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "tsun",
+      "file": "webm/5. 闹别扭与生气/03_假生气变笑.webm",
+      "label": "假生气变笑",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "angry-stomp",
+      "file": "webm/5. 闹别扭与生气/04_跺脚生气.webm",
+      "label": "跺脚生气",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "tsun-turn-away",
+      "file": "webm/5. 闹别扭与生气/05_赌气背过身.webm",
+      "label": "赌气背过身",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "deadpan-eye-roll",
+      "file": "webm/5. 闹别扭与生气/06_翻白眼.webm",
+      "label": "翻白眼",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "deadpan-arms-crossed",
+      "file": "webm/5. 闹别扭与生气/07_抱臂冷脸.webm",
+      "label": "抱臂冷脸",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "tsun-hair-toss",
+      "file": "webm/5. 闹别扭与生气/08_赌气抖头发.webm",
+      "label": "赌气抖头发",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "tsun-peek-back",
+      "file": "webm/5. 闹别扭与生气/09_扭头不理偷回头.webm",
+      "label": "扭头不理·偷回头",
+      "category": "闹别扭与生气"
+    },
+    {
+      "id": "sad-sigh",
+      "file": "webm/6. 低落与委屈/01_低头叹气.webm",
+      "label": "低头叹气",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "sad-holdback-tears",
+      "file": "webm/6. 低落与委屈/02_强忍泪水.webm",
+      "label": "强忍泪水",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "sad-wipe-tear",
+      "file": "webm/6. 低落与委屈/03_擦眼泪.webm",
+      "label": "擦眼泪",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "sad-droopy",
+      "file": "webm/6. 低落与委屈/04_无精打采.webm",
+      "label": "无精打采",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "sad-sob",
+      "file": "webm/6. 低落与委屈/05_抽泣.webm",
+      "label": "抽泣",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "sad-forced-smile",
+      "file": "webm/6. 低落与委屈/06_强颜欢笑.webm",
+      "label": "强颜欢笑",
+      "category": "低落与委屈"
+    },
+    {
+      "id": "look-around",
+      "file": "webm/7. 惊讶与疑惑/01_环顾四周.webm",
+      "label": "环顾四周",
+      "category": "惊讶与疑惑",
+      "semantic": "idle"
+    },
+    {
+      "id": "surprise-startled",
+      "file": "webm/7. 惊讶与疑惑/02_吓一跳.webm",
+      "label": "吓一跳",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "surprise-hands-mouth",
+      "file": "webm/7. 惊讶与疑惑/03_惊讶捂嘴.webm",
+      "label": "惊讶捂嘴",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "curious-head-tilt",
+      "file": "webm/7. 惊讶与疑惑/04_疑惑歪头.webm",
+      "label": "疑惑歪头",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "curious-scratch-head",
+      "file": "webm/7. 惊讶与疑惑/05_挠头想不通.webm",
+      "label": "挠头想不通",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "curious-shrug",
+      "file": "webm/7. 惊讶与疑惑/06_摊手无奈.webm",
+      "label": "摊手无奈",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "curious-peer",
+      "file": "webm/7. 惊讶与疑惑/07_凑近端详.webm",
+      "label": "凑近端详",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "curious-freeze",
+      "file": "webm/7. 惊讶与疑惑/08_愣住发懵.webm",
+      "label": "愣住发懵",
+      "category": "惊讶与疑惑"
+    },
+    {
+      "id": "playful-face",
+      "file": "webm/8. 卖萌与搞怪/01_鬼脸.webm",
+      "label": "鬼脸",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "playful-peace",
+      "file": "webm/8. 卖萌与搞怪/02_比耶手势.webm",
+      "label": "比耶手势",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "playful-ok",
+      "file": "webm/8. 卖萌与搞怪/03_OK手势.webm",
+      "label": "OK 手势",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "smug-chin-up",
+      "file": "webm/8. 卖萌与搞怪/04_傲娇昂头.webm",
+      "label": "傲娇昂头",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "smug-wink",
+      "file": "webm/8. 卖萌与搞怪/05_得意单眨眼.webm",
+      "label": "得意单眨眼",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "cute-cheek-poke",
+      "file": "webm/8. 卖萌与搞怪/06_戳脸卖萌.webm",
+      "label": "戳脸卖萌",
+      "category": "卖萌与搞怪"
+    },
+    {
+      "id": "greet",
+      "file": "webm/9. 问候与礼仪/01_挥手打招呼.webm",
+      "label": "挥手打招呼",
+      "category": "问候与礼仪",
+      "semantic": "tapHead"
+    },
+    {
+      "id": "thank",
+      "file": "webm/9. 问候与礼仪/02_点头致谢.webm",
+      "label": "点头致谢",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "greet-bye",
+      "file": "webm/9. 问候与礼仪/03_挥手再见.webm",
+      "label": "挥手再见",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "greet-beckon",
+      "file": "webm/9. 问候与礼仪/04_招手过来.webm",
+      "label": "招手“过来”",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "thank-deep-bow",
+      "file": "webm/9. 问候与礼仪/05_深鞠躬.webm",
+      "label": "深鞠躬",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "thank-fist-palm",
+      "file": "webm/9. 问候与礼仪/06_抱拳作揖.webm",
+      "label": "抱拳作揖",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "thank-hand-chest",
+      "file": "webm/9. 问候与礼仪/07_手贴胸口敬礼.webm",
+      "label": "手贴胸口敬礼",
+      "category": "问候与礼仪"
+    },
+    {
+      "id": "please",
+      "file": "webm/10. 撒娇与祈求/01_双手合十.webm",
+      "label": "双手合十",
+      "category": "撒娇与祈求"
+    },
+    {
+      "id": "please-plead-sway",
+      "file": "webm/10. 撒娇与祈求/02_合十摇晃.webm",
+      "label": "合十摇晃",
+      "category": "撒娇与祈求"
+    },
+    {
+      "id": "please-sway-spoiled",
+      "file": "webm/10. 撒娇与祈求/03_扭扭撒娇.webm",
+      "label": "扭扭撒娇",
+      "category": "撒娇与祈求"
+    },
+    {
+      "id": "please-expectant-clap",
+      "file": "webm/10. 撒娇与祈求/04_期待拍手.webm",
+      "label": "期待拍手",
+      "category": "撒娇与祈求",
+      "sound": true
+    },
+    {
+      "id": "please-puppy-eyes",
+      "file": "webm/10. 撒娇与祈求/05_水汪汪求眼神.webm",
+      "label": "水汪汪求眼神",
+      "category": "撒娇与祈求"
+    },
+    {
+      "id": "please-tiptoe",
+      "file": "webm/10. 撒娇与祈求/06_踮脚探头.webm",
+      "label": "踮脚探头",
+      "category": "撒娇与祈求"
+    },
+    {
+      "id": "dance-sway",
+      "file": "webm/11. 舞蹈与律动/01_原地摇摆.webm",
+      "label": "原地摇摆",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-clap",
+      "file": "webm/11. 舞蹈与律动/02_拍手打节拍.webm",
+      "label": "拍手打节拍",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-glitch",
+      "file": "webm/11. 舞蹈与律动/03_卡顿手势舞.webm",
+      "label": "卡顿手势舞",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-wave",
+      "file": "webm/11. 舞蹈与律动/04_手臂波浪.webm",
+      "label": "手臂波浪",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-spin",
+      "file": "webm/11. 舞蹈与律动/05_原地旋转.webm",
+      "label": "原地旋转",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-latin",
+      "file": "webm/11. 舞蹈与律动/06_拉丁式扭胯.webm",
+      "label": "拉丁式扭胯",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-bounce",
+      "file": "webm/11. 舞蹈与律动/07_弹跳律动.webm",
+      "label": "弹跳律动",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-tap",
+      "file": "webm/11. 舞蹈与律动/08_踢踏踏步.webm",
+      "label": "踢踏踏步",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-robot",
+      "file": "webm/11. 舞蹈与律动/09_机器人舞步.webm",
+      "label": "机器人舞步",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-disco",
+      "file": "webm/11. 舞蹈与律动/10_迪斯科指天指地.webm",
+      "label": "迪斯科指天指地",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-head-bob",
+      "file": "webm/11. 舞蹈与律动/11_摇头晃脑.webm",
+      "label": "摇头晃脑",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-twist",
+      "file": "webm/11. 舞蹈与律动/12_扭腰Twist.webm",
+      "label": "扭腰 Twist",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "dance-air-drums",
+      "file": "webm/11. 舞蹈与律动/13_空气鼓点.webm",
+      "label": "空气鼓点",
+      "category": "舞蹈与律动",
+      "sound": true
+    },
+    {
+      "id": "sing",
+      "file": "webm/12. 音乐自娱/01_哼歌摇头.webm",
+      "label": "哼歌摇头",
+      "category": "音乐自娱",
+      "sound": true
+    },
+    {
+      "id": "sing-air-guitar",
+      "file": "webm/12. 音乐自娱/02_空气吉他.webm",
+      "label": "空气吉他",
+      "category": "音乐自娱",
+      "sound": true
+    },
+    {
+      "id": "sing-aria",
+      "file": "webm/12. 音乐自娱/03_闭眼深情演唱.webm",
+      "label": "闭眼深情演唱",
+      "category": "音乐自娱",
+      "sound": true
+    },
+    {
+      "id": "sing-whistle",
+      "file": "webm/12. 音乐自娱/04_吹口哨.webm",
+      "label": "吹口哨",
+      "category": "音乐自娱",
+      "sound": true
+    },
+    {
+      "id": "sing-air-piano",
+      "file": "webm/12. 音乐自娱/05_空气钢琴.webm",
+      "label": "空气钢琴",
+      "category": "音乐自娱",
+      "sound": true
+    },
+    {
+      "id": "daily-neck-roll",
+      "file": "webm/13. 生活小动作/01_活动脖子.webm",
+      "label": "活动脖子",
+      "category": "生活小动作"
+    },
+    {
+      "id": "daily-arm-swing",
+      "file": "webm/13. 生活小动作/02_甩手画圈.webm",
+      "label": "甩手画圈",
+      "category": "生活小动作"
+    },
+    {
+      "id": "daily-shoulder-pat",
+      "file": "webm/13. 生活小动作/03_捶肩膀.webm",
+      "label": "捶肩膀",
+      "category": "生活小动作"
+    },
+    {
+      "id": "daily-check-time",
+      "file": "webm/13. 生活小动作/04_抬手看手表.webm",
+      "label": "抬手看手表",
+      "category": "生活小动作"
+    },
+    {
+      "id": "daily-rub-hands",
+      "file": "webm/13. 生活小动作/05_搓手.webm",
+      "label": "搓手",
+      "category": "生活小动作"
+    },
+    {
+      "id": "daily-nose-rub",
+      "file": "webm/13. 生活小动作/06_揉鼻子.webm",
+      "label": "揉鼻子",
+      "category": "生活小动作"
+    }
   ]
 }

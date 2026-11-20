@@ -99,16 +99,16 @@ test('normalizeClipList：同一语义只绑第一个，其余退回待机池外
   assert.equal(clips[2].semantic, undefined);
 });
 
-test('normalizeClipList：分类只认 idle/emotion/action/special，缺省或非法退到 action', () => {
+test('normalizeClipList：分类保留非空字符串（支持文件夹分类），缺省为空串', () => {
   const { clips } = normalizeClipList([
-    { id: 'a', file: 'a.webm', category: 'idle' },
-    { id: 'b', file: 'b.webm', category: 'emotion' },
+    { id: 'a', file: 'a.webm', category: '待机与呼吸' },
+    { id: 'b', file: 'b.webm', category: '开心与喜悦' },
     { id: 'c', file: 'c.webm', category: 'action' },
     { id: 'd', file: 'd.webm', category: 'special' },
     { id: 'e', file: 'e.webm', category: 'bogus' },
     { id: 'f', file: 'f.webm' },
   ]);
-  assert.deepEqual(clips.map((c) => c.category), ['idle', 'emotion', 'action', 'special', 'action', 'action']);
+  assert.deepEqual(clips.map((c) => c.category), ['待机与呼吸', '开心与喜悦', 'action', 'special', 'bogus', '']);
 });
 
 test('deriveVideoMotions：语义键映射到 group，菜单组名用 id；idle 多条时第一个赢', () => {
@@ -122,20 +122,20 @@ test('deriveVideoMotions：语义键映射到 group，菜单组名用 id；idle 
   assert.deepEqual(motionNames.laugh, ['大笑']);
 });
 
-test('buildClipSection：按分类分组列出 id 与 label', () => {
+test('buildClipSection：按分类分组列出 id 与 label（按文件夹分类顺序）', () => {
   const section = buildClipSection([
-    { id: 'idle-1', label: '待机（呼吸）', category: 'idle', semantic: 'idle' },
-    { id: 'sleepy', label: '犯困打瞌睡', category: 'emotion' },
-    { id: 'laugh', label: '开怀大笑', category: 'emotion' },
-    { id: 'greet', label: '挥手打招呼', category: 'action' },
-    { id: 'special-1', label: '特殊动作 1', category: 'special' },
+    { id: 'laugh', label: '开怀大笑', category: '开心与喜悦' },
+    { id: 'idle-1', label: '待机（呼吸）', category: '待机与呼吸', semantic: 'idle' },
+    { id: 'greet', label: '挥手打招呼', category: '问候与礼仪' },
   ]);
   assert.match(section, /你能做出的动作/);
   assert.match(section, /<id>/);
-  assert.match(section, /待机：idle-1=待机（呼吸）/);
-  assert.match(section, /情绪表情：sleepy=犯困打瞌睡；laugh=开怀大笑/);
-  assert.match(section, /动作手势：greet=挥手打招呼/);
-  assert.match(section, /特殊：special-1=特殊动作 1/);
+  assert.match(section, /待机与呼吸：idle-1=待机（呼吸）/);
+  assert.match(section, /开心与喜悦：laugh=开怀大笑/);
+  assert.match(section, /问候与礼仪：greet=挥手打招呼/);
+  // 已知文件夹分类按目录顺序输出
+  assert.ok(section.indexOf('待机与呼吸：') < section.indexOf('开心与喜悦：'));
+  assert.ok(section.indexOf('开心与喜悦：') < section.indexOf('问候与礼仪：'));
 });
 
 test('buildClipSection：空清单返回空串', () => {
@@ -156,8 +156,8 @@ test('sanitizeReportedClips：去重、限长、分类与语义校验', () => {
   assert.equal(out[0].label, '待机');
   assert.equal(out[0].semantic, 'idle');
   assert.equal(out[0].loop, true);
-  // 非法分类退到 action，应用不认的语义（含情绪键）丢弃。
-  assert.equal(out[1].category, 'action');
+  // 非空分类原样保留，应用不认的语义（含情绪键）丢弃。
+  assert.equal(out[1].category, 'bogus');
   assert.equal(out[1].semantic, '');
 });
 

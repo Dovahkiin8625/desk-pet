@@ -7,7 +7,7 @@
  */
 
 /** 菜单项上限：模型再多动作也撑不爆原生菜单 */
-export const MAX_MOTION_GROUPS = 64;
+export const MAX_MOTION_GROUPS = 256;
 export const MAX_MOTIONS_PER_GROUP = 64;
 
 /** 从动作文件路径取显示名：去掉目录与扩展名（含 .motion3.json 这类复合扩展） */
@@ -25,6 +25,22 @@ export function motionLabelFromFile(file) {
 
 /** 由清单生成菜单数据（渲染层用它上报） */
 export function motionListForMenu(manifest) {
+  // 视频形象：按 clip 清单生成，携带分类信息（用于菜单分组）并保持清单顺序。
+  if (manifest?.type === 'video' && Array.isArray(manifest.clips)) {
+    const out = [];
+    for (const clip of manifest.clips) {
+      if (!clip || !clip.file) continue;
+      const id = typeof clip.id === 'string' ? clip.id.trim().slice(0, 64) : '';
+      if (!id) continue;
+      const label = typeof clip.label === 'string' && clip.label.trim() ? clip.label.trim().slice(0, 64) : id;
+      const category = typeof clip.category === 'string' ? clip.category.trim().slice(0, 64) : '';
+      const item = { group: id, motions: [{ index: 0, label }] };
+      if (category) item.category = category;
+      out.push(item);
+      if (out.length >= MAX_MOTION_GROUPS) break;
+    }
+    if (out.length > 0) return out;
+  }
   const groups = manifest?.motionGroups;
   if (!groups || typeof groups !== 'object') return [];
   const isSpine = manifest?.type === 'spine';
@@ -72,7 +88,12 @@ export function sanitizeMotions(input) {
         : `动作 ${index + 1}`;
       motions.push({ index, label });
     }
-    if (motions.length > 0) out.push({ group, motions });
+    if (motions.length > 0) {
+      const item = { group, motions };
+      const category = typeof g?.category === 'string' ? g.category.trim().slice(0, 64) : '';
+      if (category) item.category = category;
+      out.push(item);
+    }
   }
   return out;
 }
